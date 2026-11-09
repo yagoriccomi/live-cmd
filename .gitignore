@@ -1,0 +1,25 @@
+# Local agent worktrees
+/.openclaude/
+
+# Dependencies and generated output
+node_modules/
+target/
+dist/
+.expo/
+.wrangler/
+.gradle/
+
+# Local credentials and environment
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+local.properties
+*.keystore
+*.jks
+
+# OS metadata
+.DS_Store
+Thumbs.db

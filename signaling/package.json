@@ -1,0 +1,15 @@
+{
+  "name": "live-cmd-signaling",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local --ip 127.0.0.1",
+    "test": "node --require ../desktop/scripts/hidden-processes.cjs --experimental-strip-types --test signaling.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "wrangler": "4.158.0",
+    "typescript": "7.0.2",
+    "@cloudflare/workers-types": "5.20261106.1"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "live-cmd-mobile",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --require ../desktop/scripts/hidden-processes.cjs --experimental-strip-types --test src/auth.test.ts src/pty.test.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
+  }
+}
