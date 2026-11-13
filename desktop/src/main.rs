@@ -1010,6 +1010,50 @@ a=max-message-size:1024
         assert_eq!(authenticate(&l, l.b.clone(), None, c_sk, host2.pk()).await, Err("REVOKED".into()));
         finish(pc, l).await;
     }
+    /// C3 N7: revogação com sessão anexada e saída fluindo fecha em até 1 s; a sessão continua viva.
+    #[tokio::test]
+    async fn c3_n7_revoke_with_output_flowing() {
+        hub().profiles.push(("test-n7".into(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false }));
+        let (host, path, _tmp) = store("n7");
+        let c_sk = SigningKey::from_bytes(&[11; 32]);
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let (pc, l) = loopback(host.clone(), false).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), c_sk.clone(), host.pk()).await.unwrap();
+        let ctl = |t: Value| { let mut t = t; t["v"] = 1.into(); t["connection_id"] = l.id.clone().into(); t["request_id"] = RID.into(); t.to_string() };
+        l.dc.send_text(&ctl(json!({"type":"session_create","profile_id":"test-n7","cols":80,"rows":24}))).await.unwrap();
+        let v: Value = serde_json::from_str(&next_text(&l.dc).await.unwrap()).unwrap();
+        let sid_s = v["session_id"].as_str().unwrap().to_owned();
+        let sid = auth::uuid_bytes(&sid_s).unwrap();
+        l.dc.send_text(&ctl(json!({"type":"session_attach","session_id":sid_s,"from_offset":null}))).await.unwrap();
+        let input = proto::encode_frame(&proto::Frame { session_id: sid, seq: 1, op: Op::Input(b"for /L %i in (1,0,2) do @echo n7-flow\r".to_vec()) });
+        l.dc.send(input[..].into()).await.unwrap();
+        let mut out = Vec::new();
+        while String::from_utf8_lossy(&out).matches("n7-flow").count() < 20 {
+            if let (false, b) = next_msg(&l.dc).await.unwrap() { if let Op::Output(d) = proto::parse_frame(&b).unwrap().op { out.extend(d); } }
+        }
+        let started = Instant::now();
+        Host::with_store(SigningKey::from_bytes(&[0x60; 32]), path).unwrap().revoke(c_sk.verifying_key().to_bytes()).unwrap();
+        let Loopback { host: h, keep, .. } = l;
+        assert_eq!(host_error(h, 5).await, "REVOKED");
+        assert!(started.elapsed() <= Duration::from_millis(1100), "fechou em {:?}", started.elapsed());
+        assert!(hub().s.size(&sid).is_some(), "sessão viva após revogar");
+        keep.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(2), pc.close()).await;
+    }
+    /// C3 N11: sem nada recebido por 30 s após AUTHENTICATED, o host fecha.
+    #[tokio::test]
+    async fn c3_n11_heartbeat_timeout() {
+        let (host, _, _tmp) = store("n11");
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let (pc, l) = loopback(host.clone(), false).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), SigningKey::from_bytes(&[12; 32]), host.pk()).await.unwrap();
+        let started = Instant::now();
+        let Loopback { host: h, keep, .. } = l;
+        assert_eq!(host_error(h, 45).await, "heartbeat timeout");
+        assert!(started.elapsed() >= Duration::from_secs(29), "fechou cedo: {:?}", started.elapsed());
+        keep.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(2), pc.close()).await;
+    }
     #[tokio::test]
     async fn d2b_n1_swapped_fingerprints_rejected() {
         let (host, _, _tmp) = store("n1");

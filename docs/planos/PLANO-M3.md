@@ -10,7 +10,7 @@ Base: `SPEC-C3-controle.md` (aprovada, answers 012; D1–D10 aprovados); `PLANO-
 - Sem PTY, sessões, frames binários, ring buffer, heartbeat nem perfis.
 - `auth::Error` já tem os códigos usados pela C3 (`NOT_FOUND`, `LIMIT_EXCEEDED`, `IO_ERROR`, `INVALID_MESSAGE`, `VERSION_UNSUPPORTED`); a C3 não cria códigos.
 - `mobile/`: não existe.
-- **Progresso (answers 016):** D3a feita e verificada (PASS, 2026-11-08): `desktop/src/proto.rs` + fixtures `desktop/tests/fixtures/c3-frames.json`/`c3-controls.json`. M3a feita e verificada (PASS): `mobile/src/pty.ts` + `pty.test.ts` no `npm test`. Pós-verificação: `attached()` renumera o nunca enviado em vez de descartar; fixtures ganharam label 64/65 emoji e mensagem com exatamente 65536 B. Para M3b: validar mensagens host→cliente (`*_ok`, `input_ack`, `replay_*`, `error` etc.), que M3a não lê.
+- **Progresso (answers 016):** D3a feita e verificada (PASS, 2026-11-08): `desktop/src/proto.rs` + fixtures `desktop/tests/fixtures/c3-frames.json`/`c3-controls.json`. M3a feita e verificada (PASS): `mobile/src/pty.ts` + `pty.test.ts` no `npm test`. Pós-verificação: `attached()` renumera o nunca enviado em vez de descartar; fixtures ganharam label 64/65 emoji e mensagem com exatamente 65536 B. Para M3b: validar mensagens host→cliente (`*_ok`, `input_ack`, `replay_*`, `error` etc.), que M3a não lê. **D3b, D3c, D3d feitas e verificadas (PASS, 2026-11-13, commit `2565d12`)**: `session.rs`, `conpty.rs`, `screen.rs`, `pty-channel` ligado em `main.rs`; `pty.ts` valida controles host→cliente (fixture `c3-host-controls.json`).
 - Gate M1 **não** aprovado (Ctrl+C físico no Windows, E2E mobile/ICE). Gate M2 **não** aprovado (M2b, E1–E3 e aceite em aparelho pendentes).
 
 ## 2. Bloqueios
