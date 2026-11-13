@@ -13,7 +13,7 @@ const { stripVTControlCharacters } = require('node:util');
 const TESTS = [
   'wrangler_echo', 'wrangler_retransmits_zero', 'wrangler_retransmits_one',
   'wrangler_lifetime_zero', 'wrangler_lifetime_one', 'wrangler_unordered',
-  'wrangler_wrong_label', 'wrangler_second_channel',
+  'wrangler_wrong_label', 'wrangler_second_channel', 'wrangler_two_clients',
 ];
 const DESKTOP = path.resolve(__dirname, '..');
 const SIGNALING = path.resolve(DESKTOP, '../signaling');

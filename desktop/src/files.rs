@@ -507,7 +507,7 @@ impl Files {
         if !m.is_file() { return Err(NotFound); }
         if m.len() > self.lim.max_file { return Err(LimitExceeded); }
         let mut f = fs::File::open(&p).map_err(|e| io_code(&e))?;
-        // ponytail: hash síncrono no init; D4c move para o pool de disco (§7).
+        // ponytail: hash síncrono no init; roda no pool de disco da conexão (D4c, `file_worker`), mas trava os controles dela até acabar. Fatiar se arquivos grandes travarem a UI.
         let sha = hash_file(&mut f).map_err(|_| IoError)?;
         let t = T { owner: *pk, conn: Some(conn), filename: p.file_name().and_then(|n| n.to_str()).ok_or(NotFound)?.into(), dir_id: identity(&p).ok_or(IoError)?,
             mtime: mtime_ms(&m), size: m.len(), total: total_chunks(m.len()) as u32, sha, created: now, last: now, file: Some(f), dir: p, ..T::default() };
@@ -578,7 +578,7 @@ impl Files {
             self.delete(&fid, now);
             return vec![file_error(HashMismatch, &fid)];
         }
-        // ponytail: gravação síncrona; fila de 8 chunks e pool de disco (§7) ficam com D4c.
+        // Gravação síncrona dentro do pool de disco da conexão; fila de 8 chunks no `file_worker` (lib.rs, §7).
         let w = match (fail, t.file.as_mut()) {
             (false, Some(f)) => f.seek(SeekFrom::Start(off)).and_then(|_| f.write_all(&data)),
             _ => Err(io::Error::other("injected")),

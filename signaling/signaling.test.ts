@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Room } from './room.ts';
+import { Room, MAX_CLIENTS, MAX_SOCKETS } from './room.ts';
 import worker, { admitIp, connectionsByIp } from './worker.ts';
 
-// End to end through Miniflare: same room, two attempts, busy third socket, host rejoin.
-test('Miniflare reuses host room with per-attempt connection_id', async () => {
+// End to end through Miniflare: one host socket, two clients negotiating at once, one leaves, a new one arrives.
+test('Miniflare host room serves simultaneous clients by connection_id', async () => {
   const { Miniflare, convertV4MiniflareOptions } = await import('miniflare');
   const { build } = await import('esbuild');
   const { fileURLToPath } = await import('node:url');
@@ -17,31 +17,35 @@ test('Miniflare reuses host room with per-attempt connection_id', async () => {
   }));
   const open = () => mf.dispatchFetch(`http://localhost/v1/ws/${roomId}`, { headers: { Upgrade: 'websocket' } });
   const connect = async () => { const ws = (await open()).webSocket!; ws.accept(); return ws; };
-  const next = (ws: any, type: string) => new Promise<any>((resolve, reject) => {
+  const next = (ws: any, type: string, id?: string) => new Promise<any>((resolve, reject) => {
     const timer = setTimeout(() => reject(Error(`${type} timeout`)), 5000);
-    ws.addEventListener('message', (event: any) => { const m = JSON.parse(event.data); if (m.type === type) { clearTimeout(timer); resolve(m); } });
+    ws.addEventListener('message', (event: any) => { const m = JSON.parse(event.data); if (m.type === type && (id === undefined || m.connection_id === id)) { clearTimeout(timer); resolve(m); } });
   });
   const message = (type: string, connection_id: string | null, payload: unknown) => JSON.stringify({ v: 1, type, connection_id, request_id: type, payload });
   try {
-    for (const attempt of [1, 2]) {
-      const host = await connect();
-      const waiting = next(host, 'hello');
-      host.send(message('hello', null, { role: 'host' }));
-      assert.equal((await waiting).payload.status, 'waiting');
-      const mobile = await connect();
-      const id = crypto.randomUUID();
-      const ready = next(host, 'hello');
-      mobile.send(message('hello', id, { role: 'mobile' }));
-      const got = await ready;
-      assert.deepEqual([got.payload.status, got.connection_id], ['ready', id], `attempt ${attempt}`);
-      assert.equal((await open()).status, 409, 'third socket busy');
-      const offer = next(host, 'offer');
-      mobile.send(message('offer', id, { sdp: 'offer' }));
-      assert.equal((await offer).connection_id, id);
-      const closed = next(host, 'close');
-      mobile.send(message('close', id, { reason: 'done' }));
-      assert.equal((await closed).payload.reason, 'done');
-    }
+    const host = await connect();
+    const waiting = next(host, 'hello');
+    host.send(message('hello', null, { role: 'host' }));
+    assert.equal((await waiting).payload.status, 'waiting');
+    const join = async () => {
+      const ws = await connect(), id = crypto.randomUUID();
+      const ready = next(host, 'hello', id);
+      ws.send(message('hello', id, { role: 'mobile' }));
+      assert.equal((await ready).payload.status, 'ready');
+      return { ws, id };
+    };
+    const a = await join(), b = await join();
+    const offers = [next(host, 'offer', a.id), next(host, 'offer', b.id)];
+    a.ws.send(message('offer', a.id, { sdp: 'offer-a' })); b.ws.send(message('offer', b.id, { sdp: 'offer-b' }));
+    assert.deepEqual((await Promise.all(offers)).map(m => m.payload.sdp), ['offer-a', 'offer-b']);
+    const answer = next(b.ws, 'answer');
+    host.send(message('answer', b.id, { sdp: 'answer-b' }));
+    assert.equal((await answer).connection_id, b.id);
+    const closed = next(host, 'close', a.id);
+    a.ws.send(message('close', a.id, { reason: 'done' }));
+    assert.equal((await closed).payload.reason, 'done');
+    const c = await join();
+    assert.notEqual(c.id, a.id);
   } finally {
     await mf.dispose();
   }
@@ -57,22 +61,25 @@ function setup() {
   const send = (peer: typeof mobile, type: string, payload: any, connection_id: string | null = type === 'hello' && payload.role === 'host' ? null : id) => room.receive(peer, JSON.stringify({ v: 1, type, connection_id, request_id: crypto.randomUUID(), payload }));
   const ready = () => { send(mobile, 'hello', { role: 'mobile' }); send(host, 'hello', { role: 'host' }); };
   const negotiated = () => { ready(); send(mobile, 'offer', { sdp: 'offer' }); send(host, 'answer', { sdp: 'answer' }); };
-  return { id, room, socket, mobile, host, send, ready, negotiated, advance: (ms: number) => { now += ms; room.expire(); } };
+  // Extra client with its own connection_id, already through hello.
+  const client = (cid = crypto.randomUUID()) => { const c = socket(); room.add(c); send(c, 'hello', { role: 'mobile' }, cid); return { c, cid }; };
+  return { id, room, socket, mobile, host, send, ready, negotiated, client, advance: (ms: number) => { now += ms; room.expire(); } };
 }
 const ice = (candidate = 'candidate') => ({ candidate, sdpMid: null, sdpMLineIndex: null, usernameFragment: null });
-test('relays offer answer ICE and clears on done', () => {
+test('relays offer answer ICE; done closes the client, host stays', () => {
   const s = setup(); s.negotiated();
   s.send(s.mobile, 'ice', ice()); s.send(s.host, 'ice', ice(''));
   assert.equal(s.host.messages.at(-1).type, 'ice');
   assert.equal(s.mobile.messages.at(-1).payload.candidate, '');
   s.send(s.mobile, 'close', { reason: 'done' });
-  assert.equal(s.room.peers.length, 0); assert.ok(s.host.closed);
+  assert.ok(s.mobile.closed); assert.ok(!s.host.closed); assert.equal(s.room.peers.length, 1);
+  const last = s.host.messages.at(-1);
+  assert.deepEqual([last.type, last.connection_id, last.payload.reason], ['close', s.id, 'done']);
 });
-for (const scenario of ['wrong id', 'host id', 'null client id', 'non-v4 client id', 'answer first', 'wrong offerer', 'binary', 'bad json', 'oversized', 'invalid ice', 'ice ended', 'candidate limit', 'candidate bytes', 'duplicate hello', 'rate limit']) {
-  test(`rejects ${scenario} and clears both peers`, () => {
+for (const scenario of ['wrong id', 'null client id', 'non-v4 client id', 'answer first', 'wrong offerer', 'binary', 'bad json', 'oversized', 'invalid ice', 'ice ended', 'candidate limit', 'candidate bytes', 'duplicate hello', 'rate limit']) {
+  test(`rejects ${scenario}: only that client attempt ends`, () => {
     const s = setup();
     if (scenario === 'wrong id') { s.ready(); s.send(s.mobile, 'offer', { sdp: 'o' }, crypto.randomUUID()); }
-    if (scenario === 'host id') s.send(s.host, 'hello', { role: 'host' }, s.id);
     if (scenario === 'null client id') s.send(s.mobile, 'hello', { role: 'mobile' }, null);
     if (scenario === 'non-v4 client id') s.send(s.mobile, 'hello', { role: 'mobile' }, s.id.toUpperCase());
     if (scenario === 'answer first') { s.ready(); s.send(s.host, 'answer', { sdp: 'a' }); }
@@ -86,69 +93,123 @@ for (const scenario of ['wrong id', 'host id', 'null client id', 'non-v4 client 
     if (scenario === 'candidate bytes') { s.negotiated(); s.send(s.mobile, 'ice', ice('é'.repeat(2049))); }
     if (scenario === 'duplicate hello') { s.ready(); s.send(s.mobile, 'hello', { role: 'mobile' }); }
     if (scenario === 'rate limit') { s.negotiated(); for (let i = 0; i < 64; i++) s.send(s.mobile, 'ice', ice()); }
-    assert.ok(s.mobile.closed); assert.ok(s.host.closed); assert.equal(s.room.peers.length, 0);
-    assert.equal(s.mobile.messages.at(-1).payload.reason, 'protocol_error');
+    assert.ok(s.mobile.closed); assert.equal(s.mobile.messages.at(-1).payload.reason, 'protocol_error');
+    assert.ok(!s.room.peers.some(p => p.socket === s.mobile));
+    if (!s.room.host) s.send(s.host, 'hello', { role: 'host' });
+    assert.ok(!s.host.closed, 'host socket survives a client error');
   });
 }
-test('handshake expires exactly at 30 seconds', () => {
+test('invalid host hello ends the host and every client', () => {
+  const s = setup(); s.send(s.mobile, 'hello', { role: 'mobile' });
+  s.send(s.host, 'hello', { role: 'host' }); s.send(s.host, 'hello', { role: 'host' });
+  assert.ok(s.host.closed); assert.ok(s.mobile.closed); assert.equal(s.room.peers.length, 0);
+  assert.equal(s.mobile.messages.at(-1).payload.reason, 'peer_left');
+});
+test('host hello with a connection_id is a protocol error', () => {
+  const s = setup(); s.send(s.host, 'hello', { role: 'host' }, s.id);
+  assert.ok(s.host.closed); assert.equal(s.host.messages.at(-1).payload.reason, 'protocol_error');
+});
+test('handshake expires exactly at 30 seconds, host stays', () => {
   const s = setup(); s.ready(); s.advance(29999); assert.equal(s.room.peers.length, 2);
-  s.advance(1); assert.equal(s.host.messages.at(-1).payload.reason, 'timeout');
+  s.advance(1);
+  assert.deepEqual([s.host.messages.at(-1).payload.reason, s.host.messages.at(-1).connection_id], ['timeout', s.id]);
+  assert.ok(s.mobile.closed); assert.ok(!s.host.closed);
 });
-test('answered room expires at five minutes', () => {
+test('answered attempt expires at five minutes', () => {
   const s = setup(); s.negotiated(); s.advance(299999); assert.equal(s.room.peers.length, 2);
-  s.advance(1); assert.equal(s.room.peers.length, 0);
+  s.advance(1); assert.equal(s.room.peers.length, 1); assert.ok(s.mobile.closed);
 });
-test('disconnect clears peer and candidate state', () => {
+test('client disconnect tells the host peer_left with its id', () => {
   const s = setup(); s.negotiated(); s.send(s.mobile, 'ice', ice()); s.room.left(s.mobile);
-  assert.equal(s.room.candidates, 0); assert.equal(s.host.messages.at(-1).payload.reason, 'peer_left');
+  assert.deepEqual([s.host.messages.at(-1).payload.reason, s.host.messages.at(-1).connection_id], ['peer_left', s.id]);
 });
-for (const reason of ['done', 'timeout', 'peer_left', 'protocol_error'] as const) {
-  test(`host rejoins after ${reason}; old attempt replay rejected`, () => {
-    const s = setup(); s.negotiated();
-    const offer = JSON.stringify(s.host.messages.find(m => m.type === 'offer'));
-    s.room.finish(reason);
-    assert.equal(s.room.connectionId, null);
-    s.advance(300001);
-    const mobile = s.socket(), host = s.socket();
-    assert.deepEqual([s.room.add(host), s.room.add(mobile)], [true, true]);
-    s.send(host, 'hello', { role: 'host' });
-    s.room.receive(mobile, offer);
-    assert.equal(host.messages.filter(m => m.type === 'offer').length, 0, 'old offer must not reach a new peer');
-    assert.equal(s.room.peers.length, 0, 'replay ends the new attempt');
-    const fresh = crypto.randomUUID(), h = s.socket(), m = s.socket();
-    s.room.add(h); s.room.add(m);
-    s.send(h, 'hello', { role: 'host' }); s.send(m, 'hello', { role: 'mobile' }, fresh);
-    assert.deepEqual([h.messages.at(-1).payload.status, h.messages.at(-1).connection_id], ['ready', fresh]);
-    s.send(m, 'offer', { sdp: 'o' }, fresh);
-    assert.equal(h.messages.at(-1).type, 'offer');
-  });
-}
+test('host disconnect ends every client attempt', () => {
+  const s = setup(); s.negotiated(); const b = s.client();
+  s.room.left(s.host);
+  assert.ok(s.mobile.closed); assert.ok(b.c.closed); assert.equal(s.room.peers.length, 0);
+});
+test('two clients negotiate in parallel without leaking connection_ids', () => {
+  const s = setup(); s.ready(); const b = s.client();
+  assert.deepEqual([b.c.messages.at(-1).payload.status, b.c.messages.at(-1).connection_id], ['ready', b.cid]);
+  assert.deepEqual(s.host.messages.filter(m => m.payload.status === 'ready').map(m => m.connection_id), [s.id, b.cid]);
+  s.send(s.mobile, 'offer', { sdp: 'offer-a' }); s.send(b.c, 'offer', { sdp: 'offer-b' }, b.cid);
+  s.send(s.host, 'answer', { sdp: 'answer-b' }, b.cid); s.send(s.host, 'answer', { sdp: 'answer-a' });
+  s.send(s.host, 'ice', ice('cb'), b.cid); s.send(s.mobile, 'ice', ice('ca'));
+  assert.deepEqual(s.mobile.messages.filter(m => m.type === 'answer').map(m => m.payload.sdp), ['answer-a']);
+  assert.deepEqual(b.c.messages.filter(m => m.type === 'answer').map(m => m.payload.sdp), ['answer-b']);
+  assert.ok(s.mobile.messages.every(m => m.connection_id === s.id || m.connection_id === null));
+  assert.ok(b.c.messages.every(m => m.connection_id === b.cid || m.connection_id === null));
+  assert.deepEqual(s.host.messages.filter(m => m.type === 'offer').map(m => [m.connection_id, m.payload.sdp]), [[s.id, 'offer-a'], [b.cid, 'offer-b']]);
+  // Client A leaves: B keeps negotiating.
+  s.send(s.mobile, 'close', { reason: 'done' });
+  s.send(b.c, 'ice', ice('cb2'), b.cid);
+  assert.equal(s.host.messages.at(-1).payload.candidate, 'cb2'); assert.ok(!b.c.closed); assert.ok(!s.host.closed);
+});
+test('host error addressed to one client ends only that client', () => {
+  const s = setup(); s.negotiated(); const b = s.client();
+  s.send(s.host, 'answer', { sdp: 'a' }, b.cid);
+  assert.ok(b.c.closed); assert.ok(!s.mobile.closed); assert.ok(!s.host.closed);
+  assert.equal(s.host.messages.find(m => m.type === 'error').connection_id, b.cid);
+});
+test('host envelope for an ended attempt is dropped, not relayed', () => {
+  const s = setup(); s.negotiated(); s.send(s.mobile, 'close', { reason: 'done' });
+  const b = s.client(); s.send(b.c, 'offer', { sdp: 'o' }, b.cid);
+  s.send(s.host, 'answer', { sdp: 'stale' });
+  assert.ok(!b.c.messages.some(m => m.type === 'answer')); assert.ok(!b.c.closed); assert.ok(!s.host.closed);
+});
+test('old attempt offer replayed with its stale id is rejected', () => {
+  const s = setup(); s.negotiated();
+  const offer = JSON.stringify(s.host.messages.find(m => m.type === 'offer'));
+  s.send(s.mobile, 'close', { reason: 'done' });
+  const b = s.client(); s.room.receive(b.c, offer);
+  assert.equal(s.host.messages.filter(m => m.type === 'offer').length, 1, 'old offer must not reach the host again');
+  assert.ok(b.c.closed); assert.ok(!s.host.closed);
+});
+test('reused connection_id of a live client is rejected', () => {
+  const s = setup(); s.ready(); const dup = s.socket(); s.room.add(dup);
+  s.send(dup, 'hello', { role: 'mobile' }, s.id);
+  assert.ok(dup.closed); assert.ok(!s.mobile.closed);
+});
+test(`client over ${MAX_CLIENTS} gets busy; the others continue`, () => {
+  const s = setup(); s.ready();
+  const others = Array.from({ length: MAX_CLIENTS - 1 }, () => s.client());
+  const extra = s.client();
+  assert.deepEqual(extra.c.messages.map(m => [m.type, m.payload.code ?? m.payload.reason]), [['error', 'LIMIT_EXCEEDED'], ['close', 'busy']]);
+  assert.ok(extra.c.closed); assert.ok(others.every(o => !o.c.closed)); assert.equal(s.room.clients().length, MAX_CLIENTS);
+  s.send(s.mobile, 'close', { reason: 'done' });
+  assert.equal(s.client().c.messages.at(-1).payload.status, 'ready', 'a freed slot admits a new client');
+});
+test('second host gets busy without disturbing attempts', () => {
+  const s = setup(); s.negotiated();
+  const second = s.socket(); s.room.add(second); s.send(second, 'hello', { role: 'host' });
+  assert.deepEqual(second.messages.map(m => [m.type, m.payload.code ?? m.payload.reason]), [['error', 'LIMIT_EXCEEDED'], ['close', 'busy']]);
+  assert.ok(second.closed); assert.ok(!s.host.closed); assert.ok(!s.mobile.closed);
+  s.room.left(second); assert.equal(s.room.peers.length, 2, 'late close of busy socket is ignored');
+});
+test('clients waiting for the host all get ready when it arrives', () => {
+  const s = setup(); s.send(s.mobile, 'hello', { role: 'mobile' }); const b = s.client();
+  assert.equal(b.c.messages.at(-1).payload.status, 'waiting');
+  s.advance(29_000);
+  s.send(s.host, 'hello', { role: 'host' });
+  assert.deepEqual(s.host.messages.map(m => m.connection_id), [s.id, b.cid]);
+  s.advance(29_999); assert.ok(!s.mobile.closed, 'clock restarts when the host arrives');
+  s.advance(1); assert.ok(s.mobile.closed); assert.ok(b.c.closed); assert.ok(!s.host.closed);
+});
 test('idle host waits past both timeouts', () => {
-  const s = setup(); s.room.left(s.mobile);
-  const host = s.socket(); s.room.add(host); s.send(host, 'hello', { role: 'host' });
-  s.advance(300_001); assert.equal(s.room.peers.length, 1); assert.ok(!host.closed);
+  const s = setup(); s.room.left(s.mobile); s.send(s.host, 'hello', { role: 'host' });
+  s.advance(300_001); assert.equal(s.room.peers.length, 1); assert.ok(!s.host.closed);
   const mobile = s.socket(); s.room.add(mobile); s.advance(29_999); s.send(mobile, 'hello', { role: 'mobile' });
-  assert.equal(host.messages.at(-1).payload.status, 'ready');
-  s.advance(1); assert.equal(host.messages.at(-1).payload.reason, 'timeout', 'attempt clock starts at client socket');
+  assert.equal(s.host.messages.at(-1).payload.status, 'ready');
+  s.advance(1); assert.equal(s.host.messages.at(-1).payload.reason, 'timeout', 'attempt clock starts at client socket');
 });
 test('unidentified socket expires at 30 seconds', () => {
   const s = setup(); s.room.left(s.mobile);
   const lone = s.socket(); s.room.add(lone); s.advance(30_000); assert.ok(lone.closed);
 });
-for (const role of ['mobile', 'host']) {
-  test(`duplicate ${role} gets busy without disturbing the attempt`, () => {
-    const s = setup();
-    const first = s.socket(), second = s.socket();
-    s.room.finish('done'); s.room.add(first); s.room.add(second);
-    s.send(first, 'hello', { role }); s.send(second, 'hello', { role }, role === 'mobile' ? crypto.randomUUID() : null);
-    assert.deepEqual(second.messages.map(m => [m.type, m.payload.code ?? m.payload.reason]), [['error', 'LIMIT_EXCEEDED'], ['close', 'busy']]);
-    assert.ok(second.closed); assert.ok(!first.closed); assert.equal(s.room.peers.length, 1);
-    s.room.left(second); assert.equal(s.room.peers.length, 1, 'late close of busy socket is ignored');
-    if (role === 'mobile') assert.equal(s.room.connectionId, s.id, 'first client keeps its id');
-  });
-}
-test('third participant rejected without disconnecting pair', () => {
-  const s = setup(); assert.equal(s.room.add({ send() {}, close() {} }), false); assert.equal(s.room.peers.length, 2);
+test('socket over the room limit rejected without disconnecting peers', () => {
+  const s = setup();
+  for (let i = 2; i < MAX_SOCKETS; i++) assert.ok(s.room.add({ send() {}, close() {} }));
+  assert.equal(s.room.add({ send() {}, close() {} }), false); assert.equal(s.room.peers.length, MAX_SOCKETS);
 });
 test('rate window resets after one second', () => {
   const s = setup(); s.negotiated();
