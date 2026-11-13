@@ -6,6 +6,7 @@
   --qr-bg:#fff; --qr-fg:#000; /* QR sempre escuro sobre claro, nos dois temas (leitura da câmera) */
   --scrim:rgb(0 0 0 / .35); --shadow:0 8px 24px rgb(0 0 0 / .14);
   --radius:8px; --space:8px;
+  --term-bg:#0c0c0c; --term-fg:#cccccc; --term-sel:#264f78; /* terminal sempre escuro (design §6) */
   --font:"Segoe UI Variable","Segoe UI",system-ui,sans-serif;
   --font-mono:"Cascadia Mono",Consolas,monospace;
   color-scheme: light;
@@ -96,3 +97,43 @@ legend { font-weight:600; padding:0; }
 table { width:100%; border-collapse:collapse; font-size:.8rem; margin-bottom:var(--space); }
 th, td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--border); }
 th { color:var(--text-muted); font-weight:600; }
+
+/* Terminal Desktop (design §6, mockup tela 5) */
+.term-body { height:100vh; overflow:hidden; }
+.term-layout { display:grid; grid-template-columns:240px 1fr; height:100vh; }
+.term-layout.collapsed { grid-template-columns:0 1fr; }
+.term-layout.collapsed .sidebar { visibility:hidden; padding:0; border:0; }
+.sidebar { background:var(--surface); border-right:1px solid var(--border); padding:var(--space); overflow:auto; }
+.sidebar h3 { font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin:var(--space) 6px 4px; }
+.sidebar ul { list-style:none; margin:0; padding:0; }
+.sidebar li > button, .sidebar > button { width:100%; text-align:left; border:0; background:none; padding:6px; display:flex; gap:6px; }
+.sidebar li > button:hover, .sidebar > button:hover { background:var(--surface-2); }
+.sidebar li > button[aria-current=true] { background:var(--surface-2); font-weight:600; }
+.sidebar li ul { padding-left:14px; }
+.sidebar .add { color:var(--accent); margin-bottom:var(--space); }
+.dot-warn { color:var(--warn); }
+.dot-err { color:var(--danger); }
+.term-main { display:flex; flex-direction:column; min-width:0; min-height:0; }
+.term-tabs { min-height:41px; overflow-x:auto; }
+.term-tabs [role=tab] { display:flex; gap:6px; align-items:center; white-space:nowrap; }
+.term-tabs [role=tab] .x { color:var(--text-muted); font-size:.75rem; padding:0 4px; border-radius:4px; }
+.term-tabs [role=tab] .x:hover { background:var(--surface-2); color:var(--text); }
+.term-area { flex:1; position:relative; min-height:0; }
+.terminal { position:absolute; inset:0; margin:0; padding:var(--space) 12px; background:var(--term-bg); color:var(--term-fg); font:.85rem/1.25 var(--font-mono); overflow:hidden; white-space:pre; user-select:text; }
+.terminal ::selection { background:var(--term-sel); }
+.terminal > div { height:1.25em; }
+.terminal .cur { outline:1px solid var(--term-fg); }
+.terminal:focus .cur { background:var(--term-fg); color:var(--term-bg); outline:0; }
+.terminal .b { font-weight:700; } .terminal .i { font-style:italic; } .terminal .u { text-decoration:underline; }
+.measure { position:absolute; visibility:hidden; }
+.status-banner { display:flex; justify-content:space-between; align-items:center; gap:var(--space); background:var(--surface); border-bottom:1px solid var(--border); padding:6px 12px; font-size:.8rem; }
+.status-banner.warn { border-left:4px solid var(--warn); }
+.status-banner.err { border-left:4px solid var(--danger); }
+.status-banner button { padding:2px 10px; }
+.term-empty { position:absolute; inset:0; display:grid; place-items:center; text-align:center; background:var(--bg); padding:var(--space); }
+.menu { position:fixed; min-width:180px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:4px; z-index:2; }
+.menu button { display:block; width:100%; text-align:left; border:0; background:none; padding:6px 10px; }
+.menu button:hover, .menu button:focus-visible { background:var(--surface-2); }
+.menu .muted { padding:6px 10px; margin:0; }
+input[type=text], input[type=password] { font:inherit; width:100%; padding:6px 10px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--text); user-select:text; }
+.gap { margin-top:calc(var(--space)*1.5); }

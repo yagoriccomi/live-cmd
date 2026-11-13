@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Terminal Desktop — live-cmd</title>
+<link rel="stylesheet" href="style.css">
+<script src="terminal.js" defer></script>
+</head>
+<body class="term-body">
+<div class="term-layout" id="layout">
+  <nav class="sidebar" id="sidebar" aria-label="Conexões">
+    <h3 id="h-local">Este PC</h3>
+    <ul id="local-ul" aria-labelledby="h-local"></ul>
+    <button type="button" class="add" id="local-new" aria-haspopup="menu">+ Nova sessão ▾</button>
+    <h3 id="h-remote">Outros PCs</h3>
+    <ul id="remote-ul" aria-labelledby="h-remote"></ul>
+    <button type="button" class="add" id="remote-add">+ Adicionar PC</button>
+  </nav>
+  <main class="term-main">
+    <div class="term-tabs" role="tablist" aria-label="Terminais abertos" id="tabs"></div>
+    <div class="status-banner" role="status" id="banner" hidden><span id="banner-t"></span><span class="inline" id="banner-a"></span></div>
+    <div class="term-area">
+      <div class="terminal" id="screen" tabindex="0" aria-label="Terminal" aria-roledescription="terminal"><span class="measure" id="measure" aria-hidden="true">WWWWWWWWWW</span></div>
+      <div class="term-empty" id="empty">
+        <div><p>Nenhum terminal aberto. Escolha uma sessão à esquerda ou crie uma nova.</p>
+        <div class="actions center"><button type="button" class="btn-primary" id="empty-new">Nova sessão</button></div></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="menu" role="menu" id="menu" hidden></div>
+
+<div class="dialog-scrim" id="add-scrim" hidden>
+  <dialog open aria-modal="true" aria-labelledby="add-t" id="add">
+    <h3 id="add-t">Adicionar PC</h3>
+    <p>No outro PC, abra live-cmd › Parear e clique em <b>Copiar link para outro PC</b>.</p>
+    <label for="add-link">Link de pareamento</label>
+    <div class="inline"><input type="password" class="mono" id="add-link" autocomplete="off" spellcheck="false" aria-describedby="add-err">
+      <button type="button" id="add-show" aria-label="Mostrar link" aria-pressed="false">👁</button></div>
+    <label for="add-name" class="gap">Nome deste PC remoto (opcional)</label>
+    <input type="text" id="add-name" maxlength="40" autocomplete="off" placeholder="Outro PC">
+    <p class="notice gap">🔒 Este link é uma senha de uso único. Cole só aqui. Ele vale por 5 minutos.</p>
+    <p class="muted" role="status" id="add-state"></p>
+    <div class="alert alert-danger" role="alert" id="add-err" hidden><p></p></div>
+    <div class="actions"><button type="button" id="add-cancel">Cancelar</button><button type="button" class="btn-primary" id="add-ok">Conectar</button></div>
+  </dialog>
+</div>
+
+<div class="dialog-scrim" id="ask-scrim" hidden>
+  <dialog open aria-modal="true" aria-labelledby="ask-t" aria-describedby="ask-d" id="ask">
+    <h3 id="ask-t"></h3>
+    <p id="ask-d"></p>
+    <div class="actions"><button type="button" id="ask-cancel">Cancelar</button><button type="button" class="btn-danger" id="ask-ok"></button></div>
+  </dialog>
+</div>
+</body>
+</html>
