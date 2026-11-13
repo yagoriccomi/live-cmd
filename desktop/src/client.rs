@@ -278,18 +278,23 @@ async fn attempt_once(pin: &RemotePin, otk: Option<[u8; 32]>, sk: &SigningKey, s
         }).await.map_err(|_| Stop::Auth("EXPIRED".into()))??;
         *ready = true;
         (s.on)(ClientEvent::Ready);
+        // Sessões anexadas nesta conexão: frame de outra sessão (ex.: digitado durante a reconexão,
+        // antes do reattach) seria erro fatal no host (C3 §2.2), então é descartado.
+        // ponytail: detach/close não tiram a sessão do conjunto; o host responde com erro não fatal.
+        let mut attached = std::collections::HashSet::new();
         loop {
             tokio::select! {
                 o = rx.recv() => match o {
                     None => return Ok(()),
                     Some(Outbound::Ctl(mut v)) => { v["v"] = 1.into(); v["connection_id"] = id.as_str().into(); dc.send_text(&v.to_string()).await?; }
-                    Some(Outbound::Frame(f)) => dc.send(proto::encode_frame(&f)[..].into()).await?,
+                    Some(Outbound::Frame(f)) => if attached.contains(&f.session_id) { dc.send(proto::encode_frame(&f)[..].into()).await?; },
                 },
                 e = dc.poll() => match e {
                     Some(DataChannelEvent::OnMessage(m)) if m.is_string => {
                         let v: Value = serde_json::from_slice(&m.data).map_err(|_| Stop::Net)?;
                         // `error` sem `request_id` é fatal (C3 §2.2): o host fecha em seguida.
                         if v["type"] == "error" && v.get("request_id").is_none() { return Err(Stop::Auth(v["code"].as_str().unwrap_or("INVALID_MESSAGE").into())); }
+                        if v["type"] == "session_attach_ok" && let Some(sid) = v["session_id"].as_str().and_then(auth::uuid_bytes) { attached.insert(sid); }
                         s.control(v);
                     }
                     Some(DataChannelEvent::OnMessage(m)) => {
@@ -425,6 +430,9 @@ mod tests {
         assert_eq!(rx.recv_timeout(Duration::from_secs(20)).unwrap(), ClientEvent::Ready);
         assert!(h.clients().iter().any(|d| d.0 == sk.verifying_key().to_bytes()), "pareado na trust store");
         let sid = c.request(json!({"type":"session_create","profile_id":"d5c-remote","cols":80,"rows":24})).unwrap()["session_id"].as_str().unwrap().to_owned();
+        // Regressão: digitar/redimensionar antes do attach (como na reconexão) não derruba a conexão.
+        c.input(&sid, b"x").unwrap();
+        c.resize(&sid, 80, 24).unwrap();
         c.request(json!({"type":"session_attach","session_id":sid,"from_offset":null})).unwrap();
         c.input(&sid, b"echo d5c-remote-ok\r").unwrap();
         wait_output(&rx, &sid, "d5c-remote-ok");
