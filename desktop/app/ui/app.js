@@ -15,8 +15,8 @@ function tab(name) {
     $("tab-" + t).tabIndex = sel ? 0 : -1;
     $(t).hidden = !sel;
   }
-  // Trocar de aba não invalida a OTK (P13); entrar em Parear sem QR válido gera um.
-  if (name === "pair" && (current !== "pair" || !expires)) pair();
+  // Trocar de aba, fechar ou minimizar não invalida a OTK (P13): reabre a pendente; sem ela, gera outra.
+  if (name === "pair" && (current !== "pair" || !expires)) pair(true);
   if (name === "devices") loadDevices();
   if (name === "settings") loadSettings();
   current = name;
@@ -39,12 +39,12 @@ document.addEventListener("click", (e) => {
 let expires = null, skew = 0, known = null, ticker = null;
 const now = () => Date.now() + skew;
 
-async function pair() {
+async function pair(reuse = false) {
   show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-busy");
   $("copied").hidden = true;
   try {
-    known = new Set((await invoke("devices")).map((d) => d.id));
-    const r = await invoke("pair");
+    if (!reuse || !known) known = new Set((await invoke("devices")).map((d) => d.id));
+    const r = (reuse && await invoke("qr").catch(() => null)) || await invoke("pair");
     skew = r.now_ms - Date.now();
     expires = r.expires_ms;
     $("qr").src = r.qr;
@@ -222,4 +222,9 @@ $("logs").onclick = () => invoke("open_data_dir");
 
 // Bandeja pede uma aba com a janela já aberta.
 window.__TAURI__.event.listen("tab", (e) => tab(e.payload));
+// Minimizada: o QR sai da tela (P13); ao restaurar, volta o da OTK pendente.
+window.__TAURI__.event.listen("visible", (e) => {
+  if (!e.payload) { clearInterval(ticker); expires = null; $("qr").removeAttribute("src"); show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-busy"); }
+  else if (current === "pair" && !expires) pair(true);
+});
 tab(location.hash.slice(1));

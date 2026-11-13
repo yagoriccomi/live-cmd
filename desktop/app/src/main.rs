@@ -59,15 +59,25 @@ fn status(app: State<App>) -> Value {
     json!({ "state": state_name(s.state), "connected": s.connected, "pairing_expires_ms": s.pairing_expires_ms, "now_ms": host::now_ms() })
 }
 
+/// Link ainda válido: há URI guardado e o host ainda tem a OTK pendente.
+fn pending(link: Option<String>, expires_ms: Option<u64>) -> Option<(String, u64)> {
+    Some((link?, expires_ms?))
+}
+
+/// QR da OTK pendente, sem gerar outra (P13: reabrir/restaurar a janela mostra a mesma OTK).
+#[tauri::command]
+fn qr(app: State<App>) -> Result<Value, String> {
+    let exp = app.svc.lock().unwrap().status().pairing_expires_ms;
+    let (uri, exp) = pending(app.link.lock().unwrap().clone(), exp).ok_or("EXPIRED")?;
+    Ok(json!({ "qr": qr_data_url(&uri)?, "expires_ms": exp, "now_ms": host::now_ms() }))
+}
+
 /// Nova OTK (invalida a anterior, C2 §1) e o QR dela.
 #[tauri::command]
 fn pair(app: State<App>) -> Result<Value, String> {
     clip::clear_if_ours();
-    let svc = app.svc.lock().unwrap();
-    let uri = svc.pair()?;
-    let qr = qr_data_url(&uri)?;
-    *app.link.lock().unwrap() = Some(uri);
-    Ok(json!({ "qr": qr, "expires_ms": svc.status().pairing_expires_ms, "now_ms": host::now_ms() }))
+    *app.link.lock().unwrap() = Some(app.svc.lock().unwrap().pair()?);
+    qr(app)
 }
 
 fn cancel(app: &App) {
@@ -257,7 +267,7 @@ fn tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_window(app, "devices")))
-        .invoke_handler(tauri::generate_handler![status, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir,
+        .invoke_handler(tauri::generate_handler![status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir,
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove])
@@ -283,9 +293,10 @@ fn main() {
             Ok(())
         })
         .on_window_event(|w, e| {
-            // Fechar a janela invalida a OTK; trocar de aba não (P13).
+            // P13: fechar/minimizar não invalida a OTK (vale até 300 s ou o uso). Fechar destrói a
+            // janela e o QR com ela; minimizar avisa a UI para tirar o QR da tela até restaurar.
             match (w.label(), e) {
-                ("main", WindowEvent::CloseRequested { .. }) => cancel(&w.state::<App>()),
+                ("main", WindowEvent::Resized(_)) => { let _ = w.emit("visible", !w.is_minimized().unwrap_or(false)); }
                 ("terminal", WindowEvent::Destroyed) => term::shutdown(w.app_handle()),
                 _ => {}
             }
@@ -308,6 +319,12 @@ mod tests {
         let svg = String::from_utf8(STANDARD.decode(url.strip_prefix("data:image/svg+xml;base64,").unwrap()).unwrap()).unwrap();
         assert!(svg.starts_with("<svg") && svg.contains("<path d=\"M"));
         assert!(!svg.contains("SEGREDO") && !svg.contains("remoteterm") && !url.contains("SEGREDO"));
+    }
+    #[test]
+    fn qr_so_com_otk_pendente() {
+        assert_eq!(pending(Some("u".into()), Some(5)), Some(("u".into(), 5)));
+        assert_eq!(pending(Some("u".into()), None), None); // usada ou expirada no host
+        assert_eq!(pending(None, Some(5)), None); // host reiniciado sem link nosso
     }
     #[test]
     fn texto_de_aparelhos() {
