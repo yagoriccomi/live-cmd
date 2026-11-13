@@ -8,12 +8,13 @@ export function admitIp(ip: string, now = Date.now()): boolean {
   connectionsByIp.set(ip, entry);
   return ++entry.count <= MAX_CONNECTIONS_PER_IP;
 }
-type Env = { ROOM: DurableObjectNamespace; ROOM_ID: string; CONNECTION_ID: string };
+// ROOM_ID: the one local host room (SPEC-C1-presenca); connection_id comes per attempt in the client hello.
+type Env = { ROOM: DurableObjectNamespace; ROOM_ID: string };
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return new Response('Local only', { status: 403 });
-    if (!env.ROOM_ID || !UUID.test(env.ROOM_ID) || !env.CONNECTION_ID || !UUID.test(env.CONNECTION_ID)) return new Response('Local configuration required', { status: 503 });
+    if (!env.ROOM_ID || !UUID.test(env.ROOM_ID)) return new Response('Local configuration required', { status: 503 });
     // Never log request URLs or bodies: only room_id (session) and C1 envelopes may reach the Worker (C2 §1).
     const roomId = url.pathname.startsWith('/v1/ws/') ? url.pathname.slice(7) : '';
     if (!ROOM_UUID.test(roomId) || roomId !== env.ROOM_ID || url.search) return new Response('Not found', { status: 404 });
@@ -24,37 +25,14 @@ export default {
     return env.ROOM.get(env.ROOM.idFromName(env.ROOM_ID)).fetch(request);
   }
 };
+// Reusable: no consumed marker. Room id is not authorization; C2 authenticates end to end (SPEC-C1-presenca §5).
 export class SignalingRoom {
-  room: Room;
+  room = new Room();
   timer?: ReturnType<typeof setInterval>;
-  private state: DurableObjectState;
-  private admitted = false;
-  private unavailable = false;
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.room = new Room(env.CONNECTION_ID);
-  }
   async fetch(): Promise<Response> {
-    return this.state.blockConcurrencyWhile(async () => {
-      if (this.unavailable) return new Response('Storage unavailable', { status: 503 });
-      if (!this.admitted) {
-        try {
-          // A room is single-use even if configuration changes. Never delete this tombstone.
-          if (await this.state.storage.get('consumed') !== undefined) return new Response('Room consumed', { status: 409 });
-          await this.state.storage.put('consumed', { connectionId: this.room.connectionId });
-          this.admitted = true;
-        } catch {
-          this.unavailable = true;
-          return new Response('Storage unavailable', { status: 503 });
-        }
-      }
-      return this.upgrade();
-    });
-  }
-  private upgrade(): Response {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-    if (!this.room.add(server)) return new Response('Room full', { status: 409 });
+    if (!this.room.add(server)) return new Response('Room busy', { status: 409 });
     server.accept();
     const cleanup = () => {
       if (!this.room.peers.length && this.timer !== undefined) { clearInterval(this.timer); this.timer = undefined; }
