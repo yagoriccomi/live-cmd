@@ -861,6 +861,91 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires local Wrangler and fresh ROOM_ID"]
     async fn wrangler_second_channel() { wrangler_channel("second-channel").await; }
+    /// S2 (P14) pelo Wrangler real: host em presença; dois clientes negociam ao mesmo tempo,
+    /// cada um com C2 próprio e eco C3; a queda de A não derruba B nem o host.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires local Wrangler and fresh ROOM_ID"]
+    async fn wrangler_two_clients() {
+        let room = std::env::var("ROOM_ID").unwrap();
+        let port = std::env::var("PORT").unwrap_or("8787".into()).parse::<u16>().unwrap();
+        let (h, _, _tmp) = store("wrangler-two");
+        hub().profiles.push(("test-cmd".into(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false }));
+        let hh = h.clone();
+        let (_stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        let url = format!("ws://127.0.0.1:{port}");
+        let r = room.clone();
+        let host = tokio::spawn(async move { run(&url, &r, hh, &Link::default(), stop_rx, &mut Vec::new(), false).await });
+        type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+        // Cliente: WS próprio na sala, connection_id sorteado, offer só após `ready` (SPEC-C1-presenca §3).
+        async fn client(port: u16, room: &str) -> R2<(impl PeerConnection, Arc<dyn DataChannel>, Binding, String, Ws)> {
+            let s = |e: Box<dyn std::error::Error + Send + Sync>| e.to_string();
+            let mut b = [0u8; 16]; getrandom::getrandom(&mut b).unwrap();
+            (b[6], b[8]) = ((b[6] & 0x0f) | 0x40, (b[8] & 0x3f) | 0x80);
+            let id = proto::uuid_str(&b);
+            let (cert, local_fp) = certificate().map_err(s)?;
+            let (tx, mut events) = mpsc::channel(260);
+            let pc = peer(cert).with_handler(Arc::new(Handler { tx, failed: tokio::sync::Notify::new() })).build().await.map_err(|x| x.to_string())?;
+            let dc = pc.create_data_channel("pty-channel", None).await.map_err(|x| x.to_string())?;
+            let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/v1/ws/{room}")).await.map_err(|x| x.to_string())?;
+            ws.send(message("hello", json!({"role":"mobile"}), &id).into()).await.map_err(|x| x.to_string())?;
+            tokio::time::timeout(Duration::from_secs(20), async {
+                loop {
+                    tokio::select! {
+                        f = ws.next() => {
+                            let f = f.ok_or("ws ended")?.map_err(|x| x.to_string())?;
+                            let m = envelope_any(f.to_text().map_err(|x| x.to_string())?).map_err(s)?;
+                            if m["connection_id"] != id.as_str() && !m["connection_id"].is_null() { return Err(format!("vazamento de connection_id: {m}")); }
+                            match m["type"].as_str() {
+                                Some("hello") if m["payload"]["status"] == "ready" => {
+                                    let o = pc.create_offer(None).await.map_err(|x| x.to_string())?;
+                                    pc.set_local_description(o.clone()).await.map_err(|x| x.to_string())?;
+                                    ws.send(message("offer", json!({"sdp":o.sdp}), &id).into()).await.map_err(|x| x.to_string())?;
+                                }
+                                Some("hello") => {}
+                                Some("answer") => pc.set_remote_description(RTCSessionDescription::answer(m["payload"]["sdp"].as_str().ok_or("answer")?.into()).map_err(|x| x.to_string())?).await.map_err(|x| x.to_string())?,
+                                Some("ice") => pc.add_ice_candidate(serde_json::from_value(m["payload"].clone()).map_err(|x| x.to_string())?).await.map_err(|x| x.to_string())?,
+                                _ => return Err(format!("{m}")),
+                            }
+                        }
+                        Some(ev) = events.recv() => match ev {
+                            Event::Ice(c) => ws.send(message("ice", serde_json::to_value(c.candidate.to_json().map_err(|x| x.to_string())?).map_err(|x| x.to_string())?, &id).into()).await.map_err(|x| x.to_string())?,
+                            Event::Failed => return Err("peer failed".to_owned()),
+                            _ => {}
+                        },
+                        ev = dc.poll() => match ev { Some(DataChannelEvent::OnOpen) => return Ok(()), Some(DataChannelEvent::OnClose) | None => return Err("closed".to_owned()), _ => {} },
+                    }
+                }
+            }).await.map_err(|_| "open timeout".to_owned())??;
+            let b = Binding { connection_id: auth::uuid_bytes(&id).ok_or("id")?, room_id: auth::uuid_bytes(room).ok_or("room")?, fp_offerer: local_fp, fp_answerer: remote_fingerprint(&pc).await.map_err(s)? };
+            Ok((pc, dc, b, id, ws))
+        }
+        let result: R2<()> = tokio::time::timeout(Duration::from_secs(60), async {
+            // As duas negociações correm ao mesmo tempo pelo Worker real.
+            let (a, b) = tokio::join!(client(port, &room), client(port, &room));
+            let ((pc_a, dc_a, bind_a, id_a, mut ws_a), (pc_b, dc_b, bind_b, id_b, ws_b)) = (a?, b?);
+            if id_a == id_b { return Err("ids iguais".to_owned()); }
+            // OTK é de uso único: um pareamento por vez, com as duas conexões abertas.
+            let otk = h.issue_otk(Instant::now()).map_err(|e| e.code().to_owned())?;
+            authenticate_dc(&dc_a, &id_a, bind_a, Some(otk), SigningKey::from_bytes(&[0x41; 32]), h.pk()).await?;
+            let otk = h.issue_otk(Instant::now()).map_err(|e| e.code().to_owned())?;
+            authenticate_dc(&dc_b, &id_b, bind_b, Some(otk), SigningKey::from_bytes(&[0x42; 32]), h.pk()).await?;
+            let (ea, eb) = tokio::join!(c3_echo_once(&dc_a, &id_a), c3_echo_once(&dc_b, &id_b));
+            ea?; eb?;
+            // Queda de A (peer e WS); B segue ecoando e o host segue na sala.
+            let _ = tokio::time::timeout(Duration::from_secs(2), pc_a.close()).await;
+            let _ = ws_a.close(None).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            echo(&dc_b, &id_b).await?;
+            c3_echo_once(&dc_b, &id_b).await?;
+            if host.is_finished() { return Err("host saiu da presença".to_owned()); }
+            let _ = tokio::time::timeout(Duration::from_secs(2), pc_b.close()).await;
+            drop(ws_b);
+            Ok(())
+        }).await.unwrap_or_else(|_| Err("integration timeout".into()));
+        let alive = !host.is_finished();
+        host.abort(); let _ = host.await;
+        assert!(result.is_ok() && alive, "wrangler_two_clients: client={result:?}, host vivo={alive}");
+    }
 
     async fn wrangler_channel(case: &str) {
         use webrtc::data_channel::RTCDataChannelInit;
