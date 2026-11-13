@@ -1438,6 +1438,7 @@ a=max-message-size:1024
         let (host, _path, tmp) = store("presence");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let server = format!("ws://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        fdir();
         let svc = Service::with_host(Config { data_dir: tmp.0.clone(), server, room: ROOM.into() }, host.clone()).unwrap();
         let c_sk = SigningKey::from_bytes(&[21; 32]);
         let c_pk = c_sk.verifying_key().to_bytes();
@@ -1486,6 +1487,7 @@ a=max-message-size:1024
     /// ecoa C3 em paralelo, e a queda de um não derruba o outro nem o socket de presença.
     #[tokio::test(flavor = "multi_thread")]
     async fn s2_two_clients_simultaneous() {
+        let _heavy = HEAVY.lock().await;
         hub().profiles.push(("test-cmd".into(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false }));
         let (host, _path, _tmp) = store("s2");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1605,6 +1607,7 @@ a=max-message-size:1024
     /// C3 N7: revogação com sessão anexada e saída fluindo fecha em até 1 s; a sessão continua viva.
     #[tokio::test]
     async fn c3_n7_revoke_with_output_flowing() {
+        let _heavy = HEAVY.lock().await;
         hub().profiles.push(("test-n7".into(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false }));
         let (host, path, _tmp) = store("n7");
         let c_sk = SigningKey::from_bytes(&[11; 32]);
@@ -1682,9 +1685,12 @@ a=max-message-size:1024
     // --- D4c: file-channel no loopback (C4 §10). Tamanhos menores que os 100 MB da spec; a queda é o fim da PeerConnection. ---
     type Rx = mpsc::UnboundedReceiver<(bool, Vec<u8>)>;
     /// Testes que saturam o loopback UDP (vazão e tempo) rodam um de cada vez.
-    static HEAVY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    /// Staging de teste único por processo (`FILES` é global).
-    fn fdir() -> PathBuf { let d = std::env::temp_dir().join(format!("live-cmd-d4c-{}", std::process::id())); files_open(&d); d }
+    pub(crate) static HEAVY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    /// Staging de teste único por processo (`FILES` é global): todo teste que abre `Service` chama antes, senão `FILES` fica num diretório que o teste apaga.
+    pub(crate) fn fdir() -> PathBuf {
+        files_open(&std::env::temp_dir().join(format!("live-cmd-d4c-{}", std::process::id())));
+        files().as_ref().unwrap().f.data_dir().to_path_buf()
+    }
     fn new_fid(n: u8) -> [u8; 16] { let mut b = [n; 16]; (b[6], b[8]) = ((b[6] & 0x0f) | 0x40, (b[8] & 0x3f) | 0x80); b }
     fn fctl(id: &str, t: Value, rid: bool) -> String { let mut t = t; t["v"] = 1.into(); t["connection_id"] = id.into(); if rid { t["request_id"] = RID.into(); } t.to_string() }
     fn drain(fc: Arc<dyn DataChannel>) -> Rx {

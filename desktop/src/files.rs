@@ -326,6 +326,7 @@ pub struct Files {
     gone: HashMap<Fid, (ConnId, u64)>,
 }
 impl Files {
+    pub fn data_dir(&self) -> &Path { &self.data_dir }
     /// Varre o staging (§5): manifesto ilegível ou versão desconhecida → pasta descartada; temporários órfãos listados removidos.
     pub fn open(data_dir: &Path, lim: Limits, env: Env, now: u64) -> Files {
         let mut f = Files { data_dir: data_dir.into(), lim, env, t: HashMap::new(), cursors: HashMap::new(), gone: HashMap::new() };

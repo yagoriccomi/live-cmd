@@ -343,7 +343,7 @@ mod tests {
             let port = listener.local_addr().unwrap().port();
             tokio::spawn(relay(listener));
             let hh = h.clone();
-            tokio::spawn(async move { let _ = run(&format!("ws://127.0.0.1:{port}"), ROOM, hh, &Link::default(), tokio::sync::watch::channel(false).1).await; });
+            tokio::spawn(async move { let _ = run(&format!("ws://127.0.0.1:{port}"), ROOM, hh, &Link::default(), tokio::sync::watch::channel(false).1, &mut Vec::new(), true).await; });
             format!("127.0.0.1:{port}")
         })
     }
@@ -363,7 +363,9 @@ mod tests {
     /// Cliente local: create, attach, input, saída, close; no hub do processo, sem rede.
     #[test]
     fn local_create_attach_input_close() {
+        let _heavy = crate::tests::HEAVY.blocking_lock();
         cmd_profile("d5c-local");
+        crate::tests::fdir();
         let (h, dir) = host("local");
         let svc = Service::with_host(Config { data_dir: dir.clone(), server: "ws://127.0.0.1:1".into(), room: ROOM.into() }, h).unwrap();
         let (on, rx) = events();
@@ -410,6 +412,7 @@ mod tests {
     /// Cliente remoto (offerer) contra o host real no loopback: pareia por OTK, abre sessão, digita, lê a saída.
     #[test]
     fn remote_pair_create_input() {
+        let _heavy = crate::tests::HEAVY.blocking_lock();
         cmd_profile("d5c-remote");
         let (h, dir) = host("remote");
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -434,6 +437,7 @@ mod tests {
     /// OTK errada: o host recusa e o cliente para sem nova tentativa, com o código C2.
     #[test]
     fn remote_bad_otk_stops_with_code() {
+        let _heavy = crate::tests::HEAVY.blocking_lock();
         let (h, dir) = host("bad");
         let rt = tokio::runtime::Runtime::new().unwrap();
         let server = host_on_loopback(&rt, &h);
