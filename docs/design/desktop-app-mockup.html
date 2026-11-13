@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>live-cmd — mockup do app de bandeja (D5)</title>
+<style>
+/* Tokens de tema: único lugar com cores. Segue o Windows via prefers-color-scheme.
+   [data-theme] só serve para revisar o mockup nos dois modos. */
+:root {
+  --bg:#f3f3f3; --surface:#fff; --surface-2:#f7f7f7; --text:#1a1a1a; --text-muted:#5c5c5c;
+  --border:#e0e0e0; --accent:#005fb8; --on-accent:#fff;
+  --ok:#0f7b0f; --warn:#9d5d00; --danger:#c42b1c;
+  --term-bg:#0c0c0c; --term-fg:#cccccc; --term-ok:#6ccb5f;
+  --qr-bg:#fff; --qr-fg:#000; /* QR sempre escuro sobre claro, nos dois temas (leitura da câmera) */
+  --scrim:rgb(0 0 0 / .35); --shadow:0 8px 24px rgb(0 0 0 / .14);
+  --radius:8px; --space:8px;
+  --font:"Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+  --font-mono:"Cascadia Mono",Consolas,monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=light]) {
+    --bg:#202020; --surface:#2b2b2b; --surface-2:#323232; --text:#f2f2f2; --text-muted:#b3b3b3;
+    --border:#3d3d3d; --accent:#60cdff; --on-accent:#003a5c;
+    --ok:#6ccb5f; --warn:#fce100; --danger:#ff99a4;
+    --scrim:rgb(0 0 0 / .55); --shadow:0 8px 24px rgb(0 0 0 / .5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme=dark] {
+  --bg:#202020; --surface:#2b2b2b; --surface-2:#323232; --text:#f2f2f2; --text-muted:#b3b3b3;
+  --border:#3d3d3d; --accent:#60cdff; --on-accent:#003a5c;
+  --ok:#6ccb5f; --warn:#fce100; --danger:#ff99a4;
+  --scrim:rgb(0 0 0 / .55); --shadow:0 8px 24px rgb(0 0 0 / .5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { margin:0; font:0.875rem/1.45 var(--font); background:var(--bg); color:var(--text); }
+h1 { font-size:1.25rem; margin:0; }
+h2 { font-size:1.05rem; margin:0 0 calc(var(--space)*2); }
+h3 { font-size:.95rem; margin:0 0 var(--space); }
+p { margin:0 0 var(--space); }
+.muted { color:var(--text-muted); }
+.mono { font-family:var(--font-mono); }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+@media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
+
+/* Página do mockup (não faz parte do app) */
+.page-head { display:flex; gap:calc(var(--space)*2); align-items:center; padding:calc(var(--space)*2) calc(var(--space)*3); border-bottom:1px solid var(--border); }
+.page-head p { margin:0; }
+.screen { padding:calc(var(--space)*3); border-bottom:1px solid var(--border); }
+.row { display:flex; flex-wrap:wrap; gap:calc(var(--space)*3); align-items:flex-start; }
+.state > figcaption { font-size:.75rem; color:var(--text-muted); margin-bottom:var(--space); text-transform:uppercase; letter-spacing:.04em; }
+.state { margin:0; }
+
+/* Componentes base */
+button, .btn { font:inherit; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface); color:var(--text); padding:6px 14px; cursor:pointer; }
+button:hover { background:var(--surface-2); }
+.btn-primary { background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
+.btn-primary:hover { background:var(--accent); filter:brightness(1.08); }
+.btn-danger { background:var(--danger); color:var(--surface); border-color:var(--danger); }
+.btn-link { border:0; background:none; color:var(--accent); padding:0; text-decoration:underline; }
+.actions { display:flex; gap:var(--space); justify-content:flex-end; margin-top:calc(var(--space)*2); }
+input[type=text], input[type=password], input[type=url] { font:inherit; width:100%; padding:6px 10px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--text); }
+input[aria-invalid=true] { border-color:var(--danger); }
+label { display:block; margin-bottom:4px; }
+.field-error { color:var(--danger); font-size:.8rem; margin-top:4px; }
+
+.alert { border:1px solid currentColor; border-left-width:4px; border-radius:var(--radius); padding:var(--space) calc(var(--space)*1.5); margin:var(--space) 0; }
+.alert p { color:var(--text); margin:0; }
+.alert-danger { color:var(--danger); }
+.alert-warn { color:var(--warn); }
+.alert-ok { color:var(--ok); }
+.notice { background:var(--surface-2); border-radius:var(--radius); padding:var(--space) calc(var(--space)*1.5); font-size:.8rem; }
+.spinner { width:32px; height:32px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 1s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.skeleton { height:56px; border-radius:var(--radius); background:var(--surface-2); margin-bottom:var(--space); }
+.toast { display:inline-block; background:var(--text); color:var(--surface); border-radius:var(--radius); padding:var(--space) calc(var(--space)*2); box-shadow:var(--shadow); }
+
+/* Janela simulada */
+.window { width:420px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; position:relative; }
+.window.wide { width:960px; }
+.titlebar { display:flex; justify-content:space-between; align-items:center; padding:6px 12px; font-size:.75rem; background:var(--surface); border-bottom:1px solid var(--border); }
+.titlebar span:last-child { letter-spacing:12px; color:var(--text-muted); }
+.window-body { padding:calc(var(--space)*2); min-height:470px; }
+[role=tablist] { display:flex; gap:2px; background:var(--surface); border-bottom:1px solid var(--border); padding:0 var(--space); }
+[role=tab] { border:0; border-bottom:2px solid transparent; border-radius:0; background:none; padding:10px 14px; color:var(--text-muted); }
+[role=tab][aria-selected=true] { color:var(--text); border-bottom-color:var(--accent); font-weight:600; }
+
+/* 1. Bandeja */
+.taskbar { display:flex; gap:var(--space); align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:6px 10px; }
+.tray-icon { position:relative; width:24px; height:24px; display:grid; place-items:center; font:700 11px var(--font-mono); border:1.5px solid var(--text); border-radius:4px; }
+.tray-icon[data-state]::after { content:""; position:absolute; right:-4px; bottom:-4px; width:9px; height:9px; border-radius:50%; border:2px solid var(--surface); }
+.tray-icon[data-state=connecting]::after { background:var(--text-muted); }
+.tray-icon[data-state=error]::after { background:var(--danger); }
+.tooltip { font-size:.75rem; background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:4px 8px; box-shadow:var(--shadow); }
+.menu { width:300px; list-style:none; margin:0; padding:4px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); }
+.menu li { padding:7px 12px 7px 32px; border-radius:4px; position:relative; }
+.menu li[role=menuitem]:hover, .menu li[role=menuitemcheckbox]:hover { background:var(--surface-2); }
+.menu li[aria-disabled=true] { color:var(--text-muted); font-size:.8rem; }
+.menu li[aria-checked=true]::before { content:"✓"; position:absolute; left:12px; }
+.menu li.sep { padding:0; height:1px; background:var(--border); margin:4px 0; }
+.dot-ok { color:var(--ok); } .dot-err { color:var(--danger); }
+
+/* 2. Parear */
+.qr-panel { text-align:center; }
+.qr { width:240px; height:240px; margin:calc(var(--space)*2) auto; display:grid; place-items:center; border-radius:var(--radius); background:var(--qr-bg); position:relative; }
+.qr svg { width:216px; height:216px; }
+.qr.expired svg { filter:blur(8px); opacity:.35; }
+.qr.expired::after { content:"Expirado"; position:absolute; font-weight:600; color:var(--qr-fg); }
+.qr.blank { background:var(--surface-2); }
+.countdown { height:4px; background:var(--border); border-radius:2px; overflow:hidden; margin:var(--space) 0 4px; }
+.countdown > i { display:block; height:100%; background:var(--accent); }
+.countdown.warn > i { background:var(--warn); }
+.big-ok { font-size:48px; color:var(--ok); line-height:1; margin:calc(var(--space)*6) 0 var(--space); }
+
+/* 3. Aparelhos */
+.device-list { list-style:none; margin:0; padding:0; }
+.device-row { display:flex; justify-content:space-between; align-items:center; gap:var(--space); background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px; margin-bottom:var(--space); }
+.device-row .status { font-size:.8rem; }
+.empty { text-align:center; padding:calc(var(--space)*8) var(--space); }
+.dialog-scrim { position:absolute; inset:0; background:var(--scrim); display:grid; place-items:center; }
+dialog { position:static; display:block; width:360px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); color:var(--text); padding:calc(var(--space)*2.5); box-shadow:var(--shadow); }
+
+/* 4. Configurações */
+fieldset { border:0; border-top:1px solid var(--border); margin:0 0 calc(var(--space)*2); padding:calc(var(--space)*1.5) 0 0; }
+legend { font-weight:600; padding:0; }
+.check { display:flex; gap:var(--space); align-items:flex-start; }
+.inline { display:flex; gap:var(--space); }
+table { width:100%; border-collapse:collapse; font-size:.8rem; margin-bottom:var(--space); }
+th, td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--border); }
+th { color:var(--text-muted); font-weight:600; }
+
+/* 5. Terminal */
+.term-layout { display:grid; grid-template-columns:240px 1fr; height:520px; }
+.sidebar { background:var(--surface); border-right:1px solid var(--border); padding:var(--space); overflow:auto; }
+.sidebar h3 { font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin:var(--space) 6px 4px; }
+.sidebar ul { list-style:none; margin:0 0 var(--space); padding:0; }
+.sidebar li > button { width:100%; text-align:left; border:0; background:none; padding:6px; }
+.sidebar li > button[aria-current=true] { background:var(--surface-2); font-weight:600; }
+.sidebar .add { color:var(--accent); }
+.term-main { display:flex; flex-direction:column; min-width:0; position:relative; }
+.term-tabs [role=tab] { display:flex; gap:6px; align-items:center; }
+.term-tabs [role=tab] .x { color:var(--text-muted); font-size:.75rem; }
+.terminal { flex:1; margin:0; padding:var(--space) 12px; background:var(--term-bg); color:var(--term-fg); font:.85rem/1.4 var(--font-mono); overflow:auto; white-space:pre-wrap; }
+.terminal b { color:var(--term-ok); font-weight:normal; }
+.status-banner { display:flex; justify-content:space-between; align-items:center; gap:var(--space); background:var(--surface); color:var(--text); border-bottom:1px solid var(--border); padding:6px 12px; font-size:.8rem; }
+.status-banner.warn { border-left:4px solid var(--warn); }
+.term-empty { flex:1; display:grid; place-items:center; text-align:center; background:var(--bg); }
+.mini .term-layout { height:300px; }
+.mini.window.wide { width:640px; }
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <h1>live-cmd — mockup do app de bandeja (D5)</h1>
+  <p class="muted">Segue o tema do Windows. Spec: <a href="desktop-app.md">desktop-app.md</a></p>
+  <!-- Só para revisão do mockup; o app real não tem este botão. -->
+  <button type="button" id="theme-toggle">Alternar claro/escuro</button>
+</header>
+
+<main>
+
+<!-- ================= 1. BANDEJA ================= -->
+<section class="screen" aria-labelledby="s1">
+  <h2 id="s1">1. Bandeja do Windows</h2>
+  <div class="row">
+    <figure class="state">
+      <figcaption>Ícone: rodando</figcaption>
+      <div class="taskbar"><span class="tray-icon" role="img" aria-label="live-cmd pronto">&gt;_</span><span class="tooltip">live-cmd — pronto · 1 aparelho conectado</span></div>
+    </figure>
+    <figure class="state">
+      <figcaption>Ícone: conectando</figcaption>
+      <div class="taskbar"><span class="tray-icon" data-state="connecting" role="img" aria-label="live-cmd conectando">&gt;_</span><span class="tooltip">live-cmd — conectando ao servidor…</span></div>
+    </figure>
+    <figure class="state">
+      <figcaption>Ícone: erro / offline</figcaption>
+      <div class="taskbar"><span class="tray-icon" data-state="error" role="img" aria-label="live-cmd sem conexão">&gt;_</span><span class="tooltip">live-cmd — sem conexão com o servidor. Clique para ver.</span></div>
+    </figure>
+  </div>
+  <div class="row" style="margin-top:24px">
+    <figure class="state">
+      <figcaption>Menu: normal</figcaption>
+      <ul class="menu" role="menu" aria-label="live-cmd">
+        <li role="none" aria-disabled="true"><span class="dot-ok" aria-hidden="true">●</span> Pronto · 2 aparelhos conectados</li>
+        <li class="sep" role="separator"></li>
+        <li role="menuitem">Abrir Terminal Desktop</li>
+        <li role="menuitem">Novo Pareamento (Exibir QR Code)</li>
+        <li role="menuitem">Dispositivos Conectados</li>
+        <li class="sep" role="separator"></li>
+        <li role="menuitemcheckbox" aria-checked="true">Iniciar com o Windows</li>
+        <li role="menuitem">Configurações</li>
+        <li class="sep" role="separator"></li>
+        <li role="menuitem">Sair</li>
+      </ul>
+    </figure>
+    <figure class="state">
+      <figcaption>Menu: primeiro uso (autostart desmarcado) + erro</figcaption>
+      <ul class="menu" role="menu" aria-label="live-cmd">
+        <li role="none" aria-disabled="true"><span class="dot-err" aria-hidden="true">⚠</span> Sem conexão com o servidor — tentando de novo</li>
+        <li role="menuitem">Ver detalhes</li>
+        <li class="sep" role="separator"></li>
+        <li role="menuitem">Abrir Terminal Desktop</li>
+        <li role="menuitem">Novo Pareamento (Exibir QR Code)</li>
+        <li role="menuitem">Dispositivos Conectados</li>
+        <li class="sep" role="separator"></li>
+        <li role="menuitemcheckbox" aria-checked="false">Iniciar com o Windows</li>
+        <li role="menuitem">Configurações</li>
+        <li class="sep" role="separator"></li>
+        <li role="menuitem">Sair</li>
+      </ul>
+    </figure>
+    <figure class="state">
+      <figcaption>Sair com aparelhos conectados</figcaption>
+      <dialog open aria-labelledby="quit-t">
+        <h3 id="quit-t">Sair do live-cmd?</h3>
+        <p>2 aparelhos serão desconectados e os terminais abertos serão encerrados.</p>
+        <div class="actions"><button type="button" autofocus>Cancelar</button><button type="button" class="btn-primary">Sair</button></div>
+      </dialog>
+    </figure>
+  </div>
+</section>
+
+<!-- ================= 2. PAREAR ================= -->
+<section class="screen" aria-labelledby="s2">
+  <h2 id="s2">2. Janela principal — aba Parear</h2>
+  <div class="row">
+
+    <figure class="state"><figcaption>Gerando</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="true">Parear</button><button role="tab" aria-selected="false">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body qr-panel" aria-busy="true">
+          <h2>Parear um celular</h2>
+          <div class="qr blank"><div class="spinner" role="status" aria-label="Gerando QR Code"></div></div>
+          <p class="muted" aria-live="polite">Gerando QR Code…</p>
+        </div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Exibindo (4:59)</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="true">Parear</button><button role="tab" aria-selected="false">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body qr-panel">
+          <h2>Parear um celular</h2>
+          <p class="muted">Abra o live-cmd no celular e leia este código.</p>
+          <!-- No app: <img alt="QR Code de pareamento">. Nunca o conteúdo do URI em texto/alt/title. -->
+          <div class="qr" role="img" aria-label="QR Code de pareamento"><svg viewBox="0 0 21 21" aria-hidden="true"><use href="#qr-fake"/></svg></div>
+          <div class="countdown" aria-hidden="true"><i style="width:99%"></i></div>
+          <p aria-live="off">Expira em <strong>4:59</strong></p>
+          <p class="notice">🔒 Este código dá acesso aos terminais deste PC. Não compartilhe nem tire print. Ele vale uma vez e por 5 minutos.</p>
+          <div class="actions" style="justify-content:center"><button type="button" class="btn-primary" autofocus>Gerar novo QR</button></div>
+          <button type="button" class="btn-link">Copiar link para outro PC</button>
+        </div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Últimos 30 s + link copiado</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="true">Parear</button><button role="tab" aria-selected="false">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body qr-panel">
+          <h2>Parear um celular</h2>
+          <p class="muted">Abra o live-cmd no celular e leia este código.</p>
+          <div class="qr" role="img" aria-label="QR Code de pareamento"><svg viewBox="0 0 21 21" aria-hidden="true"><use href="#qr-fake"/></svg></div>
+          <div class="countdown warn" aria-hidden="true"><i style="width:9%"></i></div>
+          <p>Expira em <strong>0:29</strong></p>
+          <p class="notice">🔒 Este código dá acesso aos terminais deste PC. Não compartilhe nem tire print. Ele vale uma vez e por 5 minutos.</p>
+          <div class="actions" style="justify-content:center"><button type="button" class="btn-primary">Gerar novo QR</button></div>
+          <p class="alert alert-ok" role="status"><span>Link copiado. Ele vale até o QR expirar.</span></p>
+        </div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Expirado</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="true">Parear</button><button role="tab" aria-selected="false">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body qr-panel">
+          <h2>Parear um celular</h2>
+          <div class="qr expired" role="img" aria-label="QR Code expirado"><svg viewBox="0 0 21 21" aria-hidden="true"><use href="#qr-fake"/></svg></div>
+          <p aria-live="polite">Este QR Code expirou.</p>
+          <div class="actions" style="justify-content:center"><button type="button" class="btn-primary" autofocus>Gerar novo QR</button></div>
+        </div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Pareado</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="true">Parear</button><button role="tab" aria-selected="false">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body qr-panel" role="status">
+          <div class="big-ok" aria-hidden="true">✓</div>
+          <h2>Pareado com Pixel de Yago.</h2>
+          <p class="muted">Ele já pode abrir terminais deste PC.</p>
+          <div class="actions" style="justify-content:center"><button type="button" class="btn-primary" autofocus>Concluir</button></div>
+        </div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Erro: servidor inacessível</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="true">Parear</button><button role="tab" aria-selected="false">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body qr-panel">
+          <h2>Parear um celular</h2>
+          <div class="qr blank"></div>
+          <div class="alert alert-danger" role="alert"><p>Não foi possível falar com o servidor de sinalização. Confira a internet ou o endereço em Configurações.</p></div>
+          <div class="actions" style="justify-content:center"><button type="button">Abrir Configurações</button><button type="button" class="btn-primary" autofocus>Tentar de novo</button></div>
+        </div></div>
+    </figure>
+
+  </div>
+</section>
+
+<!-- ================= 3. APARELHOS ================= -->
+<section class="screen" aria-labelledby="s3">
+  <h2 id="s3">3. Janela principal — aba Aparelhos</h2>
+  <div class="row">
+
+    <figure class="state"><figcaption>Lista</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="false">Parear</button><button role="tab" aria-selected="true">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body">
+          <ul class="device-list">
+            <li class="device-row"><div><strong>📱 Pixel de Yago</strong><br><span class="muted">Pareado em 08/11/2026 · Visto agora</span><br><span class="status dot-ok">● Conectado agora</span></div><button type="button" aria-label="Remover Pixel de Yago">Remover</button></li>
+            <li class="device-row"><div><strong>📱 iPhone da Ana</strong><br><span class="muted">Pareado em 09/11/2026 · Visto há 3 dias</span><br><span class="status muted">○ Desconectado</span></div><button type="button" aria-label="Remover iPhone da Ana">Remover</button></li>
+            <li class="device-row"><div><strong>💻 Notebook-Sala</strong><br><span class="muted">Pareado em 10/11/2026 · Visto há 5 min</span><br><span class="status muted">○ Desconectado</span></div><button type="button" aria-label="Remover Notebook-Sala">Remover</button></li>
+          </ul>
+          <div class="actions"><button type="button">Parear novo aparelho</button></div>
+        </div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Carregando</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="false">Parear</button><button role="tab" aria-selected="true">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body" aria-busy="true" aria-label="Carregando aparelhos"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Vazio</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="false">Parear</button><button role="tab" aria-selected="true">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body empty"><p>Nenhum aparelho pareado ainda.</p><button type="button" class="btn-primary">Parear um celular</button></div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Erro ao ler</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="false">Parear</button><button role="tab" aria-selected="true">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body"><div class="alert alert-danger" role="alert"><p>Não foi possível ler a lista de aparelhos.</p></div><div class="actions"><button type="button" class="btn-primary">Tentar de novo</button></div></div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Confirmar remoção (irreversível)</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="false">Parear</button><button role="tab" aria-selected="true">Aparelhos</button><button role="tab" aria-selected="false">Configurações</button></div>
+        <div class="window-body"><div class="skeleton"></div><div class="skeleton"></div></div>
+        <div class="dialog-scrim">
+          <dialog open aria-modal="true" aria-labelledby="rm-t" aria-describedby="rm-d">
+            <h3 id="rm-t">Remover "Pixel de Yago"?</h3>
+            <p id="rm-d">Este celular perde o acesso aos terminais deste PC na hora. Se estiver conectado, será desconectado. Para usar de novo, será preciso parear com um novo QR Code.</p>
+            <div class="actions"><button type="button" autofocus>Cancelar</button><button type="button" class="btn-danger">Remover aparelho</button></div>
+          </dialog>
+        </div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Erro ao remover / sucesso</figcaption>
+      <dialog open aria-labelledby="rm2-t">
+        <h3 id="rm2-t">Remover "Pixel de Yago"?</h3>
+        <div class="alert alert-danger" role="alert"><p>Não foi possível remover. O aparelho continua com acesso. Tente de novo.</p></div>
+        <div class="actions"><button type="button">Cancelar</button><button type="button" class="btn-danger">Remover aparelho</button></div>
+      </dialog>
+      <p style="margin-top:16px"><span class="toast" role="status">Pixel de Yago foi removido.</span></p>
+    </figure>
+
+  </div>
+</section>
+
+<!-- ================= 4. CONFIGURAÇÕES ================= -->
+<section class="screen" aria-labelledby="s4">
+  <h2 id="s4">4. Janela principal — aba Configurações</h2>
+  <div class="row">
+
+    <figure class="state"><figcaption>Normal</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="false">Parear</button><button role="tab" aria-selected="false">Aparelhos</button><button role="tab" aria-selected="true">Configurações</button></div>
+        <form class="window-body" onsubmit="return false">
+          <fieldset><legend>Geral</legend>
+            <label class="check"><input type="checkbox"> <span>Iniciar com o Windows<br><span class="muted">Abre o live-cmd na bandeja quando você entra no Windows.</span></span></label>
+          </fieldset>
+          <fieldset><legend>Servidor de sinalização</legend>
+            <label for="srv1">Endereço</label>
+            <div class="inline"><input id="srv1" type="url" class="mono" value="wss://sinal.exemplo.workers.dev"><button type="submit">Salvar</button></div>
+            <p class="muted" style="font-size:.8rem;margin-top:4px">O celular só aceita servidores conhecidos pelo app. Mudar aqui pode exigir atualizar o celular.</p>
+          </fieldset>
+          <fieldset><legend>Perfis de terminal</legend>
+            <table><thead><tr><th scope="col">Nome</th><th scope="col">Comando</th></tr></thead>
+              <tbody><tr><td>PowerShell</td><td class="mono">pwsh.exe</td></tr><tr><td>Ubuntu (WSL)</td><td class="mono">wsl.exe -d Ubuntu</td></tr></tbody></table>
+            <button type="button">Abrir pasta de configuração</button>
+          </fieldset>
+          <fieldset><legend>Sobre</legend>
+            <p>live-cmd 0.5.0 · <button type="button" class="btn-link">Ver logs</button></p>
+            <p class="muted" style="font-size:.8rem">Software sem assinatura digital: o Windows pode mostrar "editor desconhecido".</p>
+          </fieldset>
+        </form></div>
+    </figure>
+
+    <figure class="state"><figcaption>Validação e erros</figcaption>
+      <div class="window"><div class="titlebar"><span>live-cmd</span><span>— ✕</span></div>
+        <div role="tablist" aria-label="Seções"><button role="tab" aria-selected="false">Parear</button><button role="tab" aria-selected="false">Aparelhos</button><button role="tab" aria-selected="true">Configurações</button></div>
+        <form class="window-body" onsubmit="return false">
+          <fieldset><legend>Geral</legend>
+            <label class="check"><input type="checkbox"> <span>Iniciar com o Windows</span></label>
+            <div class="alert alert-danger" role="alert"><p>Não foi possível ativar o início com o Windows.</p></div>
+          </fieldset>
+          <fieldset><legend>Servidor de sinalização</legend>
+            <label for="srv2">Endereço</label>
+            <div class="inline"><input id="srv2" type="url" class="mono" value="ws://sinal.exemplo.dev" aria-invalid="true" aria-describedby="srv2-e"><button type="submit" disabled>Salvar</button></div>
+            <p id="srv2-e" class="field-error">Use um endereço wss://. ws:// só é aceito em localhost.</p>
+          </fieldset>
+          <fieldset><legend>Perfis de terminal</legend>
+            <div class="alert alert-warn" role="alert"><p>O arquivo profiles.json tem um erro na linha 12. Os perfis padrão estão em uso.</p></div>
+            <table><thead><tr><th scope="col">Nome</th><th scope="col">Comando</th></tr></thead>
+              <tbody><tr><td>PowerShell</td><td class="mono">pwsh.exe</td></tr><tr><td>WSL</td><td class="mono">wsl.exe</td></tr></tbody></table>
+            <button type="button">Abrir pasta de configuração</button>
+          </fieldset>
+        </form></div>
+    </figure>
+
+  </div>
+</section>
+
+<!-- ================= 5. TERMINAL DESKTOP ================= -->
+<section class="screen" aria-labelledby="s5">
+  <h2 id="s5">5. Terminal Desktop (este PC + outros PCs)</h2>
+
+  <figure class="state"><figcaption>Com abas abertas</figcaption>
+    <div class="window wide"><div class="titlebar"><span>live-cmd — Terminal</span><span>— ▢ ✕</span></div>
+      <div class="term-layout">
+        <nav class="sidebar" aria-label="Conexões">
+          <h3>Este PC</h3>
+          <ul>
+            <li><button type="button" aria-current="true"><span class="dot-ok" aria-hidden="true">●</span> PowerShell</button></li>
+            <li><button type="button"><span class="dot-ok" aria-hidden="true">●</span> Ubuntu (WSL)</button></li>
+            <li><button type="button" class="add" aria-haspopup="menu">+ Nova sessão ▾</button></li>
+          </ul>
+          <h3>Outros PCs</h3>
+          <ul>
+            <li><button type="button"><span class="dot-ok" aria-hidden="true">●</span> Notebook-Sala <span class="muted">· conectado</span></button></li>
+            <li><button type="button"><span class="muted" aria-hidden="true">○</span> PC-Trabalho <span class="muted">· desconectado</span></button></li>
+            <li><button type="button" class="add">+ Adicionar PC</button></li>
+          </ul>
+        </nav>
+        <div class="term-main">
+          <div role="tablist" class="term-tabs" aria-label="Terminais">
+            <button role="tab" aria-selected="true">PowerShell <span class="x" aria-label="Fechar aba">✕</span></button>
+            <button role="tab" aria-selected="false">Ubuntu (WSL) <span class="x" aria-label="Fechar aba">✕</span></button>
+            <button role="tab" aria-selected="false">Notebook-Sala · pwsh <span class="x" aria-label="Fechar aba">✕</span></button>
+            <button type="button" aria-label="Nova sessão" style="border:0;background:none">+</button>
+          </div>
+          <pre class="terminal" tabindex="0" aria-label="Terminal PowerShell"><b>PS C:\Users\yago&gt;</b> git status
+On branch main
+nothing to commit, working tree clean
+<b>PS C:\Users\yago&gt;</b> _</pre>
+        </div>
+      </div></div>
+  </figure>
+
+  <div class="row" style="margin-top:24px">
+    <figure class="state mini"><figcaption>Vazio (sem abas)</figcaption>
+      <div class="window wide mini"><div class="titlebar"><span>live-cmd — Terminal</span><span>— ▢ ✕</span></div>
+        <div class="term-layout">
+          <nav class="sidebar" aria-label="Conexões"><h3>Este PC</h3><ul><li><button type="button"><span class="dot-ok" aria-hidden="true">●</span> PowerShell</button></li><li><button type="button" class="add">+ Nova sessão ▾</button></li></ul><h3>Outros PCs</h3><ul><li><button type="button" class="add">+ Adicionar PC</button></li></ul></nav>
+          <div class="term-main"><div class="term-empty"><div><p>Nenhum terminal aberto.<br>Escolha uma sessão à esquerda ou crie uma nova.</p><button type="button" class="btn-primary">Nova sessão</button></div></div></div>
+        </div></div>
+    </figure>
+
+    <figure class="state mini"><figcaption>Reconectando / sessão encerrada</figcaption>
+      <div class="window wide mini"><div class="titlebar"><span>live-cmd — Terminal</span><span>— ▢ ✕</span></div>
+        <div class="term-layout">
+          <nav class="sidebar" aria-label="Conexões"><h3>Outros PCs</h3><ul><li><button type="button" aria-current="true"><span class="dot-err" aria-hidden="true">⚠</span> Notebook-Sala</button></li></ul></nav>
+          <div class="term-main">
+            <div class="status-banner warn" role="status"><span>Conexão perdida. Reconectando… (tentativa 2)</span><button type="button">Cancelar</button></div>
+            <pre class="terminal" aria-label="Terminal Notebook-Sala"><b>PS C:\&gt;</b> npm run build
+… (histórico continua legível)</pre>
+            <div class="status-banner" role="status"><span>A sessão terminou (código 0).</span><span><button type="button">Nova sessão</button> <button type="button">Fechar aba</button></span></div>
+          </div>
+        </div></div>
+    </figure>
+
+    <figure class="state"><figcaption>Adicionar PC (link de outro PC)</figcaption>
+      <dialog open aria-labelledby="add-t">
+        <h3 id="add-t">Adicionar outro PC</h3>
+        <p class="muted">No outro PC, abra live-cmd › Parear e clique em <strong>Copiar link para outro PC</strong>.</p>
+        <label for="lnk">Link de pareamento</label>
+        <div class="inline"><input id="lnk" type="password" autocomplete="off" spellcheck="false" value="xxxxxxxxxxxxxxxx"><button type="button" aria-label="Mostrar link">👁</button></div>
+        <label for="nm" style="margin-top:8px">Nome deste PC remoto <span class="muted">(opcional)</span></label>
+        <input id="nm" type="text" placeholder="Notebook-Sala">
+        <p class="notice" style="margin-top:8px">🔒 Este link é uma senha de uso único. Cole só aqui. Ele vale por 5 minutos.</p>
+        <div class="actions"><button type="button">Cancelar</button><button type="button" class="btn-primary">Conectar</button></div>
+      </dialog>
+    </figure>
+
+    <figure class="state"><figcaption>Adicionar PC: erros</figcaption>
+      <dialog open aria-labelledby="add2-t">
+        <h3 id="add2-t">Adicionar outro PC</h3>
+        <label for="lnk2">Link de pareamento</label>
+        <input id="lnk2" type="password" value="xxxxxxxxxxxxxxxx" aria-invalid="true" aria-describedby="lnk2-e">
+        <div id="lnk2-e" class="alert alert-danger" role="alert"><p>Link inválido ou já usado. Gere um novo no outro PC.</p></div>
+        <div class="alert alert-danger"><p>Tempo esgotado. Gere um novo QR Code ou tente de novo.</p></div>
+        <div class="actions"><button type="button">Cancelar</button><button type="button" class="btn-primary">Conectar</button></div>
+      </dialog>
+    </figure>
+  </div>
+</section>
+
+</main>
+
+<!-- QR falso (padrão decorativo, não codifica nada). -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs><g id="qr-fake" style="fill:var(--qr-fg)">
+    <path d="M0 0h7v7H0zM1 1v5h5V1zM2 2h3v3H2zM14 0h7v7h-7zm1 1v5h5V1zm1 1h3v3h-3zM0 14h7v7H0zm1 1v5h5v-5zm1 1h3v3H2z" fill-rule="evenodd"/>
+    <path d="M8 0h1v2H8zM10 1h2v1h-2zM9 3h2v2H9zM12 4h1v3h-1zM8 6h1v2H8zM0 8h2v1H0zM3 8h3v1H3zM9 8h3v1H9zM14 8h2v2h-2zM18 8h3v1h-3zM1 10h2v2H1zM5 10h3v1H5zM10 10h1v3h-1zM12 10h2v1h-2zM17 10h2v2h-2zM0 12h1v1H0zM6 12h3v1H6zM13 12h3v2h-3zM19 12h2v1h-2zM8 14h2v2H8zM11 14h1v1h-1zM17 14h1v3h-1zM19 15h2v1h-2zM9 17h3v1H9zM13 16h3v1h-3zM8 19h1v2H8zM11 19h2v1h-2zM14 18h2v3h-2zM18 18h3v1h-3zM19 20h2v1h-2z"/>
+  </g></defs>
+</svg>
+
+<script>
+  // Só para revisão do mockup: alterna o tema manualmente. O app segue o Windows.
+  document.getElementById('theme-toggle').onclick = () => {
+    const r = document.documentElement;
+    const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    r.dataset.theme = dark ? 'light' : 'dark';
+  };
+</script>
+</body>
+</html>
