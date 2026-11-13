@@ -39,11 +39,14 @@ struct Shared {
     seq: Mutex<HashMap<Sid, u64>>,
 }
 impl Shared {
-    /// Resposta vai para quem pediu; o resto vira evento. `session_attach_ok` fixa o `seq`.
-    fn attached(&self, v: &Value) {
+    /// `session_attach_ok` ajusta o `seq`. `reset` só no primeiro attach da sessão nesta conexão;
+    /// nos demais o contador nunca desce, senão frames em voo repetem número e viram duplicata.
+    fn attached(&self, v: &Value, reset: bool) {
         if v["type"] == "session_attach_ok"
             && let (Some(sid), Ok(n)) = (v["session_id"].as_str().and_then(auth::uuid_bytes), proto::parse_u64(&v["last_input_seq"])) {
-            self.seq.lock().unwrap().insert(sid, n);
+            let mut m = self.seq.lock().unwrap();
+            let c = m.entry(sid).or_insert(n);
+            *c = if reset { n } else { (*c).max(n) };
         }
     }
     fn next_seq(&self, sid: Sid) -> u64 {
@@ -52,8 +55,9 @@ impl Shared {
         *n += 1;
         *n
     }
+    /// Resposta vai para quem pediu; o resto vira evento.
     fn control(&self, v: Value) {
-        self.attached(&v);
+        self.attached(&v, false);
         let waiter = v["request_id"].as_str().and_then(|r| self.pending.lock().unwrap().remove(r));
         match waiter { Some(w) => { let _ = w.send(v); } None => (self.on)(ClientEvent::Control(v)) }
     }
@@ -120,7 +124,7 @@ impl Client {
                 if matches!(req, Req::Focus(_)) { return Ok(json!({"type":"client_focus_ok"})); }
                 let mut v = match hub().request(*conn, *pk, req, now_ms()) { Ok(v) => v, Err(e) => proto::error(e) };
                 v["request_id"] = rid.into();
-                self.shared.attached(&v);
+                self.shared.attached(&v, false);
                 v
             }
             Wire::Remote(tx) => {
@@ -303,7 +307,7 @@ async fn attempt_once(pin: &RemotePin, otk: Option<[u8; 32]>, sk: &SigningKey, s
                         let v: Value = serde_json::from_slice(&m.data).map_err(|_| Stop::Net)?;
                         // `error` sem `request_id` é fatal (C3 §2.2): o host fecha em seguida.
                         if v["type"] == "error" && v.get("request_id").is_none() { return Err(Stop::Auth(v["code"].as_str().unwrap_or("INVALID_MESSAGE").into())); }
-                        if v["type"] == "session_attach_ok" && let Some(sid) = v["session_id"].as_str().and_then(auth::uuid_bytes) { attached.insert(sid); }
+                        if v["type"] == "session_attach_ok" && let Some(sid) = v["session_id"].as_str().and_then(auth::uuid_bytes) && attached.insert(sid) { s.attached(&v, true); }
                         s.control(v);
                     }
                     Some(DataChannelEvent::OnMessage(m)) => {
