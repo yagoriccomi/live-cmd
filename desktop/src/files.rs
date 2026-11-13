@@ -76,7 +76,7 @@ pub fn valid_path(s: &str) -> bool {
     let b = p.as_bytes();
     let rest = if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' { &p[3..] }
         else if let Some(unc) = p.strip_prefix("\\\\") {
-            // ponytail: UNC só validado na forma (servidor e compartilhamento não vazios); regras extras da §8B ficam para D4b.
+            // UNC validado na forma (servidor e compartilhamento não vazios); `..` acima da raiz do compartilhamento proibido abaixo (§8B).
             let mut it = unc.splitn(3, '\\');
             let (srv, share) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
             if srv.is_empty() || share.is_empty() { return false; }
@@ -85,14 +85,53 @@ pub fn valid_path(s: &str) -> bool {
     !rest.split('\\').any(|c| c == "." || c == "..") && !rest.contains(':')
 }
 
+/// §8A `rel_path`: só `/`, cada componente com as regras de `filename`, ≤ 4096 bytes (cobre `..`, `/abs`, `C:/x`, `//x`, `a//b`).
+pub fn rel_ok(s: &str) -> bool { s.len() <= 4096 && s.split('/').all(valid_filename) }
+/// Chave de colisão do lote: NFC + minúsculas (o destino Windows não distingue).
+/// ponytail: `to_lowercase` aproxima a tabela de maiúsculas do NTFS; casos raros (ß, sigma final) podem divergir.
+fn key(s: &str) -> String {
+    use windows::Win32::Globalization::{NormalizeString, NormalizationC};
+    let w: Vec<u16> = s.encode_utf16().collect();
+    let n = if w.is_empty() { 0 } else { unsafe { NormalizeString(NormalizationC, &w, None) } };
+    let mut o = vec![0u16; n.max(0) as usize];
+    let n = if n > 0 { unsafe { NormalizeString(NormalizationC, &w, Some(&mut o)) } } else { 0 };
+    if n > 0 { String::from_utf16_lossy(&o[..n as usize]) } else { s.to_owned() }.to_lowercase()
+}
+
+/// Entrada do manifesto de lote (§8A). `st`: 0 pendente, 1 concluído, 2 pulado, 3 falhou. `act`: decisão de conflito.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct E { pub rel: String, pub dir: bool, pub size: u64, pub sha: Option<[u8; 32]>, pub fid: Option<Fid>, pub act: String, pub st: u8 }
+
+fn entries(v: Option<&Value>) -> R<Vec<E>> {
+    let a = v.and_then(Value::as_array).filter(|a| a.len() <= 1000).ok_or(InvalidMessage)?;
+    a.iter().map(|e| {
+        let o = e.as_object().ok_or(InvalidMessage)?;
+        let rel = o.get("rel_path").and_then(Value::as_str).filter(|r| rel_ok(r)).ok_or(InvalidMessage)?.to_owned();
+        let dir = match o.get("kind").and_then(Value::as_str) { Some("dir") => true, Some("file") => false, _ => return Err(InvalidMessage) };
+        if o.keys().any(|k| !["rel_path", "kind", "size_bytes", "sha256", "file_id"].contains(&k.as_str())) || (dir && o.len() > 2) { return Err(InvalidMessage); }
+        let size = if dir { 0 } else { parse_u64(o.get("size_bytes").ok_or(InvalidMessage)?)? };
+        let sha = match o.get("sha256") { None | Some(Value::Null) => None, Some(s) => Some(s.as_str().and_then(unhex).ok_or(InvalidMessage)?) };
+        let fid = match o.get("file_id") { None | Some(Value::Null) => None, Some(s) => Some(s.as_str().and_then(uuid_v4_lower).ok_or(InvalidMessage)?) };
+        Ok(E { rel, dir, size, sha, fid, ..E::default() })
+    }).collect()
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Req {
     FsList { path: Option<String>, session_id: Option<Fid>, cursor: Option<String> },
-    UploadInit { file_id: Fid, session_id: Option<Fid>, filename: String, target_dir: Option<String>, size: u64, overwrite: bool, sha256: [u8; 32] },
-    DownloadInit { file_id: Fid, path: String },
+    /// `batch` = (`batch_id`, `rel_path`) no lugar de `filename`/`target_dir` (D13).
+    UploadInit { file_id: Fid, session_id: Option<Fid>, filename: String, target_dir: Option<String>, size: u64, overwrite: bool, sha256: [u8; 32], batch: Option<(Fid, String)> },
+    DownloadInit { file_id: Fid, path: String, batch: Option<(Fid, String)> },
     Get { file_id: Fid, ranges: Vec<(u32, u32)> },
     Resume { file_id: Fid, cursor: Option<String> },
     Cancel(Fid),
+    BatchUploadInit { batch_id: Fid, session_id: Option<Fid>, root_name: String, target_dir: Option<String>, total_files: u64, total_bytes: u64, entries: Vec<E>, more: bool },
+    BatchEntries { batch_id: Fid, entries: Vec<E>, more: bool },
+    /// ponytail: páginas seguintes do manifesto de download pedidas com o mesmo controle + `cursor` (a spec não nomeia o pedido).
+    BatchDownloadInit { batch_id: Fid, path: String, cursor: Option<String> },
+    BatchResolve { batch_id: Fid, root: Option<String>, decisions: Vec<(String, String)>, apply_all: Option<String> },
+    BatchStatus { batch_id: Fid, cursor: Option<String> },
+    BatchCancel(Fid),
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Control {
@@ -100,6 +139,8 @@ pub enum Control {
     /// Espontâneos do cliente (destinatário no download).
     Ack { file_id: Fid, ranges: Vec<(u32, u32)> },
     Complete(Fid),
+    /// `batch_complete` do cliente (download de lote).
+    BatchComplete(Fid),
     /// Não fatal com `request_id` ou `file_id` (§1, D3).
     Error { request_id: Option<String>, file_id: Option<Fid>, code: Error },
 }
@@ -141,22 +182,60 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
             Req::FsList { path, session_id: opt_id("session_id")?, cursor: cursor()? }
         }
         "file_upload_init" => {
-            fields(&["file_id", "session_id", "filename", "target_dir", "size_bytes", "chunk_size", "total_chunks", "sha256", "overwrite"], &[])?;
+            let batch = o.contains_key("batch_id");
+            if batch { fields(&["file_id", "batch_id", "rel_path", "size_bytes", "chunk_size", "total_chunks", "sha256"], &["session_id"])?; }
+            else { fields(&["file_id", "session_id", "filename", "target_dir", "size_bytes", "chunk_size", "total_chunks", "sha256", "overwrite"], &[])?; }
             let size = parse_u64(&o["size_bytes"])?;
-            let filename = s("filename")?.to_owned();
+            let batch = if batch { Some((id("batch_id")?, s("rel_path")?.to_owned())) } else { None };
+            let filename = match &batch { Some((_, r)) => r.rsplit('/').next().unwrap_or("").to_owned(), None => s("filename")?.to_owned() };
             let target_dir = opt_s("target_dir")?;
             let ok = o["chunk_size"].as_u64() == Some(CHUNK) && o["total_chunks"].as_u64() == Some(total_chunks(size)) && total_chunks(size) <= u32::MAX as u64
-                && valid_filename(&filename) && target_dir.as_deref().is_none_or(valid_path);
+                && valid_filename(&filename) && target_dir.as_deref().is_none_or(valid_path) && batch.as_ref().is_none_or(|b| rel_ok(&b.1));
             if !ok { return Err(InvalidMessage); }
-            Req::UploadInit { file_id: id("file_id")?, session_id: opt_id("session_id")?, filename, target_dir, size,
-                overwrite: o["overwrite"].as_bool().ok_or(InvalidMessage)?, sha256: unhex(s("sha256")?).ok_or(InvalidMessage)? }
+            let overwrite = if batch.is_some() { false } else { o["overwrite"].as_bool().ok_or(InvalidMessage)? };
+            Req::UploadInit { file_id: id("file_id")?, session_id: opt_id("session_id")?, filename, target_dir, size, overwrite, sha256: unhex(s("sha256")?).ok_or(InvalidMessage)?, batch }
+        }
+        "file_download_init" if o.contains_key("batch_id") => {
+            fields(&["file_id", "batch_id", "rel_path"], &[])?;
+            let rel = s("rel_path")?.to_owned();
+            if !rel_ok(&rel) { return Err(InvalidMessage); }
+            Req::DownloadInit { file_id: id("file_id")?, path: String::new(), batch: Some((id("batch_id")?, rel)) }
         }
         "file_download_init" => {
             fields(&["file_id", "path"], &[])?;
             let path = s("path")?.to_owned();
             if !valid_path(&path) { return Err(InvalidMessage); }
-            Req::DownloadInit { file_id: id("file_id")?, path }
+            Req::DownloadInit { file_id: id("file_id")?, path, batch: None }
         }
+        "batch_complete" if rid.is_none() => { fields(&["batch_id"], &["done", "skipped", "failed"])?; return Ok(Control::BatchComplete(id("batch_id")?)); }
+        "batch_upload_init" => {
+            fields(&["batch_id", "session_id", "root_name", "target_dir", "total_files", "total_bytes", "entries", "more"], &[])?;
+            let (root_name, target_dir) = (s("root_name")?.to_owned(), opt_s("target_dir")?);
+            if !valid_filename(&root_name) || target_dir.as_deref().is_some_and(|p| !valid_path(p)) { return Err(InvalidMessage); }
+            Req::BatchUploadInit { batch_id: id("batch_id")?, session_id: opt_id("session_id")?, root_name, target_dir, total_files: parse_u64(&o["total_files"])?,
+                total_bytes: parse_u64(&o["total_bytes"])?, entries: entries(o.get("entries"))?, more: o["more"].as_bool().ok_or(InvalidMessage)? }
+        }
+        "batch_entries" => { fields(&["batch_id", "entries", "more"], &[])?; Req::BatchEntries { batch_id: id("batch_id")?, entries: entries(o.get("entries"))?, more: o["more"].as_bool().ok_or(InvalidMessage)? } }
+        "batch_download_init" => {
+            fields(&["batch_id", "path"], &["cursor"])?;
+            let path = s("path")?.to_owned();
+            if !valid_path(&path) { return Err(InvalidMessage); }
+            Req::BatchDownloadInit { batch_id: id("batch_id")?, path, cursor: cursor()? }
+        }
+        "batch_resolve" => {
+            fields(&["batch_id"], &["root", "decisions", "apply_all"])?;
+            let act = |v: &Value| v.as_str().filter(|a| ["overwrite", "rename", "skip"].contains(a)).map(str::to_owned).ok_or(InvalidMessage);
+            let root = match o.get("root") { None | Some(Value::Null) => None, Some(v) => Some(v.as_str().filter(|r| ["merge", "rename"].contains(r)).ok_or(InvalidMessage)?.to_owned()) };
+            let decisions = match o.get("decisions") {
+                None | Some(Value::Null) => vec![],
+                Some(Value::Array(a)) if a.len() <= 1000 => a.iter().map(|d| Ok((d.get("rel_path").and_then(Value::as_str).filter(|r| rel_ok(r)).ok_or(InvalidMessage)?.to_owned(), act(d.get("action").unwrap_or(&Value::Null))?))).collect::<R<_>>()?,
+                _ => return Err(InvalidMessage),
+            };
+            let apply_all = match o.get("apply_all") { None | Some(Value::Null) => None, Some(v) => Some(act(v)?) };
+            Req::BatchResolve { batch_id: id("batch_id")?, root, decisions, apply_all }
+        }
+        "batch_status" => { fields(&["batch_id"], &["cursor"])?; Req::BatchStatus { batch_id: id("batch_id")?, cursor: cursor()? } }
+        "batch_cancel" => { fields(&["batch_id"], &[])?; Req::BatchCancel(id("batch_id")?) }
         "file_get" => { fields(&["file_id", "ranges"], &[])?; Req::Get { file_id: id("file_id")?, ranges: ranges(o.get("ranges"))? } }
         "file_resume" => { fields(&["file_id"], &["cursor"])?; Req::Resume { file_id: id("file_id")?, cursor: cursor()? } }
         "file_cancel" => { fields(&["file_id"], &[])?; Req::Cancel(id("file_id")?) }
@@ -214,11 +293,12 @@ fn write_atomic(p: &Path, data: &[u8]) -> io::Result<()> {
     drop(f);
     move_file(&t, p, true)
 }
-fn hash_file(f: &mut fs::File) -> io::Result<[u8; 32]> {
+fn hash_file(f: &mut fs::File) -> io::Result<[u8; 32]> { hash_beat(f, &|| {}) }
+fn hash_beat(f: &mut fs::File, beat: &dyn Fn()) -> io::Result<[u8; 32]> {
     use sha2::Digest;
     f.seek(SeekFrom::Start(0))?;
     let (mut h, mut b) = (sha2::Sha256::new(), vec![0; 1 << 20]);
-    loop { let n = f.read(&mut b)?; if n == 0 { break; } h.update(&b[..n]); }
+    loop { let n = f.read(&mut b)?; if n == 0 { break; } h.update(&b[..n]); beat(); }
     Ok(h.finalize().into())
 }
 fn read_at(f: &mut fs::File, off: u64, n: usize) -> io::Result<Vec<u8>> { let mut b = vec![0; n]; f.seek(SeekFrom::Start(off))?; f.read_exact(&mut b)?; Ok(b) }
@@ -228,16 +308,19 @@ fn io_code(e: &io::Error) -> Error { match e.kind() { io::ErrorKind::NotFound | 
 const GIB: u64 = 1 << 30;
 /// §7. ponytail: valores fixos no código; tornar configuráveis quando o host tiver arquivo de configuração.
 #[derive(Debug, Clone)]
-pub struct Limits { pub max_file: u64, pub per_conn: usize, pub per_host: usize, pub staging_total: u64, pub dest_margin: u64, pub staging_floor: u64, pub window: usize, pub get_pending: usize, pub write_queue: usize, pub commit_chunks: usize, pub commit_ms: u64, pub ttl_ms: u64, pub cursor_ms: u64, pub cancel_grace_ms: u64 }
+pub struct Limits { pub max_file: u64, pub per_conn: usize, pub per_host: usize, pub staging_total: u64, pub dest_margin: u64, pub staging_floor: u64, pub window: usize, pub get_pending: usize, pub write_queue: usize, pub commit_chunks: usize, pub commit_ms: u64, pub ttl_ms: u64, pub cursor_ms: u64, pub cancel_grace_ms: u64,
+    pub max_entries: usize, pub max_depth: usize, pub batch_conn: usize, pub batch_host: usize, pub net_ms: u64 }
 impl Default for Limits {
     fn default() -> Self {
         Limits { max_file: 64 * GIB, per_conn: 4, per_host: 8, staging_total: 100 * GIB, dest_margin: GIB, staging_floor: 5 * GIB, window: 32, get_pending: 32, write_queue: 8,
-            commit_chunks: 16, commit_ms: 100, ttl_ms: 24 * 3600 * 1000, cursor_ms: 60_000, cancel_grace_ms: 5000 }
+            commit_chunks: 16, commit_ms: 100, ttl_ms: 24 * 3600 * 1000, cursor_ms: 60_000, cancel_grace_ms: 5000,
+            max_entries: 100_000, max_depth: 64, batch_conn: 1, batch_host: 2, net_ms: 30_000 }
     }
 }
 /// Dependências do disco injetáveis nos testes (N13, A5).
-pub struct Env { pub free: fn(&Path) -> Option<u64>, pub same_volume: fn(&Path, &Path) -> bool, pub fail_io: bool }
-impl Default for Env { fn default() -> Self { Env { free: disk_free, same_volume, fail_io: false } } }
+/// `pre_verify`: chamado com o temporário de rede antes da releitura (N26).
+pub struct Env { pub free: fn(&Path) -> Option<u64>, pub same_volume: fn(&Path, &Path) -> bool, pub fail_io: bool, pub pre_verify: fn(&Path) }
+impl Default for Env { fn default() -> Self { Env { free: disk_free, same_volume, fail_io: false, pre_verify: |_| {} } } }
 
 pub type Pk = [u8; 32];
 /// Identifica uma PeerConnection autenticada (atribuído por quem chama).
@@ -269,7 +352,7 @@ impl T {
     /// Download: a versão iniciada mudou (tamanho, mtime ou identidade; §4).
     fn changed(&self) -> bool {
         let m = fs::metadata(&self.dir).ok();
-        !(m.is_some_and(|m| m.len() == self.size && mtime_ms(&m) == self.mtime) && identity(&self.dir) == Some(self.dir_id))
+        !(m.is_some_and(|m| m.len() == self.size && mtime_ms(&m) == self.mtime) && same_id(&self.dir, self.dir_id))
     }
 }
 fn load(p: &Path) -> Option<(Fid, T)> {
@@ -290,6 +373,70 @@ fn load(p: &Path) -> Option<(Fid, T)> {
         t.file = fs::OpenOptions::new().read(true).write(true).open(p.join("data.part")).ok().filter(|f| f.metadata().is_ok_and(|m| m.len() == size));
     } else { t.file = fs::File::open(&t.dir).ok(); }
     t.file.is_some().then_some((fid, t))
+}
+/// Identidade conferida; servidor sem file ID estável (índice 0) → aceito, valendo caminho + tamanho + mtime (§8B, §9 item 13).
+fn same_id(p: &Path, id: (u32, u64)) -> bool { id.1 == 0 || identity(p) == Some(id) }
+fn is_net(p: &Path) -> bool { p.as_os_str().to_str().is_some_and(|s| s.starts_with(r"\\")) }
+/// Operação de rede com prazo (§8B): roda numa thread; cada `beat()` (um bloco lido/gravado) renova o prazo; estourou → `EXPIRED`.
+/// ponytail: a thread presa não é cancelada e segue até o SO desistir; um rename atrasado pode concluir depois do `EXPIRED` (a retomada vê o destino: `ALREADY_EXISTS`).
+fn timed<X: Send + 'static>(ms: u64, f: impl FnOnce(&dyn Fn()) -> X + Send + 'static) -> R<X> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || { let b = tx.clone(); let x = f(&move || { let _ = b.send(None); }); let _ = tx.send(Some(x)); });
+    loop { match rx.recv_timeout(std::time::Duration::from_millis(ms)) { Ok(Some(x)) => return Ok(x), Ok(None) => {} Err(_) => return Err(Expired) } }
+}
+fn copy_beat(a: &mut fs::File, o: &mut fs::File, beat: &dyn Fn()) -> io::Result<()> {
+    let mut b = vec![0; 1 << 20];
+    loop { let n = a.read(&mut b)?; if n == 0 { return Ok(()); } o.write_all(&b[..n])?; beat(); }
+}
+/// Nome livre "nome (n).ext" no host (§8A conflitos).
+fn free_name(dir: &Path, name: &str) -> String {
+    let (stem, ext) = match name.rfind('.') { Some(i) if i > 0 => (&name[..i], &name[i..]), _ => (name, "") };
+    (1..).map(|n| format!("{stem} ({n}){ext}")).find(|c| fs::symlink_metadata(dir.join(c)).is_err()).unwrap()
+}
+/// Todos os componentes de `root` até `p` (inclusive) existem e nenhum é link/junction (§8A: links não seguidos).
+fn no_links(root: &Path, p: &Path) -> bool {
+    let Ok(rest) = p.strip_prefix(root) else { return false };
+    let mut q = root.to_path_buf();
+    std::iter::once(None).chain(rest.components().map(Some)).all(|c| { if let Some(c) = c { q.push(c); } fs::symlink_metadata(&q).is_ok_and(|m| !is_link(&m)) })
+}
+/// Finalização em compartilhamento (§8B): temporário exclusivo, flush, releitura com SHA-256, rename; tudo com prazo de rede.
+/// Erro: temporário removido, staging local preservado (quem chama pausa).
+fn net_put(part: PathBuf, tmp: PathBuf, fin: PathBuf, replace: bool, want: [u8; 32], pre: fn(&Path), ms: u64) -> R<()> {
+    let t2 = tmp.clone();
+    let r = timed(ms, move |beat| -> R<()> {
+        let io = |e: io::Error| if matches!(e.raw_os_error(), Some(80 | 183)) { AlreadyExists } else { io_code(&e) };
+        let mut o = create_new(&tmp).map_err(io)?;
+        copy_beat(&mut fs::File::open(&part).map_err(io)?, &mut o, beat).and_then(|_| o.sync_all()).map_err(io)?;
+        drop(o);
+        pre(&tmp);
+        if hash_beat(&mut fs::File::open(&tmp).map_err(io)?, beat).map_err(io)? != want { return Err(HashMismatch); }
+        move_file(&tmp, &fin, replace).map_err(io)
+    }).and_then(|x| x);
+    if r.is_err() { rm(&t2); }
+    r
+}
+/// Percorre a origem do download sem seguir links (§8A); links, especiais, ilegíveis e nomes inválidos vão para `skipped`.
+/// ponytail: caminhos absolutos + `symlink_metadata` em vez de handles relativos; a troca por link entre a listagem e o `file_download_init` é barrada lá por `no_links`.
+fn walk(root: &Path, max_n: usize, max_d: usize, max_b: u64, beat: &dyn Fn()) -> R<(Vec<E>, Vec<String>)> {
+    let (mut es, mut sk, mut st, mut bytes) = (vec![], vec![], vec![(root.to_path_buf(), String::new())], 0u64);
+    while let Some((d, rel)) = st.pop() {
+        let Ok(rd) = fs::read_dir(&d) else { if !rel.is_empty() { sk.push(rel); } continue };
+        beat();
+        let mut list: Vec<_> = rd.flatten().collect();
+        list.sort_by_key(|e| e.file_name());
+        for x in list {
+            let Some(name) = x.file_name().to_str().map(str::to_owned) else { continue };
+            let r = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let Ok(m) = fs::symlink_metadata(x.path()).map_err(drop).and_then(|m| if valid_filename(&name) { Ok(m) } else { Err(()) }) else { sk.push(r); continue };
+            if r.split('/').count() > max_d || es.len() >= max_n { return Err(LimitExceeded); }
+            if is_link(&m) || !(m.is_dir() || m.is_file()) { sk.push(r); }
+            else if m.is_dir() { es.push(E { rel: r.clone(), dir: true, ..E::default() }); st.push((x.path(), r)); }
+            else if fs::File::open(x.path()).is_err() { sk.push(r); }
+            else { bytes += m.len(); if bytes > max_b { return Err(LimitExceeded); } es.push(E { rel: r, size: m.len(), ..E::default() }); }
+        }
+    }
+    es.sort_by(|a, b| a.rel.cmp(&b.rel));
+    Ok((es, sk))
 }
 fn tmp_name(name: &str, fid: &Fid) -> String { format!(".{name}.livecmd-{}.part", uuid_str(fid)) }
 
@@ -317,9 +464,36 @@ fn ack(fid: &Fid, mut idx: Vec<u32>) -> Value {
 #[derive(Debug, PartialEq)]
 pub enum Pull { Frames(Fid, Vec<Vec<u8>>), Ctl(Value) }
 
+/// Lote (§8A), persistido em `staging/batch-<id>/manifest.json`. Upload: `root` = pasta final (`parent`/`root_name` ou "nome (1)"). Download: `root` = origem.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct B {
+    owner: Pk, up: bool, root: PathBuf, parent: PathBuf, root_name: String, total_files: u64, total_bytes: u64,
+    entries: Vec<E>, more: bool, root_conflict: bool, conflicts: Vec<(String, String)>, ready: bool, skipped: Vec<String>, last: u64,
+    #[serde(skip)] conn: Option<ConnId>,
+}
+impl B {
+    fn counts(&self, st: u8) -> usize { self.entries.iter().filter(|e| !e.dir && e.st == st).count() }
+    /// ponytail: busca linear por `rel_path` a cada arquivo; trocar por índice se lotes de 100 000 entradas ficarem lentos.
+    fn entry(&mut self, rel: &str, dir: bool) -> Option<&mut E> { self.entries.iter_mut().find(|e| e.rel == rel && e.dir == dir) }
+}
+/// Página de até 1000 entradas ou 48 KiB a partir de `from` (§8A).
+fn page<'a>(it: impl Iterator<Item = (usize, Value)> + 'a) -> (Vec<Value>, Value) {
+    let (mut out, mut bytes) = (vec![], 0);
+    for (i, v) in it {
+        let n = v.to_string().len() + 1;
+        if out.len() == 1000 || bytes + n > 48 * 1024 { return (out, i.to_string().into()); }
+        bytes += n;
+        out.push(v);
+    }
+    (out, Value::Null)
+}
+fn from(c: Option<String>) -> R<usize> { c.map(|c| c.parse().map_err(|_| InvalidMessage)).transpose().map(Option::unwrap_or_default) }
+fn rel_dir(root: &Path, rel: &str) -> PathBuf { rel.split('/').fold(root.to_path_buf(), |p, c| p.join(c)) }
+
 pub struct Files {
     data_dir: PathBuf, pub lim: Limits, pub env: Env,
     t: HashMap<Fid, T>,
+    b: HashMap<Fid, B>,
     /// Cursor de `fs_list` → (pasta, posição, expira_em).
     cursors: HashMap<String, (Option<PathBuf>, usize, u64)>,
     /// Cancelados/pausados: (conexão, último tráfego); frames em trânsito ignorados por `cancel_grace_ms` (§8).
@@ -329,10 +503,14 @@ impl Files {
     pub fn data_dir(&self) -> &Path { &self.data_dir }
     /// Varre o staging (§5): manifesto ilegível ou versão desconhecida → pasta descartada; temporários órfãos listados removidos.
     pub fn open(data_dir: &Path, lim: Limits, env: Env, now: u64) -> Files {
-        let mut f = Files { data_dir: data_dir.into(), lim, env, t: HashMap::new(), cursors: HashMap::new(), gone: HashMap::new() };
+        let mut f = Files { data_dir: data_dir.into(), lim, env, t: HashMap::new(), b: HashMap::new(), cursors: HashMap::new(), gone: HashMap::new() };
         let root = data_dir.join("staging");
         let _ = fs::create_dir_all(&root);
         for e in fs::read_dir(&root).into_iter().flatten().flatten() {
+            if let Some(id) = e.file_name().to_str().and_then(|n| n.strip_prefix("batch-")).and_then(uuid_v4_lower) {
+                match fs::read(e.path().join("manifest.json")).ok().and_then(|b| serde_json::from_slice::<B>(&b).ok()) { Some(b) => { f.b.insert(id, b); } None => rm(&e.path()) }
+                continue;
+            }
             match load(&e.path()) {
                 Some((fid, t)) => { if t.up { rm(&t.dir.join(tmp_name(&t.filename, &fid))); } f.t.insert(fid, t); }
                 None => rm(&e.path()),
@@ -374,17 +552,222 @@ impl Files {
     pub fn request(&mut self, conn: ConnId, pk: &Pk, req: Req, cwd: Option<&Path>, now: u64) -> R<(Value, Vec<Value>)> {
         let r = match req {
             Req::FsList { path, cursor, .. } => self.fs_list(path, cwd, cursor, now).map(|v| (v, vec![])),
+            Req::UploadInit { file_id, size, sha256, batch: Some((bid, rel)), .. } => self.batch_file_up(conn, pk, file_id, bid, &rel, size, sha256, now),
             Req::UploadInit { file_id, filename, target_dir, size, overwrite, sha256, .. } =>
                 self.upload_init(conn, pk, file_id, filename, target_dir.map(PathBuf::from).or(cwd.map(Into::into)), size, overwrite, sha256, now),
-            Req::DownloadInit { file_id, path } => self.download_init(conn, pk, file_id, &path, now).map(|v| (v, vec![])),
+            Req::DownloadInit { file_id, batch: Some((bid, rel)), .. } => self.batch_file_down(conn, pk, file_id, bid, &rel, now).map(|v| (v, vec![])),
+            Req::DownloadInit { file_id, path, .. } => self.download_init(conn, pk, file_id, &path, now).map(|v| (v, vec![])),
             Req::Get { file_id, ranges } => self.get(conn, pk, file_id, &ranges).map(|_| (Value::Null, vec![])),
-            Req::Resume { file_id, cursor } => self.resume(conn, pk, file_id, cursor, now).map(|v| (v, vec![])),
+            // Todos os chunks já gravados (finalização falhou antes: rede fora, prazo, corrida): a retomada finaliza de novo (§8B).
+            Req::Resume { file_id, cursor } => self.resume(conn, pk, file_id, cursor, now).map(|v| {
+                (v, if self.t.get(&file_id).is_some_and(|t| t.up && t.done == t.total) { vec![self.finalize(&file_id, now)] } else { vec![] })
+            }),
+            Req::BatchUploadInit { batch_id, root_name, target_dir, total_files, total_bytes, entries, more, .. } =>
+                self.batch_up_init(conn, pk, batch_id, root_name, target_dir.map(PathBuf::from).or(cwd.map(Into::into)), total_files, total_bytes, entries, more, now).map(|c| (json!({"type":"batch_upload_init_ok","batch_id":uuid_str(&batch_id),"conflicts":c}), vec![])),
+            Req::BatchEntries { batch_id, entries, more } => match self.b.get(&batch_id) {
+                Some(b) if b.owner == *pk && b.up => self.batch_add(batch_id, entries, more, now).map(|c| {
+                    let mut v = json!({"type":"batch_entries_ok","batch_id":uuid_str(&batch_id)});
+                    // ponytail: `conflicts[]` de um manifesto paginado vem no `batch_entries_ok` da última página (a spec só o prevê no init).
+                    if !more { v["conflicts"] = c.into(); }
+                    (v, vec![])
+                }),
+                _ => Err(NotFound),
+            },
+            Req::BatchDownloadInit { batch_id, path, cursor } => self.batch_down_init(conn, pk, batch_id, &path, cursor, now).map(|v| (v, vec![])),
+            Req::BatchResolve { batch_id, root, decisions, apply_all } => self.batch_resolve(pk, batch_id, root, decisions, apply_all, now).map(|v| (v, vec![])),
+            Req::BatchStatus { batch_id, cursor } => self.batch_status(conn, pk, batch_id, cursor).map(|v| (v, vec![])),
+            Req::BatchCancel(bid) => match self.b.get(&bid) {
+                Some(b) if b.owner == *pk => { self.batch_delete(&bid, now); Ok((json!({"type":"batch_cancel_ok","batch_id":uuid_str(&bid)}), vec![])) }
+                _ => Err(NotFound),
+            },
             Req::Cancel(fid) => match self.t.get(&fid) {
                 Some(t) if t.owner == *pk => { self.delete(&fid, now); Ok((json!({"type":"file_cancel_ok","file_id":uuid_str(&fid)}), vec![])) }
                 _ => Err(NotFound),
             },
         };
-        match r { Err(e @ (InvalidMessage | VersionUnsupported)) => Err(e), Err(e) => Ok((crate::proto::error(e), vec![])), ok => ok }
+        match r {
+            Err(e @ (InvalidMessage | VersionUnsupported)) => Err(e),
+            Err(e) => Ok((crate::proto::error(e), vec![])),
+            Ok((v, mut ex)) => { let b = self.track(&ex, now); ex.extend(b); Ok((v, ex)) }
+        }
+    }
+
+    // ---- §8A lotes ----
+    fn bdir(&self, bid: &Fid) -> PathBuf { self.data_dir.join("staging").join(format!("batch-{}", uuid_str(bid))) }
+    fn bsave(&self, bid: &Fid) {
+        let (d, b) = (self.bdir(bid), &self.b[bid]);
+        // ponytail: falha ao gravar o manifesto do lote não interrompe; só a retomada após reinício do host fica sem ele.
+        let _ = fs::create_dir_all(&d).and_then(|_| write_atomic(&d.join("manifest.json"), &serde_json::to_vec(b).unwrap_or_default()));
+    }
+    fn batch_slots(&self, conn: ConnId) -> R<()> {
+        let act = || self.b.values().filter(|b| b.conn.is_some());
+        if act().filter(|b| b.conn == Some(conn)).count() >= self.lim.batch_conn || act().count() >= self.lim.batch_host { Err(LimitExceeded) } else { Ok(()) }
+    }
+    fn batch_delete(&mut self, bid: &Fid, now: u64) {
+        let Some(b) = self.b.remove(bid) else { return };
+        for f in b.entries.iter().filter_map(|e| e.fid) { self.delete(&f, now); }
+        rm(&self.bdir(bid));
+    }
+    fn batch_of(&self, fid: &Fid) -> Option<Fid> { self.b.iter().find(|(_, b)| b.entries.iter().any(|e| e.fid == Some(*fid))).map(|(k, _)| *k) }
+
+    #[allow(clippy::too_many_arguments)]
+    fn batch_up_init(&mut self, conn: ConnId, pk: &Pk, bid: Fid, root_name: String, dir: Option<PathBuf>, total_files: u64, total_bytes: u64, es: Vec<E>, more: bool, now: u64) -> R<Vec<Value>> {
+        if self.b.contains_key(&bid) || fs::symlink_metadata(self.bdir(&bid)).is_ok() { return Err(InvalidMessage); }
+        let staged: u64 = self.t.values().filter(|t| t.up).map(|t| t.size).sum();
+        if total_files > self.lim.max_entries as u64 || total_bytes > self.lim.max_file || staged + total_bytes > self.lim.staging_total { return Err(LimitExceeded); }
+        self.batch_slots(conn)?;
+        let parent = canon(dir.ok_or(NotFound)?).map_err(|e| io_code(&e))?;
+        if !parent.is_dir() { return Err(NotFound); }
+        let root = parent.join(&root_name);
+        let root_conflict = fs::symlink_metadata(&root).is_ok();
+        let b = B { owner: *pk, up: true, root, parent, root_name, total_files, total_bytes, more: true, root_conflict, last: now, conn: Some(conn), ..B::default() };
+        self.b.insert(bid, b);
+        match self.batch_add(bid, es, more, now) { Err(e) => { self.b.remove(&bid); Err(e) } ok => { self.bsave(&bid); ok } }
+    }
+    /// Valida e acrescenta uma página do manifesto; na última confere pais, compara com o destino e devolve `conflicts[]`.
+    fn batch_add(&mut self, bid: Fid, es: Vec<E>, more: bool, now: u64) -> R<Vec<Value>> {
+        let (lim_n, lim_d, lim_b) = (self.lim.max_entries, self.lim.max_depth, self.lim.max_file);
+        let b = self.b.get_mut(&bid).ok_or(NotFound)?;
+        if !b.more { return Err(InvalidMessage); }
+        if b.entries.len() + es.len() > lim_n || es.iter().any(|e| e.rel.split('/').count() > lim_d) { return Err(LimitExceeded); }
+        let mut keys: std::collections::HashSet<String> = b.entries.iter().map(|e| key(&e.rel)).collect();
+        if !es.iter().all(|e| keys.insert(key(&e.rel))) { return Err(InvalidMessage); }
+        if b.entries.iter().chain(&es).map(|e| e.size).sum::<u64>() > lim_b { return Err(LimitExceeded); }
+        b.entries.extend(es);
+        (b.more, b.last) = (more, now);
+        if more { return Ok(vec![]); }
+        let dirs: std::collections::HashSet<String> = b.entries.iter().filter(|e| e.dir).map(|e| key(&e.rel)).collect();
+        if !b.entries.iter().all(|e| e.rel.rsplit_once('/').is_none_or(|(p, _)| dirs.contains(&key(p)))) { return Err(InvalidMessage); }
+        // Conflitos contra a raiz existente (mesclar); com "nome (1)" eles somem (§8A).
+        b.conflicts = b.entries.iter().filter_map(|e| {
+            let m = fs::symlink_metadata(rel_dir(&b.root, &e.rel)).ok()?;
+            match (e.dir, m.is_dir() && !is_link(&m)) { (true, true) => None, (false, false) if m.is_file() => Some((e.rel.clone(), "exists".into())), _ => Some((e.rel.clone(), "type".into())) }
+        }).collect();
+        let mut c: Vec<Value> = b.conflicts.iter().map(|(r, k)| json!({"rel_path":r,"kind":k})).collect();
+        if b.root_conflict { c.insert(0, json!({"rel_path":null,"kind":"root"})); }
+        if c.is_empty() { self.batch_ready(&bid); }
+        Ok(c)
+    }
+    /// Cria a raiz e as pastas (inclusive vazias); conflito de tipo pula a entrada e tudo abaixo dela.
+    /// ponytail: conflito de tipo (pasta sobre arquivo e vice-versa) é sempre pulado, sem perguntar; perguntar exige renomear subárvores.
+    fn batch_ready(&mut self, bid: &Fid) {
+        let b = self.b.get_mut(bid).unwrap();
+        let types: Vec<String> = b.conflicts.iter().filter(|c| c.1 == "type").map(|c| c.0.clone()).collect();
+        let under = |r: &str| types.iter().any(|t| r == t || r.starts_with(&format!("{t}/")));
+        for e in b.entries.iter_mut().filter(|e| under(&e.rel)) { e.st = 2; }
+        let _ = fs::create_dir(&b.root);
+        let mut ds: Vec<_> = b.entries.iter().filter(|e| e.dir && e.st == 0).map(|e| e.rel.clone()).collect();
+        ds.sort_by_key(|r| r.matches('/').count());
+        for r in ds {
+            let p = rel_dir(&b.root, &r);
+            let ok = p.parent().is_some_and(|q| no_links(&b.parent, q)) && (fs::create_dir(&p).is_ok() || no_links(&b.parent, &p));
+            if let Some(e) = b.entry(&r, true) { e.st = if ok { 1 } else { 3 }; }
+        }
+        b.ready = true;
+        self.bsave(bid);
+    }
+    fn batch_resolve(&mut self, pk: &Pk, bid: Fid, root: Option<String>, ds: Vec<(String, String)>, all: Option<String>, now: u64) -> R<Value> {
+        let b = self.b.get_mut(&bid).filter(|b| b.owner == *pk && b.up && !b.more && !b.ready).ok_or(NotFound)?;
+        if b.root_conflict && root.is_none() { return Err(InvalidMessage); }
+        if root.as_deref() == Some("rename") { b.root = b.parent.join(free_name(&b.parent, &b.root_name)); b.conflicts.clear(); }
+        let files: Vec<String> = b.conflicts.iter().filter(|c| c.1 == "exists").map(|c| c.0.clone()).collect();
+        if ds.iter().any(|d| !files.contains(&d.0)) { return Err(InvalidMessage); }
+        for r in &files {
+            let a = ds.iter().find(|d| &d.0 == r).map(|d| d.1.clone()).or(all.clone()).unwrap_or_default();
+            let e = b.entry(r, false).unwrap();
+            if a == "skip" { e.st = 2; }
+            e.act = a;
+        }
+        b.last = now;
+        self.batch_ready(&bid);
+        Ok(json!({"type":"batch_resolve_ok","batch_id":uuid_str(&bid)}))
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn batch_file_up(&mut self, conn: ConnId, pk: &Pk, fid: Fid, bid: Fid, rel: &str, size: u64, sha: [u8; 32], now: u64) -> R<(Value, Vec<Value>)> {
+        let b = self.b.get_mut(&bid).filter(|b| b.owner == *pk && b.up).ok_or(NotFound)?;
+        if !b.ready { return Err(if b.more { NotFound } else { AlreadyExists }); }
+        let (root, parent) = (b.root.clone(), b.parent.clone());
+        let conflict = b.conflicts.iter().any(|c| c.0 == rel);
+        let e = b.entry(rel, false).ok_or(NotFound)?;
+        if e.size != size || e.sha.is_some_and(|s| s != sha) { return Err(InvalidMessage); }
+        if e.st == 1 || e.st == 2 || (conflict && e.act.is_empty()) { return Err(AlreadyExists); }
+        let act = e.act.clone();
+        let (dir, name) = match rel.rsplit_once('/') { Some((d, n)) => (rel_dir(&root, d), n), None => (root.clone(), rel) };
+        if !no_links(&parent, &dir) { return Err(IoError); }
+        let name = if act == "rename" { free_name(&dir, name) } else { name.to_owned() };
+        let live = |f: &Fid| *f != fid && self.t.get(f).is_some_and(|t| t.conn.is_some());
+        if self.b[&bid].entries.iter().filter_map(|e| e.fid).filter(live).count() >= 4 { return Err(LimitExceeded); }
+        let b = self.b.get_mut(&bid).unwrap();
+        (b.conn, b.last) = (Some(conn), now);
+        let e = b.entry(rel, false).unwrap();
+        (e.fid, e.st) = (Some(fid), 0);
+        self.bsave(&bid);
+        self.upload_init(conn, pk, fid, name, Some(dir), size, act == "overwrite", sha, now)
+    }
+    /// Arquivo do lote terminou (`file_complete`) ou falhou; último pendente gera `batch_complete` (§8A).
+    fn track(&mut self, out: &[Value], now: u64) -> Vec<Value> {
+        let mut extra = vec![];
+        for v in out {
+            let st = match (v["type"].as_str(), v["code"].as_str()) { (Some("file_complete"), _) => 1, (Some("error"), Some(_)) => 3, _ => continue };
+            let Some(fid) = v["file_id"].as_str().and_then(uuid_v4_lower) else { continue };
+            let Some(bid) = self.batch_of(&fid) else { continue };
+            let b = self.b.get_mut(&bid).unwrap();
+            if let Some(e) = b.entries.iter_mut().find(|e| e.fid == Some(fid)) { e.st = st; }
+            b.last = now;
+            if !b.up || b.more || b.entries.iter().any(|e| !e.dir && e.st == 0) { self.bsave(&bid); continue; }
+            let failed = b.counts(3);
+            extra.push(json!({"type":"batch_complete","batch_id":uuid_str(&bid),"done":b.counts(1),"skipped":b.counts(2),"failed":failed}));
+            // Falhos ficam no manifesto para nova tentativa só deles (expurgo em 24 h).
+            if failed == 0 { self.b.remove(&bid); rm(&self.bdir(&bid)); } else { b.conn = None; self.bsave(&bid); }
+        }
+        extra
+    }
+    /// ponytail: `pending[]`/`failed[]` trazem `{rel_path, file_id}` (a spec cita só `file_id`s; sem o caminho o cliente não retoma quem nunca começou).
+    fn batch_status(&mut self, conn: ConnId, pk: &Pk, bid: Fid, cursor: Option<String>) -> R<Value> {
+        let skip = from(cursor)?;
+        let b = self.b.get_mut(&bid).filter(|b| b.owner == *pk).ok_or(NotFound)?;
+        b.conn = Some(conn);
+        let done = b.counts(1);
+        let (items, next) = page(b.entries.iter().filter(|e| !e.dir && e.st != 1).enumerate().skip(skip)
+            .map(|(i, e)| (i, json!({"rel_path":e.rel,"file_id":e.fid.as_ref().map(uuid_str),"st":e.st}))));
+        let by = |st: u8| items.iter().filter(|v| v["st"] == st).map(|v| json!({"rel_path":v["rel_path"],"file_id":v["file_id"]})).collect::<Vec<_>>();
+        let skipped: Vec<Value> = by(2).into_iter().map(|v| v["rel_path"].clone()).collect();
+        Ok(json!({"type":"batch_status_ok","batch_id":uuid_str(&bid),"done":done,"pending":by(0),"skipped":skipped,"failed":by(3),"next_cursor":next}))
+    }
+    fn batch_down_init(&mut self, conn: ConnId, pk: &Pk, bid: Fid, path: &str, cursor: Option<String>, now: u64) -> R<Value> {
+        if cursor.is_none() {
+            if self.b.contains_key(&bid) || fs::symlink_metadata(self.bdir(&bid)).is_ok() { return Err(InvalidMessage); }
+            self.batch_slots(conn)?;
+            let root = canon(path).map_err(|e| io_code(&e))?;
+            if !root.is_dir() { return Err(NotFound); }
+            let (n, d, m, r) = (self.lim.max_entries, self.lim.max_depth, self.lim.max_file, root.clone());
+            let (es, skipped) = timed(self.lim.net_ms, move |beat| walk(&r, n, d, m, beat))??;
+            let b = B { owner: *pk, root_name: root.file_name().and_then(|x| x.to_str()).unwrap_or("").into(), total_files: es.iter().filter(|e| !e.dir).count() as u64,
+                total_bytes: es.iter().map(|e| e.size).sum(), root, entries: es, skipped, ready: true, last: now, conn: Some(conn), ..B::default() };
+            self.b.insert(bid, b);
+            self.bsave(&bid);
+        }
+        let skip = from(cursor)?;
+        let b = self.b.get(&bid).filter(|b| b.owner == *pk && !b.up).ok_or(NotFound)?;
+        let (es, next) = page(b.entries.iter().enumerate().skip(skip).map(|(i, e)| (i, if e.dir { json!({"rel_path":e.rel,"kind":"dir"}) } else { json!({"rel_path":e.rel,"kind":"file","size_bytes":u64s(e.size)}) })));
+        // ponytail: `skipped` (até 1000 caminhos) só na primeira página.
+        let sk: Vec<&String> = if skip == 0 { b.skipped.iter().take(1000).collect() } else { vec![] };
+        Ok(json!({"type":"batch_download_init_ok","batch_id":uuid_str(&bid),"root_name":b.root_name,"total_files":u64s(b.total_files),"total_bytes":u64s(b.total_bytes),
+            "entries":es,"next_cursor":next,"skipped":sk}))
+    }
+    fn batch_file_down(&mut self, conn: ConnId, pk: &Pk, fid: Fid, bid: Fid, rel: &str, now: u64) -> R<Value> {
+        let b = self.b.get_mut(&bid).filter(|b| b.owner == *pk && !b.up).ok_or(NotFound)?;
+        let p = rel_dir(&b.root, rel);
+        if !no_links(&b.root, &p) { return Err(NotFound); }
+        (b.conn, b.last) = (Some(conn), now);
+        b.entry(rel, false).ok_or(NotFound)?.fid = Some(fid);
+        let v = self.download_init(conn, pk, fid, p.to_str().ok_or(NotFound)?, now)?;
+        self.bsave(&bid);
+        Ok(v)
+    }
+    /// `batch_complete` do cliente no download: apaga o lote.
+    pub fn client_batch_complete(&mut self, conn: ConnId, bid: &Fid, now: u64) {
+        if self.b.get(bid).is_some_and(|b| !b.up && b.conn == Some(conn)) { self.batch_delete(bid, now); }
     }
 
     fn fs_list(&mut self, path: Option<String>, cwd: Option<&Path>, cursor: Option<String>, now: u64) -> R<Value> {
@@ -462,7 +845,7 @@ impl Files {
 
     /// §5: hash total, identidade do diretório, temporário (outro volume) e rename sem/com substituição.
     fn finalize(&mut self, fid: &Fid, now: u64) -> Value {
-        let (st, fail, same) = (self.staging(fid), self.env.fail_io, self.env.same_volume);
+        let (st, fail, same, pre, ms) = (self.staging(fid), self.env.fail_io, self.env.same_volume, self.env.pre_verify, self.lim.net_ms);
         let part = st.join("data.part");
         let t = self.t.get_mut(fid).unwrap();
         if t.size > 0 {
@@ -473,11 +856,17 @@ impl Files {
             }
         }
         let code = 'f: {
-            if identity(&t.dir) != Some(t.dir_id) { break 'f IoError; }
+            if !same_id(&t.dir, t.dir_id) { break 'f IoError; }
             let fin = t.dir.join(&t.filename);
             if !t.overwrite && fs::symlink_metadata(&fin).is_ok() { break 'f AlreadyExists; }
             let tmp = t.dir.join(tmp_name(&t.filename, fid));
             t.file = None;
+            if is_net(&t.dir) && !fail {
+                match net_put(part.clone(), tmp, fin, t.overwrite, t.sha, pre, ms) {
+                    Ok(()) => { self.delete(fid, now); return json!({"type":"file_complete","file_id":uuid_str(fid)}); }
+                    Err(e) => { t.file = fs::OpenOptions::new().read(true).write(true).open(&part).ok(); break 'f e; }
+                }
+            }
             let r = (|| -> io::Result<PathBuf> {
                 if fail { return Err(io::Error::other("injected")); }
                 if t.size > 0 && same(&st, &t.dir) { return Ok(part.clone()); }
@@ -545,6 +934,12 @@ impl Files {
 
     /// Frame binário (§3). `Err` = fatal; `Ok` = controles a enviar (`file_ack`, `file_complete`, `error` com `file_id`).
     pub fn on_frame(&mut self, conn: ConnId, b: &[u8], now: u64) -> R<Vec<Value>> {
+        let mut out = self.frame(conn, b, now)?;
+        let ex = self.track(&out, now);
+        out.extend(ex);
+        Ok(out)
+    }
+    fn frame(&mut self, conn: ConnId, b: &[u8], now: u64) -> R<Vec<Value>> {
         let f = parse_frag(b)?;
         if let Some(g) = self.gone.get_mut(&f.file_id).filter(|g| g.0 == conn) {
             if now <= g.1 + self.lim.cancel_grace_ms { g.1 = now; return Ok(vec![]); }
@@ -629,16 +1024,35 @@ impl Files {
     }
     /// `file_complete` do cliente: apaga o manifesto de download.
     pub fn client_complete(&mut self, conn: ConnId, fid: &Fid, now: u64) {
-        if self.t.get(fid).is_some_and(|t| !t.up && t.conn == Some(conn)) { self.delete(fid, now); }
+        if !self.t.get(fid).is_some_and(|t| !t.up && t.conn == Some(conn)) { return; }
+        self.delete(fid, now);
+        if let Some(bid) = self.batch_of(fid) {
+            let b = self.b.get_mut(&bid).unwrap();
+            if let Some(e) = b.entries.iter_mut().find(|e| e.fid == Some(*fid)) { e.st = 1; }
+            b.last = now;
+            self.bsave(&bid);
+        }
     }
 
     /// Chamar a cada ~100 ms: group commit por tempo, expurgo de 24 h, cursores e frames ignorados vencidos.
     pub fn tick(&mut self, now: u64) -> Vec<(ConnId, Value)> {
         let mut out = vec![];
         let due: Vec<_> = self.t.iter().filter(|(_, t)| !t.pending.is_empty() && now >= t.since + self.lim.commit_ms).map(|(k, t)| (*k, t.conn)).collect();
-        for (fid, c) in due { out.extend(self.commit(&fid, now).into_iter().filter_map(|v| c.map(|c| (c, v)))); }
+        for (fid, c) in due {
+            let mut v = self.commit(&fid, now);
+            let ex = self.track(&v, now);
+            v.extend(ex);
+            out.extend(v.into_iter().filter_map(|v| c.map(|c| (c, v))));
+        }
         let old: Vec<_> = self.t.iter().filter(|(_, t)| now >= t.last + self.lim.ttl_ms).map(|(k, _)| *k).collect();
         for fid in old { self.delete(&fid, now); }
+        // Lote: 24 h sem chunk válido em nenhum arquivo dele (§8A).
+        let ttl = self.lim.ttl_ms;
+        let old: Vec<_> = self.b.iter().filter(|(_, b)| {
+            let last = b.entries.iter().filter_map(|e| e.fid.and_then(|f| self.t.get(&f))).map(|t| t.last).fold(b.last, u64::max);
+            now >= last + ttl
+        }).map(|(k, _)| *k).collect();
+        for bid in old { self.batch_delete(&bid, now); }
         self.cursors.retain(|_, c| c.2 > now);
         let g = self.lim.cancel_grace_ms;
         self.gone.retain(|_, x| now <= x.1 + g);
@@ -649,11 +1063,14 @@ impl Files {
         let fids: Vec<_> = self.t.iter().filter(|(_, t)| t.conn == Some(conn)).map(|(k, _)| *k).collect();
         for fid in fids { self.detach(&fid, now); }
         self.gone.retain(|_, x| x.0 != conn);
+        for b in self.b.values_mut().filter(|b| b.conn == Some(conn)) { b.conn = None; }
     }
     /// Revogação (§8): cancela e apaga na hora staging e manifestos do dispositivo.
     pub fn revoke(&mut self, pk: &Pk, now: u64) {
         let fids: Vec<_> = self.t.iter().filter(|(_, t)| t.owner == *pk).map(|(k, _)| *k).collect();
         for fid in fids { self.delete(&fid, now); }
+        let bs: Vec<_> = self.b.iter().filter(|(_, b)| b.owner == *pk).map(|(k, _)| *k).collect();
+        for bid in bs { self.batch_delete(&bid, now); }
     }
 }
 

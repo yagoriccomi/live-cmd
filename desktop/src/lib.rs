@@ -237,7 +237,7 @@ fn file_step(conn: ConnId, pk: &Pk, id: &str, host: &Host, m: FIn, out: &mpsc::U
             let c = files::parse_control(std::str::from_utf8(t).map_err(|_| auth::Error::InvalidMessage)?, id)?;
             // C3 §7 vale aqui: todo pedido confere a trust store.
             if matches!(c, C::Request { .. }) { host.check_trusted(pk)?; }
-            let sid = match &c { C::Request { req: F::FsList { session_id, .. } | F::UploadInit { session_id, .. }, .. } => *session_id, _ => None };
+            let sid = match &c { C::Request { req: F::FsList { session_id, .. } | F::UploadInit { session_id, .. } | F::BatchUploadInit { session_id, .. }, .. } => *session_id, _ => None };
             Some((c, sid.and_then(|s| hub().cwds.get(&s).cloned())))
         }
         _ => None,
@@ -250,6 +250,7 @@ fn file_step(conn: ConnId, pk: &Pk, id: &str, host: &Host, m: FIn, out: &mpsc::U
         (_, Some((C::Error { .. }, _))) => {}
         (_, Some((C::Ack { file_id, ranges }, _))) => f.client_ack(conn, &file_id, &ranges, now),
         (_, Some((C::Complete(fid), _))) => f.client_complete(conn, &fid, now),
+        (_, Some((C::BatchComplete(bid), _))) => f.client_batch_complete(conn, &bid, now),
         (_, Some((C::Request { request_id, req }, cwd))) => {
             let (body, extra) = f.request(conn, pk, req, cwd.as_deref(), now)?;
             if !body.is_null() { send(Some(request_id), body); }
