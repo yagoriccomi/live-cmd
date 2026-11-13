@@ -71,17 +71,18 @@ fn color(c: vt100::Color) -> Value {
     format!("#{r:02x}{g:02x}{b:02x}").into()
 }
 
-/// Tela pronta: linhas de trechos `[texto, fg, bg, flags]` (1 negrito, 2 itálico, 4 sublinhado, 8 inverso).
+/// Tela pronta: linhas de trechos `[texto, fg, bg, flags]` (1 negrito, 2 itálico, 4 sublinhado, 8 inverso, 16 cursor).
 fn render(vt: &vt100::Parser) -> Value {
     let s = vt.screen();
     let (rows, cols) = s.size();
+    let cursor = (!s.hide_cursor() && s.scrollback() == 0).then(|| s.cursor_position());
     let lines: Vec<Value> = (0..rows.get()).map(|r| {
         let mut runs: Vec<(String, Value, Value, u8)> = vec![];
         for c in 0..cols.get() {
             let Some(cell) = s.cell(r, c) else { break };
             if cell.is_wide_continuation() { continue; }
             let (fg, bg) = (color(cell.fgcolor()), color(cell.bgcolor()));
-            let fl = cell.bold() as u8 | (cell.italic() as u8) << 1 | (cell.underline() as u8) << 2 | (cell.inverse() as u8) << 3;
+            let fl = cell.bold() as u8 | (cell.italic() as u8) << 1 | (cell.underline() as u8) << 2 | (cell.inverse() as u8) << 3 | ((cursor == Some((r, c))) as u8) << 4;
             let text = if cell.has_contents() { cell.contents() } else { " " };
             match runs.last_mut() {
                 Some(l) if l.1 == fg && l.2 == bg && l.3 == fl => l.0.push_str(text),
@@ -89,12 +90,11 @@ fn render(vt: &vt100::Parser) -> Value {
             }
         }
         // Espaços finais sem fundo nem inverso não desenham nada.
-        if let Some(l) = runs.last_mut() && l.2.is_null() && l.3 & 12 == 0 { l.0.truncate(l.0.trim_end_matches(' ').len()); }
+        if let Some(l) = runs.last_mut() && l.2.is_null() && l.3 & 28 == 0 { l.0.truncate(l.0.trim_end_matches(' ').len()); }
         if runs.last().is_some_and(|l| l.0.is_empty()) { runs.pop(); }
         Value::Array(runs.into_iter().map(|(t, f, b, fl)| json!([t, f, b, fl])).collect())
     }).collect();
-    let cursor = (!s.hide_cursor() && s.scrollback() == 0).then(|| { let (r, c) = s.cursor_position(); json!([r, c]) });
-    json!({ "rows": lines, "cursor": cursor, "app_cursor": s.application_cursor() })
+    json!({ "rows": lines, "app_cursor": s.application_cursor() })
 }
 
 fn load(dir: &Path) -> Result<Vec<Remote>, String> {
@@ -361,12 +361,12 @@ mod tests {
         let mut vt = parser(2, 10);
         vt.process(b"\x1b[31mab\x1b[0m c\x1b[1;7mX");
         let s = render(&vt);
-        assert_eq!(s["rows"][0], json!([["ab", "#c50f1f", null, 0], [" c", null, null, 0], ["X", null, null, 9]]));
+        assert_eq!(s["rows"][0], json!([["ab", "#c50f1f", null, 0], [" c", null, null, 0], ["X", null, null, 9], [" ", null, null, 16]]));
         assert_eq!(s["rows"][1], json!([]));
-        assert_eq!(s["cursor"], json!([0, 5]));
         vt.process(b"\x1b[?25l\x1b[?1h");
         let s = render(&vt);
-        assert!(s["cursor"].is_null() && s["app_cursor"] == true);
+        assert_eq!(s["rows"][0].as_array().unwrap().len(), 3);
+        assert!(s["app_cursor"] == true);
         assert_eq!(color(vt100::Color::Idx(196)), "#ff0000");
         assert_eq!(color(vt100::Color::Idx(232)), "#080808");
     }
