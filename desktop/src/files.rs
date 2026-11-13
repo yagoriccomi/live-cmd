@@ -173,6 +173,11 @@ fn obj(v: Value) -> Map<String, Value> { match v { Value::Object(m) => m, _ => M
 use std::{fs, io::{self, Read, Seek, SeekFrom, Write}, os::windows::{ffi::OsStrExt, fs::{MetadataExt, OpenOptionsExt}, io::AsRawHandle}, path::{Path, PathBuf}, collections::{BTreeSet, HashMap}};
 use windows::{core::PCWSTR, Win32::{Foundation::HANDLE, Storage::FileSystem::*}};
 
+/// Resolve links e devolve a forma normal (sem `\\?\`), a mesma aceita por `valid_path`.
+fn canon(p: impl AsRef<Path>) -> io::Result<PathBuf> {
+    let p = fs::canonicalize(p)?.into_os_string().into_string().map_err(|_| io::Error::other("utf16"))?;
+    Ok(match p.strip_prefix(r"\\?\UNC\") { Some(u) => format!(r"\\{u}"), None => p.strip_prefix(r"\\?\").unwrap_or(&p).to_owned() }.into())
+}
 fn wide(p: &Path) -> Vec<u16> { p.as_os_str().encode_wide().chain([0]).collect() }
 /// Volume serial + file index, seguindo links (ancestrais escolhidos pelo usuário são seguidos, §6).
 pub fn identity(p: &Path) -> Option<(u32, u64)> {
@@ -427,7 +432,7 @@ impl Files {
         if size == 0 && hex(&sha) != EMPTY_SHA { return Err(InvalidMessage); }
         if size > self.lim.max_file { return Err(LimitExceeded); }
         self.slots(conn)?;
-        let dir = fs::canonicalize(dir.ok_or(NotFound)?).map_err(|e| io_code(&e))?;
+        let dir = canon(dir.ok_or(NotFound)?).map_err(|e| io_code(&e))?;
         if !dir.is_dir() { return Err(NotFound); }
         let dir_id = identity(&dir).ok_or(IoError)?;
         if !overwrite && fs::symlink_metadata(dir.join(&filename)).is_ok() { return Err(AlreadyExists); }
@@ -497,7 +502,7 @@ impl Files {
     fn download_init(&mut self, conn: ConnId, pk: &Pk, fid: Fid, path: &str, now: u64) -> R<Value> {
         if self.t.contains_key(&fid) || fs::symlink_metadata(self.staging(&fid)).is_ok() { return Err(InvalidMessage); }
         self.slots(conn)?;
-        let p = fs::canonicalize(path).map_err(|e| io_code(&e))?;
+        let p = canon(path).map_err(|e| io_code(&e))?;
         let m = fs::metadata(&p).map_err(|e| io_code(&e))?;
         if !m.is_file() { return Err(NotFound); }
         if m.len() > self.lim.max_file { return Err(LimitExceeded); }
