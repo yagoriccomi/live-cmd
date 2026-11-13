@@ -31,6 +31,9 @@
     </div>
     <p id="pair-expired" aria-live="polite" hidden>Este QR Code expirou.</p>
     <div class="actions center"><button type="button" class="btn-primary" data-act="pair">Gerar novo QR</button></div>
+    <!-- Desvio de C2 §1 pendente de aprovação (P11); ver src/clip.rs para remover. -->
+    <button type="button" class="btn-link" id="copy">Copiar link para outro PC</button>
+    <p class="alert alert-ok" role="status" id="copied" hidden><span>Link copiado. Ele vale até o QR expirar.</span></p>
   </div>
   <div id="pair-done" role="status" hidden>
     <div class="big-ok" aria-hidden="true">✓</div>

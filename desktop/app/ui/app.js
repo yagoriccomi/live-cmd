@@ -41,6 +41,7 @@ const now = () => Date.now() + skew;
 
 async function pair() {
   show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-busy");
+  $("copied").hidden = true;
   try {
     known = new Set((await invoke("devices")).map((d) => d.id));
     const r = await invoke("pair");
@@ -51,6 +52,7 @@ async function pair() {
     $("pair-live").hidden = false;
     $("pair-expired").hidden = true;
     $("pair-hint").hidden = false;
+    $("copy").hidden = false;
     show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-show");
     clearInterval(ticker);
     ticker = setInterval(tick, 1000);
@@ -68,6 +70,8 @@ function expire() {
   $("qr-box").classList.add("expired");
   $("pair-live").hidden = true;
   $("pair-hint").hidden = true;
+  $("copy").hidden = true;
+  $("copied").hidden = true;
   $("pair-expired").hidden = false;
 }
 
@@ -88,6 +92,10 @@ async function tick() {
     show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-done");
   } else expire();
 }
+
+$("copy").onclick = async () => {
+  try { await invoke("copy_link"); $("copied").hidden = false; } catch { expire(); }
+};
 
 // ---------- Aparelhos ----------
 const fmtDate = (ms) => new Date(ms).toLocaleDateString("pt-BR", { day: "numeric", month: "short", year: "numeric" });

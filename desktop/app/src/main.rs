@@ -2,6 +2,7 @@
 //! Sobe só na bandeja; a janela (Parear | Aparelhos | Configurações) abre pelo menu.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod clip;
 mod host;
 mod settings;
 
@@ -25,6 +26,8 @@ struct App {
     svc: Mutex<Service>,
     data_dir: std::path::PathBuf,
     settings: Mutex<settings::Settings>,
+    /// URI da OTK ativa: só para o QR e o "Copiar link"; nunca vai para texto, log ou UI.
+    link: Mutex<Option<String>>,
 }
 
 fn state_name(s: HostState) -> &'static str {
@@ -58,18 +61,29 @@ fn status(app: State<App>) -> Value {
 /// Nova OTK (invalida a anterior, C2 §1) e o QR dela.
 #[tauri::command]
 fn pair(app: State<App>) -> Result<Value, String> {
+    clip::clear_if_ours();
     let svc = app.svc.lock().unwrap();
     let uri = svc.pair()?;
     let qr = qr_data_url(&uri)?;
+    *app.link.lock().unwrap() = Some(uri);
     Ok(json!({ "qr": qr, "expires_ms": svc.status().pairing_expires_ms, "now_ms": host::now_ms() }))
 }
 
 fn cancel(app: &App) {
     app.svc.lock().unwrap().cancel_pair();
+    *app.link.lock().unwrap() = None;
+    clip::clear_if_ours();
 }
 
 #[tauri::command]
 fn cancel_pair(app: State<App>) { cancel(&app) }
+
+/// Desvio de C2 §1 pendente de aprovação (P11); ver `clip.rs`.
+#[tauri::command]
+fn copy_link(app: State<App>, window: tauri::WebviewWindow) -> Result<(), String> {
+    let link = app.link.lock().unwrap().clone().ok_or("EXPIRED")?;
+    clip::copy_secret(window.hwnd().map_err(|_| "CLIPBOARD")?, &link)
+}
 
 #[tauri::command]
 fn devices(app: State<App>) -> Vec<Value> {
@@ -117,6 +131,8 @@ fn set_server(app: State<App>, server: String) -> Result<(), String> {
     settings::save(&app.data_dir, &new)?;
     let mut svc = app.svc.lock().unwrap();
     svc.stop();
+    *app.link.lock().unwrap() = None;
+    clip::clear_if_ours();
     *svc = Service::start(host::Config { data_dir: app.data_dir.clone(), server: new.server.clone(), room: new.room.clone() })?;
     *s = new;
     Ok(())
@@ -228,18 +244,22 @@ fn tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_window(app, "devices")))
-        .invoke_handler(tauri::generate_handler![status, pair, cancel_pair, devices, revoke, get_settings, set_autostart, set_server, open_data_dir])
+        .invoke_handler(tauri::generate_handler![status, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
             let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: s.room.clone() })?;
-            a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s) });
+            a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });
             tray(a.handle())?;
             refresh_tray(a.handle(), true);
-            // Laço de 1 s: bandeja segue o host.
+            // Laço de 1 s: bandeja segue o host; link sai do clipboard quando a OTK expira ou é usada.
             let h = a.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(Duration::from_secs(1));
+                let app = h.state::<App>();
+                if app.svc.lock().unwrap().status().pairing_expires_ms.is_none() && app.link.lock().unwrap().take().is_some() {
+                    clip::clear_if_ours();
+                }
                 refresh_tray(&h, false);
             });
             Ok(())
