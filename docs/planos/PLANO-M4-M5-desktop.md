@@ -81,6 +81,7 @@
 | S2 | signaling/ + desktop/ + SPEC-C1-presenca | presença simultânea: vários clientes negociando ao mesmo tempo na sala do host (P14) | alto | D5a | `feat/s2-presence-multi` | em `main` (antecipada; 88 ok, signaling 36/36, d1 8/8; até 4 clientes por sala; `run` virou multiplexador por `connection_id` — D4c rebaseia) |
 | D5d | desktop/app | trocar stub `host.rs` por `live_cmd_echo::Service`; fechar janela sem `cancel_pair` (P13); instalador final | alto | D5c | `feat/d5d-host-wire` | na fila |
 | D-int | desktop/scripts | `d1-integration.cjs`: `wrangler_echo` e `wrangler_second_channel` falam C2/C3 em vez do eco M1 | alto | D5a | `feat/dint-wrangler` | em `main` (8/8 d1-integration, 87 ok; teste usa `cmd.exe`, disponível em todo Windows) |
+| D-int2 | desktop/scripts | `wrangler_two_clients`: 2 clientes simultâneos pelo Worker real (S2) | alto | S2 | `feat/dint2-wrangler-multi` | em `main` (9/9 d1-integration, 88 ok; `loopback_backpressure` falha sob carga também na base: prazo 45 s) |
 
 ## 7. Impacto em Dados e Contratos
 
