@@ -420,6 +420,18 @@ fn no_links(root: &Path, p: &Path) -> bool {
     let mut q = root.to_path_buf();
     std::iter::once(None).chain(rest.components().map(Some)).all(|c| { if let Some(c) = c { q.push(c); } fs::symlink_metadata(&q).is_ok_and(|m| !is_link(&m)) })
 }
+/// Cria `root` e as pastas `ds` (rel) sob ela, mais rasas primeiro; devolve se cada uma ficou pronta sem passar por link.
+/// `beat()` falso (quem chamou desistiu pelo prazo): não cria nada.
+fn mkdirs(parent: &Path, root: &Path, mut ds: Vec<String>, beat: &dyn Fn() -> bool) -> Vec<(String, bool)> {
+    if !beat() { return vec![]; }
+    let _ = fs::create_dir(root);
+    ds.sort_by_key(|r| r.matches('/').count());
+    ds.into_iter().map(|r| {
+        let p = rel_dir(root, &r);
+        let ok = beat() && p.parent().is_some_and(|q| no_links(parent, q)) && (fs::create_dir(&p).is_ok() || no_links(parent, &p));
+        (r, ok)
+    }).collect()
+}
 /// Finalização em compartilhamento (§8B): temporário exclusivo, flush, releitura com SHA-256, rename; tudo com prazo de rede.
 /// Erro: temporário removido, staging local preservado (quem chama pausa).
 fn net_put(part: PathBuf, tmp: PathBuf, fin: PathBuf, replace: bool, want: [u8; 32], pre: fn(&Path), ms: u64) -> R<()> {
@@ -643,7 +655,6 @@ impl Files {
         if total_files > self.lim.max_entries as u64 || total_bytes > self.lim.max_file || staged + total_bytes > self.lim.staging_total { return Err(LimitExceeded); }
         self.batch_slots(conn)?;
         let (dir, name) = (dir.ok_or(NotFound)?, root_name.clone());
-        // ponytail: a conferência de conflitos do manifesto (última página) ainda roda sem prazo de rede.
         let (parent, root, root_conflict) = net(self.lim.net_ms, &dir.clone(), move |_| -> R<_> {
             let parent = canon(dir).map_err(|e| io_code(&e))?;
             if !parent.is_dir() { return Err(NotFound); }
@@ -664,43 +675,67 @@ impl Files {
         let mut keys: std::collections::HashSet<String> = b.entries.iter().map(|e| key(&e.rel)).collect();
         if !es.iter().all(|e| keys.insert(key(&e.rel))) { return Err(InvalidMessage); }
         if b.entries.iter().chain(&es).map(|e| e.size).sum::<u64>() > lim_b { return Err(LimitExceeded); }
+        let n0 = b.entries.len();
         b.entries.extend(es);
         (b.more, b.last) = (more, now);
         if more { return Ok(vec![]); }
+        let r = self.batch_check(&bid);
+        // Erro (inclusive `EXPIRED`): a última página volta a faltar e o cliente pode reenviá-la.
+        if r.is_err() { let b = self.b.get_mut(&bid).unwrap(); b.entries.truncate(n0); b.more = true; }
+        r
+    }
+    /// Manifesto completo: confere pais e compara com o destino; sem conflitos já cria as pastas. Um só prazo de rede (§8B).
+    fn batch_check(&mut self, bid: &Fid) -> R<Vec<Value>> {
+        let b = self.b.get_mut(bid).unwrap();
         let dirs: std::collections::HashSet<String> = b.entries.iter().filter(|e| e.dir).map(|e| key(&e.rel)).collect();
         if !b.entries.iter().all(|e| e.rel.rsplit_once('/').is_none_or(|(p, _)| dirs.contains(&key(p)))) { return Err(InvalidMessage); }
-        // Conflitos contra a raiz existente (mesclar); com "nome (1)" eles somem (§8A).
-        b.conflicts = b.entries.iter().filter_map(|e| {
-            let m = fs::symlink_metadata(rel_dir(&b.root, &e.rel)).ok()?;
-            match (e.dir, m.is_dir() && !is_link(&m)) { (true, true) => None, (false, false) if m.is_file() => Some((e.rel.clone(), "exists".into())), _ => Some((e.rel.clone(), "type".into())) }
-        }).collect();
+        let (root, parent, rc) = (b.root.clone(), b.parent.clone(), b.root_conflict);
+        let es: Vec<(String, bool)> = b.entries.iter().map(|e| (e.rel.clone(), e.dir)).collect();
+        let (cs, made) = net(self.lim.net_ms, &parent.clone(), move |beat| {
+            // Conflitos contra a raiz existente (mesclar); com "nome (1)" eles somem (§8A).
+            let cs: Vec<(String, String)> = es.iter().filter_map(|(r, dir)| {
+                let m = fs::symlink_metadata(rel_dir(&root, r)).ok()?;
+                match (*dir, m.is_dir() && !is_link(&m)) { (true, true) => None, (false, false) if m.is_file() => Some((r.clone(), "exists".into())), _ => Some((r.clone(), "type".into())) }
+            }).collect();
+            let made = (cs.is_empty() && !rc).then(|| mkdirs(&parent, &root, es.into_iter().filter(|e| e.1).map(|e| e.0).collect(), beat));
+            (cs, made)
+        })?;
+        b.conflicts = cs;
         let mut c: Vec<Value> = b.conflicts.iter().map(|(r, k)| json!({"rel_path":r,"kind":k})).collect();
-        if b.root_conflict { c.insert(0, json!({"rel_path":null,"kind":"root"})); }
-        if c.is_empty() { self.batch_ready(&bid); }
+        if rc { c.insert(0, json!({"rel_path":null,"kind":"root"})); }
+        if let Some(m) = made { self.dirs_made(bid, m); }
         Ok(c)
     }
     /// Cria a raiz e as pastas (inclusive vazias); conflito de tipo pula a entrada e tudo abaixo dela.
     /// ponytail: conflito de tipo (pasta sobre arquivo e vice-versa) é sempre pulado, sem perguntar; perguntar exige renomear subárvores.
-    fn batch_ready(&mut self, bid: &Fid) {
+    fn batch_ready(&mut self, bid: &Fid) -> R<()> {
         let b = self.b.get_mut(bid).unwrap();
         let types: Vec<String> = b.conflicts.iter().filter(|c| c.1 == "type").map(|c| c.0.clone()).collect();
         let under = |r: &str| types.iter().any(|t| r == t || r.starts_with(&format!("{t}/")));
+        let ds: Vec<String> = b.entries.iter().filter(|e| e.dir && e.st == 0 && !under(&e.rel)).map(|e| e.rel.clone()).collect();
+        let (p, r) = (b.parent.clone(), b.root.clone());
+        let made = net(self.lim.net_ms, &p.clone(), move |beat| mkdirs(&p, &r, ds, beat))?;
         for e in b.entries.iter_mut().filter(|e| under(&e.rel)) { e.st = 2; }
-        let _ = fs::create_dir(&b.root);
-        let mut ds: Vec<_> = b.entries.iter().filter(|e| e.dir && e.st == 0).map(|e| e.rel.clone()).collect();
-        ds.sort_by_key(|r| r.matches('/').count());
-        for r in ds {
-            let p = rel_dir(&b.root, &r);
-            let ok = p.parent().is_some_and(|q| no_links(&b.parent, q)) && (fs::create_dir(&p).is_ok() || no_links(&b.parent, &p));
-            if let Some(e) = b.entry(&r, true) { e.st = if ok { 1 } else { 3 }; }
-        }
+        self.dirs_made(bid, made);
+        Ok(())
+    }
+    fn dirs_made(&mut self, bid: &Fid, made: Vec<(String, bool)>) {
+        let b = self.b.get_mut(bid).unwrap();
+        for (r, ok) in made { if let Some(e) = b.entry(&r, true) { e.st = if ok { 1 } else { 3 }; } }
         b.ready = true;
         self.bsave(bid);
     }
     fn batch_resolve(&mut self, pk: &Pk, bid: Fid, root: Option<String>, ds: Vec<(String, String)>, all: Option<String>, now: u64) -> R<Value> {
+        let ms = self.lim.net_ms;
         let b = self.b.get_mut(&bid).filter(|b| b.owner == *pk && b.up && !b.more && !b.ready).ok_or(NotFound)?;
         if b.root_conflict && root.is_none() { return Err(InvalidMessage); }
-        if root.as_deref() == Some("rename") { b.root = b.parent.join(free_name(&b.parent, &b.root_name)); b.conflicts.clear(); }
+        // `EXPIRED` em qualquer passo devolve o lote como estava: o cliente repete o `batch_resolve`.
+        let snap = (b.root.clone(), b.conflicts.clone(), b.entries.clone());
+        if root.as_deref() == Some("rename") {
+            let (p, n) = (b.parent.clone(), b.root_name.clone());
+            b.root = net(ms, &p.clone(), move |_| p.join(free_name(&p, &n)))?;
+            b.conflicts.clear();
+        }
         let files: Vec<String> = b.conflicts.iter().filter(|c| c.1 == "exists").map(|c| c.0.clone()).collect();
         if ds.iter().any(|d| !files.contains(&d.0)) { return Err(InvalidMessage); }
         for r in &files {
@@ -710,7 +745,11 @@ impl Files {
             e.act = a;
         }
         b.last = now;
-        self.batch_ready(&bid);
+        if let Err(e) = self.batch_ready(&bid) {
+            let b = self.b.get_mut(&bid).unwrap();
+            (b.root, b.conflicts, b.entries) = snap;
+            return Err(e);
+        }
         Ok(json!({"type":"batch_resolve_ok","batch_id":uuid_str(&bid)}))
     }
     #[allow(clippy::too_many_arguments)]
@@ -724,8 +763,11 @@ impl Files {
         if e.st == 1 || e.st == 2 || (conflict && e.act.is_empty()) { return Err(AlreadyExists); }
         let act = e.act.clone();
         let (dir, name) = match rel.rsplit_once('/') { Some((d, n)) => (rel_dir(&root, d), n), None => (root.clone(), rel) };
-        if !no_links(&parent, &dir) { return Err(IoError); }
-        let name = if act == "rename" { free_name(&dir, name) } else { name.to_owned() };
+        let (d, n, ren) = (dir.clone(), name.to_owned(), act == "rename");
+        let name = net(self.lim.net_ms, &dir, move |_| -> R<String> {
+            if !no_links(&parent, &d) { return Err(IoError); }
+            Ok(if ren { free_name(&d, &n) } else { n })
+        })??;
         let live = |f: &Fid| *f != fid && self.t.get(f).is_some_and(|t| t.conn.is_some());
         if self.b[&bid].entries.iter().filter_map(|e| e.fid).filter(live).count() >= 4 { return Err(LimitExceeded); }
         let b = self.b.get_mut(&bid).unwrap();
@@ -770,10 +812,13 @@ impl Files {
         if cursor.is_none() {
             if self.b.contains_key(&bid) || fs::symlink_metadata(self.bdir(&bid)).is_ok() { return Err(InvalidMessage); }
             self.batch_slots(conn)?;
-            let root = canon(path).map_err(|e| io_code(&e))?;
-            if !root.is_dir() { return Err(NotFound); }
-            let (n, d, m, r) = (self.lim.max_entries, self.lim.max_depth, self.lim.max_file, root.clone());
-            let (es, skipped) = timed(self.lim.net_ms, move |beat| walk(&r, n, d, m, beat))??;
+            let (n, d, m, src) = (self.lim.max_entries, self.lim.max_depth, self.lim.max_file, PathBuf::from(path));
+            let (root, es, skipped) = net(self.lim.net_ms, &src.clone(), move |beat| -> R<_> {
+                let root = canon(src).map_err(|e| io_code(&e))?;
+                if !root.is_dir() { return Err(NotFound); }
+                let (es, sk) = walk(&root, n, d, m, beat)?;
+                Ok((root, es, sk))
+            })??;
             let b = B { owner: *pk, root_name: root.file_name().and_then(|x| x.to_str()).unwrap_or("").into(), total_files: es.iter().filter(|e| !e.dir).count() as u64,
                 total_bytes: es.iter().map(|e| e.size).sum(), root, entries: es, skipped, ready: true, last: now, conn: Some(conn), ..B::default() };
             self.b.insert(bid, b);
@@ -789,8 +834,9 @@ impl Files {
     }
     fn batch_file_down(&mut self, conn: ConnId, pk: &Pk, fid: Fid, bid: Fid, rel: &str, now: u64) -> R<Value> {
         let b = self.b.get_mut(&bid).filter(|b| b.owner == *pk && !b.up).ok_or(NotFound)?;
-        let p = rel_dir(&b.root, rel);
-        if !no_links(&b.root, &p) { return Err(NotFound); }
+        let (p, r) = (rel_dir(&b.root, rel), b.root.clone());
+        let q = p.clone();
+        if !net(self.lim.net_ms, &r.clone(), move |_| no_links(&r, &q))? { return Err(NotFound); }
         (b.conn, b.last) = (Some(conn), now);
         b.entry(rel, false).ok_or(NotFound)?.fid = Some(fid);
         let v = self.download_init(conn, pk, fid, p.to_str().ok_or(NotFound)?, now)?;
@@ -864,7 +910,10 @@ impl Files {
         let root = self.data_dir.join("staging");
         // ponytail: destino e staging no mesmo volume são checados separadamente, sem somar as duas reservas.
         let low = |p: &Path, need: u64| (self.env.free)(p).is_some_and(|f| f < need);
-        if staged + size > self.lim.staging_total || low(&dir, size + self.lim.dest_margin) || low(&root, size + self.lim.staging_floor) { return Err(LimitExceeded); }
+        let (free, d, need) = (self.env.free, dir.clone(), size + self.lim.dest_margin);
+        // Espaço livre do destino consultado com prazo quando ele está em rede (§8B).
+        let dest_low = net(self.lim.net_ms, &dir, move |_| free(&d).is_some_and(|f| f < need))?;
+        if staged + size > self.lim.staging_total || dest_low || low(&root, size + self.lim.staging_floor) { return Err(LimitExceeded); }
         let total = total_chunks(size) as u32;
         let t = T { owner: *pk, conn: Some(conn), up: true, filename, dir, dir_id, overwrite, size, total, sha, created: now, last: now, bitmap: vec![0; (total as usize).div_ceil(8)], ..T::default() };
         let ok = json!({"type":"file_upload_init_ok","file_id":uuid_str(&fid),"missing":missing(&t.bitmap, total, 0)});
@@ -896,9 +945,12 @@ impl Files {
             }
         }
         let code = 'f: {
-            if !same_id(&t.dir, t.dir_id) { break 'f IoError; }
             let fin = t.dir.join(&t.filename);
-            if !t.overwrite && fs::symlink_metadata(&fin).is_ok() { break 'f AlreadyExists; }
+            let (d, id, f2, ow) = (t.dir.clone(), t.dir_id, fin.clone(), t.overwrite);
+            match net(ms, &t.dir, move |_| if !same_id(&d, id) { Err(IoError) } else if !ow && fs::symlink_metadata(&f2).is_ok() { Err(AlreadyExists) } else { Ok(()) }) {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) | Err(e) => break 'f e,
+            }
             let tmp = t.dir.join(tmp_name(&t.filename, fid));
             t.file = None;
             if is_net(&t.dir) && !fail {
@@ -1811,6 +1863,23 @@ mod tests {
         assert_eq!(net(50, &d.0, slow), Ok(()), "local roda direto, sem prazo");
         let Some(u) = unc(&d) else { eprintln!("n25b: sem \\\\localhost\\S$; parte de rede pulada"); return };
         assert_eq!(net(50, &u, slow), Err(Expired));
+    }
+
+    /// §8B no lote: prazo estourado na última página → `EXPIRED`, nenhuma pasta criada; a mesma página reenviada conclui.
+    #[test] fn n25c_batch_entries_expired_on_share() {
+        let d = tmp();
+        let Some(u) = unc(&d) else { eprintln!("n25c pulado: sem \\\\localhost\\X$"); return };
+        let mut f = files(&d);
+        let bid = new_fid();
+        assert_eq!(binit(&mut f, &bid, &u.join("dst"), "r", vec![ent("a", None)], true)["type"], "batch_upload_init_ok");
+        let last = json!({"type":"batch_entries","batch_id":uuid_str(&bid),"entries":[ent("a/b", None)],"more":false});
+        f.lim.net_ms = 0;
+        assert_eq!(req(&mut f, 1, &PK, last.clone(), NOW).0["code"], "EXPIRED");
+        assert!(!d.0.join("dst/r").exists(), "nenhuma pasta criada");
+        f.lim.net_ms = 30_000;
+        let ok = req(&mut f, 1, &PK, last, NOW).0;
+        assert_eq!((ok["type"].clone(), ok["conflicts"].clone()), (json!("batch_entries_ok"), json!([])));
+        assert!(d.0.join("dst/r/a/b").is_dir());
     }
 
     #[test] fn n27_unauthorized_share_maps_to_unauthorized() {
