@@ -47,6 +47,7 @@
 | P14 | Presença: conexões **simultâneas** de vários aparelhos (answers 018); só os comandos são serializados (`seq` C3 §4). `busy`/1013 deixa de ser o caminho normal. Presença pós-hibernação fora | decisão do usuário | — |
 | P15 | Confirmação de Sair via `tauri-plugin-dialog` (botões `Sair`/`Cancelar`); servidor padrão `ws://127.0.0.1:8787` até haver deploy; `Status` ganha evento "pareou" pela D5a | recomendadas pela D5b; plugin oficial coberto por P1 | MessageBox OK/Cancelar atual |
 | P16 | Até 4 agentes simultâneos (pedido do usuário, 2026-11-13); fatias antecipadas sobre contrato fixo quando a dependência ainda roda | acelerar | rebase na entrega |
+| P17 | D4c: mantém 512/128 KiB da C4; N9 (digitação durante upload, p95 < 150 ms) medido no aparelho, não no loopback | spec aprovada; loopback não mede rede real | ajustar limiar na spec |
 | P13 | Fechar a janela **não** invalida a OTK: vale até 300 s ou uso (answers 018); QR oculto com janela fechada/minimizada | decisão do usuário | — |
 
 ## 4. Decisão Visual
@@ -74,7 +75,7 @@
 | S1 | signaling/ + docs | `SPEC-C1-presenca.md` + presença no Worker local + testes | alto | — | `feat/s1-presence` | em `main` (com D5a) |
 | D5-design | docs | mockup das telas (bandeja, QR, aparelhos, config, terminal) | alto | — | `feat/d5-design` | em `main` (b19990e) |
 | D4b | desktop/ | §8A lotes + §8B rede em `files.rs` (A10–A17, N17–N30 no PC) | alto | D4a | `feat/d4b-files-batch` | rodando |
-| D4c | desktop/ | `file-channel` em `main.rs`: controles/frames, backpressure 512/128 KiB, prioridade do PTY, taxa conjunta; loopback A1, A2, A7 (N9), N1, N12 | alto | D4b | `feat/d4c-file-channel` | rodando (antecipada sobre a API da D4a; §8A/§8B ligam após D4b) |
+| D4c | desktop/ | `file-channel` em `main.rs`: controles/frames, backpressure 512/128 KiB, prioridade do PTY, taxa conjunta; loopback A1, A2, A7 (N9), N1, N12 | alto | D4b | `feat/d4c-file-channel` | em `main` (e391b8d; 94 ok, clippy limpo, d1 9/9; §8A/§8B ligam após D4b; pendências `ponytail:` hash do `download_init` e `error` com `file_id`) |
 | D5a | desktop/ | `lib.rs` + laço de presença do host (aceita conexões em sequência e reconexão) | alto | D4c, S1 | `feat/d5a-host-lib` | em `main` (87 ok, clippy limpo, signaling 32/32; `wrangler_echo`/`wrangler_second_channel` do d1-integration ainda esperam eco M1: fica para D4c) |
 | D5b | desktop/app | Tauri: bandeja, QR, aparelhos/revogar, autostart HKCU Run, Sair; instalador NSIS | alto | D5a, D5-design | `feat/d5b-tray` | em `main` (8 ok, clippy limpo; `host.rs` stub até D5a; "Copiar link" isolado em 8371f85) |
 | D5c | desktop/app | cliente local (terminal desta máquina) e remoto (offerer + C2 + C3) | alto | D5b | `feat/d5c-client` | rodando (sobre o stub) |
