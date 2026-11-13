@@ -43,8 +43,15 @@ async function pair(reuse = false) {
   show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-busy");
   $("copied").hidden = true;
   try {
-    if (!reuse || !known) known = new Set((await invoke("devices")).map((d) => d.id));
-    const r = (reuse && await invoke("qr").catch(() => null)) || await invoke("pair");
+    let r = reuse && await invoke("qr").catch(() => null);
+    if (!r || !known) {
+      // Sem OTK pendente: se um aparelho pareou enquanto a janela estava oculta, mostra "pareado" antes de gerar outra.
+      const list = await invoke("devices");
+      const fresh = reuse && !r && known && list.find((d) => !known.has(d.id));
+      known = new Set(list.map((d) => d.id));
+      if (fresh) return paired(fresh);
+      r = r || await invoke("pair");
+    }
     skew = r.now_ms - Date.now();
     expires = r.expires_ms;
     $("qr").src = r.qr;
@@ -85,12 +92,14 @@ async function tick() {
   if (st.pairing_expires_ms) return;
   // OTK sumiu antes do prazo: foi usada (aparelho novo) ou expirou.
   const fresh = (await invoke("devices")).find((d) => !known.has(d.id));
-  if (fresh) {
-    clearInterval(ticker);
-    expires = null;
-    $("done-t").textContent = `${fresh.label} pareado`;
-    show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-done");
-  } else expire();
+  if (fresh) paired(fresh); else expire();
+}
+
+function paired(dev) {
+  clearInterval(ticker);
+  expires = null;
+  $("done-t").textContent = `${dev.label} pareado`;
+  show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-done");
 }
 
 $("copy").onclick = async () => {
