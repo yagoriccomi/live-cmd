@@ -2428,6 +2428,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",
+ "vt100",
  "windows",
 ]
 

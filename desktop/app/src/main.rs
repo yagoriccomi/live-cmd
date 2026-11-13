@@ -5,6 +5,7 @@
 mod clip;
 mod host;
 mod settings;
+mod term;
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -157,6 +158,18 @@ fn open_window(app: &AppHandle, tab: &str) {
         .title("live-cmd").inner_size(420.0, 560.0).resizable(false).maximizable(false).center().build();
 }
 
+/// Terminal Desktop (design §6): janela própria, redimensionável.
+fn open_terminal(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("terminal") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let _ = WebviewWindowBuilder::new(app, "terminal", WebviewUrl::App("terminal.html".into()))
+        .title("Terminal Desktop — live-cmd").inner_size(960.0, 600.0).min_inner_size(560.0, 360.0).center().build();
+}
+
 fn ask(text: &str, flags: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE) -> bool {
     unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from("live-cmd"), flags | MB_SETFOREGROUND) == IDOK }
 }
@@ -185,8 +198,7 @@ fn build_menu(app: &AppHandle, state: HostState, connected: usize) -> tauri::Res
         menu.append(&MenuItem::with_id(app, "status", format!("● Pronto · {}", devices_text(connected)), false, None::<&str>)?)?;
     }
     menu.append(&sep()?)?;
-    // ponytail: Terminal Desktop é a fatia D5c; item visível e desabilitado até lá.
-    menu.append(&MenuItem::with_id(app, "terminal", "Abrir Terminal Desktop", false, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, "terminal", "Abrir Terminal Desktop", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "pair", "Novo Pareamento (Exibir QR Code)", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "devices", "Dispositivos Conectados", true, None::<&str>)?)?;
     menu.append(&sep()?)?;
@@ -225,6 +237,7 @@ fn tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
         .icon(Image::from_bytes(include_bytes!("../icons/tray-connecting.png"))?)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, e| match e.id().as_ref() {
+            "terminal" => open_terminal(app),
             "pair" => open_window(app, "pair"),
             "devices" => open_window(app, "devices"),
             "settings" => open_window(app, "settings"),
@@ -244,12 +257,17 @@ fn tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_window(app, "devices")))
-        .invoke_handler(tauri::generate_handler![status, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir])
+        .invoke_handler(tauri::generate_handler![status, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir,
+            term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
+            term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
+            term::remote_disconnect, term::remote_remove])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
             let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: host::room_id(&dir)? })?;
             a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });
+            a.manage(term::Term::default());
+            term::start(a.handle());
             tray(a.handle())?;
             refresh_tray(a.handle(), true);
             // Laço de 1 s: bandeja segue o host; link sai do clipboard quando a OTK expira ou é usada.
@@ -266,7 +284,11 @@ fn main() {
         })
         .on_window_event(|w, e| {
             // Fechar a janela invalida a OTK; trocar de aba não (P13).
-            if matches!(e, WindowEvent::CloseRequested { .. }) { cancel(&w.state::<App>()); }
+            match (w.label(), e) {
+                ("main", WindowEvent::CloseRequested { .. }) => cancel(&w.state::<App>()),
+                ("terminal", WindowEvent::Destroyed) => term::shutdown(w.app_handle()),
+                _ => {}
+            }
         })
         .build(tauri::generate_context!())
         .expect("tauri")

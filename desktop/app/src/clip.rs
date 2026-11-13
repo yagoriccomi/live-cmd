@@ -1,4 +1,4 @@
-//! "Copiar link para outro PC" (design §6/§8 item 1a, P11).
+//! Área de transferência: "Copiar link para outro PC" (design §6/§8 item 1a, P11) e o copiar/colar do terminal.
 //!
 //! DESVIO DE C2 §1, PENDENTE DE APROVAÇÃO: o URI de pareamento passa pela área de transferência.
 //! Mitigação: formato `ExcludeClipboardContentFromMonitorProcessing` (fora do histórico Win+V e da
@@ -7,9 +7,9 @@
 //! botão `#copy` em `ui/`.
 use std::sync::Mutex;
 
-use windows::Win32::Foundation::{HANDLE, HWND};
-use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
-use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
+use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
+use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
 use windows::core::w;
 
 const CF_UNICODETEXT: u32 = 13;
@@ -59,6 +59,50 @@ pub fn clear_if_ours() {
             let _ = EmptyClipboard();
             let _ = CloseClipboard();
         }
+    }
+}
+
+/// Texto do clipboard já aberto; `None` se não há texto.
+fn read_open() -> Option<String> {
+    unsafe {
+        let g = HGLOBAL(GetClipboardData(CF_UNICODETEXT).ok()?.0);
+        let p = GlobalLock(g) as *const u16;
+        if p.is_null() { return None; }
+        let max = GlobalSize(g) / 2;
+        let len = (0..max).find(|&i| *p.add(i) == 0).unwrap_or(max);
+        let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
+        let _ = GlobalUnlock(g);
+        Some(s)
+    }
+}
+
+/// `Ctrl+Shift+V` do terminal.
+pub fn read_text() -> Result<String, String> {
+    unsafe {
+        OpenClipboard(None).map_err(|_| "CLIPBOARD")?;
+        let s = read_open();
+        let _ = CloseClipboard();
+        Ok(s.unwrap_or_default())
+    }
+}
+
+/// `Ctrl+Shift+C` do terminal: texto comum, entra no histórico normalmente.
+pub fn write_text(text: &str) -> Result<(), String> {
+    let text: Vec<u8> = utf16z(text).iter().flat_map(|c| c.to_le_bytes()).collect();
+    unsafe {
+        OpenClipboard(None).map_err(|_| "CLIPBOARD")?;
+        let r = (|| { EmptyClipboard()?; SetClipboardData(CF_UNICODETEXT, Some(global(&text)?))?; windows::core::Result::Ok(()) })();
+        let _ = CloseClipboard();
+        r.map_err(|_| "CLIPBOARD".into())
+    }
+}
+
+/// "Adicionar PC": o link colado sai do clipboard se ainda estiver lá (design §6).
+pub fn clear_if_text(text: &str) {
+    unsafe {
+        if OpenClipboard(None).is_err() { return; }
+        if read_open().is_some_and(|s| s.trim() == text) { let _ = EmptyClipboard(); }
+        let _ = CloseClipboard();
     }
 }
 
