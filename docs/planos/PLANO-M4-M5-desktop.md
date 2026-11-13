@@ -46,6 +46,7 @@
 | P12 | Parear, Aparelhos e Configurações em uma janela com 3 abas (design §8 item 2a) | menos código | três janelas |
 | P14 | Presença (SPEC-C1-presenca P3/P4): uma sala por instância local; motivo `busy` + WS 1013 novos; presença pós-hibernação fora. **Pendente de aprovação do usuário** | local-only, deploy vetado | revisar a spec antes do deploy |
 | P15 | Confirmação de Sair via `tauri-plugin-dialog` (botões `Sair`/`Cancelar`); servidor padrão `ws://127.0.0.1:8787` até haver deploy; `Status` ganha evento "pareou" pela D5a | recomendadas pela D5b; plugin oficial coberto por P1 | MessageBox OK/Cancelar atual |
+| P16 | Até 4 agentes simultâneos (pedido do usuário, 2026-11-13); fatias antecipadas sobre contrato fixo quando a dependência ainda roda | acelerar | rebase na entrega |
 | P13 | Fechar a janela invalida a OTK; trocar de aba não (design §8 item 3b) | OTK sem ninguém olhando é só risco | manter a OTK até 300 s |
 
 ## 4. Decisão Visual
@@ -73,10 +74,11 @@
 | S1 | signaling/ + docs | `SPEC-C1-presenca.md` + presença no Worker local + testes | alto | — | `feat/s1-presence` | em `main` (com D5a) |
 | D5-design | docs | mockup das telas (bandeja, QR, aparelhos, config, terminal) | alto | — | `feat/d5-design` | em `main` (b19990e) |
 | D4b | desktop/ | §8A lotes + §8B rede em `files.rs` (A10–A17, N17–N30 no PC) | alto | D4a | `feat/d4b-files-batch` | rodando |
-| D4c | desktop/ | `file-channel` em `main.rs`: controles/frames, backpressure 512/128 KiB, prioridade do PTY, taxa conjunta; loopback A1, A2, A7 (N9), N1, N12 | alto | D4b | `feat/d4c-file-channel` | na fila |
+| D4c | desktop/ | `file-channel` em `main.rs`: controles/frames, backpressure 512/128 KiB, prioridade do PTY, taxa conjunta; loopback A1, A2, A7 (N9), N1, N12 | alto | D4b | `feat/d4c-file-channel` | rodando (antecipada sobre a API da D4a; §8A/§8B ligam após D4b) |
 | D5a | desktop/ | `lib.rs` + laço de presença do host (aceita conexões em sequência e reconexão) | alto | D4c, S1 | `feat/d5a-host-lib` | em `main` (87 ok, clippy limpo, signaling 32/32; `wrangler_echo`/`wrangler_second_channel` do d1-integration ainda esperam eco M1: fica para D4c) |
 | D5b | desktop/app | Tauri: bandeja, QR, aparelhos/revogar, autostart HKCU Run, Sair; instalador NSIS | alto | D5a, D5-design | `feat/d5b-tray` | em `main` (8 ok, clippy limpo; `host.rs` stub até D5a; "Copiar link" isolado em 8371f85) |
 | D5c | desktop/app | cliente local (terminal desta máquina) e remoto (offerer + C2 + C3) | alto | D5b | `feat/d5c-client` | rodando (sobre o stub) |
+| D-int | desktop/scripts | `d1-integration.cjs`: `wrangler_echo` e `wrangler_second_channel` falam C2/C3 em vez do eco M1 | alto | D5a | `feat/dint-wrangler` | rodando |
 
 ## 7. Impacto em Dados e Contratos
 
