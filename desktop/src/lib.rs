@@ -243,30 +243,62 @@ struct Link { state: std::sync::atomic::AtomicU8, ready: AtomicBool }
 const RUNNING: u8 = 1; const ERROR: u8 = 2;
 /// `true` quando [`Service::stop`] foi pedido.
 async fn stopped(stop: &mut tokio::sync::watch::Receiver<bool>) { if stop.wait_for(|s| *s).await.is_err() { std::future::pending::<()>().await } }
-/// Uma tentativa na sala (SPEC-C1-presenca §3): `hello` com `connection_id: null`, espera sem prazo pelo `ready`,
-/// aprende o `connection_id` do cliente e negocia uma PeerConnection nova. Sai ao fim da tentativa.
-async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: tokio::sync::watch::Receiver<bool>) -> Result<()> {
+/// Socket de presença na sala (SPEC-C1-presenca §3): `hello` com `connection_id: null`, espera sem prazo;
+/// cada `ready` traz o `connection_id` de um cliente e abre uma [`attempt`] própria, em paralelo com as outras.
+/// Envelopes são roteados pelo `connection_id`; o fim de uma tentativa não derruba as demais nem o socket.
+/// `once`: devolve o resultado da primeira tentativa (testes de uma conexão). Sem `once`, sai só quando o WS cai.
+async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: tokio::sync::watch::Receiver<bool>, attempts: &mut Vec<tokio::task::JoinHandle<Result<()>>>, once: bool) -> Result<()> {
     let rid = auth::uuid_bytes(room).ok_or("room UUID")?;
     let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(65536)).max_frame_size(Some(65536));
     let connected = tokio::time::timeout(Duration::from_secs(5), tokio_tungstenite::connect_async_with_config(format!("{url}/v1/ws/{room}"), Some(config), false)).await;
     let Ok(Ok((mut ws, _))) = connected else { return Err("signaling unreachable".into()) };
     ws.send(json!({"v":1,"type":"hello","connection_id":null,"request_id":"host","payload":{"role":"host"}}).to_string().into()).await?;
-    let id = loop {
-        let frame = tokio::select! { f = ws.next() => f.ok_or("websocket closed")??, _ = stopped(&mut stop) => return Ok(()) };
-        let tokio_tungstenite::tungstenite::Message::Text(raw) = frame else { return Err("websocket closed".into()) };
+    // Saída de todas as tentativas passa por um único escritor (este laço).
+    let (out, mut out_rx) = mpsc::unbounded_channel::<String>();
+    let mut routes: HashMap<String, mpsc::UnboundedSender<String>> = HashMap::new();
+    let mut first: Option<tokio::task::JoinHandle<Result<()>>> = None;
+    loop {
+        let frame = tokio::select! {
+            f = ws.next() => f.ok_or("websocket closed")??,
+            Some(wire) = out_rx.recv() => { tokio::time::timeout(Duration::from_secs(2), ws.send(wire.into())).await??; continue }
+            r = async { first.as_mut().unwrap().await }, if first.is_some() => return r?,
+            _ = stopped(&mut stop) => return Ok(()),
+        };
+        let raw = match frame { tokio_tungstenite::tungstenite::Message::Text(t) => t, tokio_tungstenite::tungstenite::Message::Close(_) => return Ok(()), _ => return Err("websocket type".into()) };
         let m = envelope_any(&raw)?;
         match (m["type"].as_str(), m["payload"]["status"].as_str(), &m["connection_id"]) {
             (Some("hello"), Some("waiting"), Value::Null) => link.state.store(RUNNING, Relaxed),
-            (Some("hello"), Some("ready"), Value::String(id)) if auth::uuid_v4_lower(id).is_some() => break id.clone(),
+            (Some("hello"), Some("ready"), Value::String(id)) if auth::uuid_v4_lower(id).is_some() => {
+                routes.retain(|_, tx| !tx.is_closed());
+                if routes.contains_key(id) || (once && first.is_some()) { return Err("signal phase".into()); }
+                link.state.store(RUNNING, Relaxed);
+                link.ready.store(true, Relaxed);
+                let (tx, inbox) = mpsc::unbounded_channel();
+                routes.insert(id.clone(), tx);
+                let task = tokio::spawn(attempt(id.clone(), rid, host.clone(), stop.clone(), out.clone(), inbox));
+                if once { first = Some(task); } else { attempts.retain(|h| !h.is_finished()); attempts.push(task); }
+            }
             // Papel de host já ocupado: `error` LIMIT_EXCEEDED + `close busy` (§4); o laço espera com backoff.
             (Some("error"), _, Value::Null) if m["payload"]["code"] == "LIMIT_EXCEEDED" => return Err("busy".into()),
+            // Envelope de uma tentativa: só a dona recebe. Id já encerrado: descartado (§3.6).
+            (_, _, Value::String(id)) if m["type"] != "hello" => { if let Some(tx) = routes.get(id) { let _ = tx.send(raw.to_string()); } }
+            (Some("close"), _, Value::Null) => return Ok(()),
             _ => return Err("signal phase".into()),
         }
-    };
-    link.state.store(RUNNING, Relaxed);
-    link.ready.store(true, Relaxed);
-    let (id, cid) = (id.as_str(), auth::uuid_v4_lower(&id).ok_or("connection UUID")?);
+    }
+}
+/// Uma tentativa (C2 §5): PeerConnection nova para o `connection_id` do cliente. `inbox` traz só os envelopes dela;
+/// `out` vai ao WS de presença. Ao sair, avisa o Worker com `close` para liberar a vaga do cliente.
+async fn attempt(id: String, rid: [u8; 16], host: Arc<Host>, stop: tokio::sync::watch::Receiver<bool>, out: mpsc::UnboundedSender<String>, inbox: mpsc::UnboundedReceiver<String>) -> Result<()> {
+    let result = negotiate(&id, rid, host, stop, &out, inbox).await;
+    let reason = if result.is_ok() { "done" } else { "protocol_error" };
+    let _ = out.send(message("close", json!({"reason":reason}), &id));
+    result
+}
+async fn negotiate(id: &str, rid: [u8; 16], host: Arc<Host>, mut stop: tokio::sync::watch::Receiver<bool>, out: &mpsc::UnboundedSender<String>, mut inbox: mpsc::UnboundedReceiver<String>) -> Result<()> {
+    let send = |wire: String| out.send(wire).map_err(|_| "websocket closed");
+    let cid = auth::uuid_v4_lower(id).ok_or("connection UUID")?;
     let (cert, local_fp) = certificate()?;
     let (tx, mut rx) = mpsc::channel(260);
     let handler = Arc::new(Handler { tx, failed: tokio::sync::Notify::new() });
@@ -286,6 +318,7 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
         let mut live: Option<Live> = None;
         let mut out_rx: Option<mpsc::UnboundedReceiver<Out>> = None;
         let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
+        let mut inbox_closed = false;
         loop {
             // Erro de auth: envia o código ao peer e encerra; o chamador fecha a PeerConnection inteira.
             let auth_error: auth::Error = tokio::select! {
@@ -310,7 +343,7 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
                         }
                         let wire = message("ice", payload, id);
                         if wire.len() > 65536 { return Err("signal limit".into()); }
-                        tokio::time::timeout(Duration::from_secs(2), ws.send(wire.into())).await??;
+                        send(wire)?;
                         continue;
                     }
                 },
@@ -396,9 +429,9 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
                         _ => continue,
                     }
                 },
-                frame = ws.next() => {
-                    let frame = frame.ok_or("websocket closed")??;
-                    let raw = match frame { tokio_tungstenite::tungstenite::Message::Text(t) => t, tokio_tungstenite::tungstenite::Message::Close(_) => return Ok(()), _ => return Err("websocket type".into()) };
+                // WS de presença caído não derruba a conexão: o laço reabre a sala e esta tentativa segue pelo WebRTC.
+                raw = inbox.recv(), if !inbox_closed => {
+                    let Some(raw) = raw else { inbox_closed = true; continue };
                     // O Worker zera o id antes do `close` final (SPEC-C1-presenca §3.6): `close` com `null` também vale.
                     let m = envelope_any(&raw)?; let p = &m["payload"];
                     if m["connection_id"] != id && !(m["type"] == "close" && m["connection_id"].is_null()) { return Err("envelope".into()); }
@@ -412,7 +445,7 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
                             pc.set_local_description(answer.clone()).await?;
                             let wire = message("answer", json!({"sdp":answer.sdp}), id);
                             if wire.len() > 65536 { return Err("signal limit".into()); }
-                            tokio::time::timeout(Duration::from_secs(2), ws.send(wire.into())).await??; offered=true;
+                            send(wire)?; offered=true;
                         }
                         Some("ice") if offered && !ended => {
                             let c = p["candidate"].as_str().ok_or("candidate")?;
@@ -577,19 +610,23 @@ pub fn revoke_offline(data_dir: &Path, client_pk: [u8; 32]) -> std::result::Resu
     let host = Host::with_store(host_key().map_err(|e| e.to_string())?, data_dir.join("trust.json")).map_err(|e| e.to_string())?;
     host.revoke(client_pk).map_err(|e| e.code().into())
 }
-/// Laço de presença (SPEC-C1-presenca §8): uma tentativa por vez na sala; ao fim, reabre.
+/// Laço de presença (SPEC-C1-presenca §8): um WS na sala com várias tentativas em paralelo; ao cair, reabre.
 /// Backoff 1 s dobrando até 30 s; zera depois de um `ready`.
 async fn presence(i: &Inner) {
     let mut stop = i.stop.subscribe();
     let mut backoff = Duration::from_secs(1);
+    // Tentativas vivas sobrevivem à queda do WS de presença.
+    let mut attempts = Vec::new();
     while !*stop.borrow() {
         i.link.ready.store(false, Relaxed);
-        let failed = run(&i.server, &i.room, i.host.clone(), &i.link, stop.clone()).await.is_err();
+        let failed = run(&i.server, &i.room, i.host.clone(), &i.link, stop.clone(), &mut attempts, false).await.is_err();
         let ready = i.link.ready.load(Relaxed);
         if ready { backoff = Duration::from_secs(1); } else if failed { i.link.state.store(ERROR, Relaxed); }
         tokio::select! { _ = tokio::time::sleep(backoff) => {}, _ = stopped(&mut stop) => break }
         if !ready { backoff = (backoff * 2).min(Duration::from_secs(30)); }
     }
+    // Cada tentativa vê o `stop` e fecha a PeerConnection em até 2 s.
+    let _ = tokio::time::timeout(Duration::from_secs(3), futures_util::future::join_all(attempts)).await;
 }
 #[cfg(test)]
 mod tests {
@@ -797,7 +834,7 @@ mod tests {
     /// Uma tentativa de `run` contra `ws://127.0.0.1:{port}`, sem laço de presença.
     fn spawn_run(port: u16, room: &str, host: Arc<Host>) -> tokio::task::JoinHandle<Result<()>> {
         let room = room.to_owned();
-        tokio::spawn(async move { run(&format!("ws://127.0.0.1:{port}"), &room, host, &Link::default(), tokio::sync::watch::channel(false).1).await })
+        tokio::spawn(async move { run(&format!("ws://127.0.0.1:{port}"), &room, host, &Link::default(), tokio::sync::watch::channel(false).1, &mut Vec::new(), true).await })
     }
     // Run Wrangler with a fresh ROOM_ID; pass the same value here.
     #[tokio::test]
@@ -1208,6 +1245,88 @@ a=max-message-size:1024
         finish(pc, l).await;
         let s2 = svc.clone();
         tokio::time::timeout(Duration::from_secs(5), tokio::task::spawn_blocking(move || s2.stop())).await.unwrap().unwrap();
+    }
+    /// S2 (P14): dois clientes negociam ao mesmo tempo na mesma ws de presença; cada um tem C2 próprio,
+    /// ecoa C3 em paralelo, e a queda de um não derruba o outro nem o socket de presença.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn s2_two_clients_simultaneous() {
+        hub().profiles.push(("test-cmd".into(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false }));
+        let (host, _path, _tmp) = store("s2");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let h = host.clone();
+        let task = tokio::spawn(async move { run(&format!("ws://127.0.0.1:{port}"), ROOM, h, &Link::default(), tokio::sync::watch::channel(false).1, &mut Vec::new(), false).await });
+        let ids = ["00000000-0000-4000-8000-00000000a001", "00000000-0000-4000-8000-00000000b002"];
+        // Worker falso: um WS de host, dois `ready`, envelopes roteados por connection_id.
+        let (stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept()).await.unwrap().unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let first = envelope_any(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert!(first["type"] == "hello" && first["connection_id"].is_null());
+        for id in ids { ws.send(message("hello", json!({"status":"ready"}), id).into()).await.unwrap(); }
+        let (to_ws, mut from_clients) = mpsc::unbounded_channel::<String>();
+        let (a_tx, a_rx) = mpsc::unbounded_channel::<Value>();
+        let (b_tx, b_rx) = mpsc::unbounded_channel::<Value>();
+        let closes = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = closes.clone();
+        let worker = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    f = ws.next() => {
+                        let Some(Ok(f)) = f else { return };
+                        let m = envelope_any(f.to_text().unwrap()).unwrap();
+                        let id = m["connection_id"].as_str().unwrap().to_owned();
+                        if m["type"] == "close" { seen.lock().unwrap().push(id); continue }
+                        let _ = if id == ids[0] { a_tx.send(m) } else if id == ids[1] { b_tx.send(m) } else { panic!("vazamento de connection_id") };
+                    }
+                    Some(w) = from_clients.recv() => { ws.send(w.into()).await.unwrap(); }
+                }
+            }
+        });
+        async fn offer(id: &'static str, to_ws: mpsc::UnboundedSender<String>, mut rx: mpsc::UnboundedReceiver<Value>) -> R2<(impl PeerConnection, Arc<dyn DataChannel>, Binding)> {
+            let e = |e: Box<dyn std::error::Error + Send + Sync>| e.to_string();
+            let (cert, local_fp) = certificate().map_err(e)?;
+            let (tx, mut events) = mpsc::channel(260);
+            let pc = peer(cert).with_handler(Arc::new(Handler { tx, failed: tokio::sync::Notify::new() })).build().await.map_err(|x| x.to_string())?;
+            let dc = pc.create_data_channel("pty-channel", None).await.map_err(|x| x.to_string())?;
+            let o = pc.create_offer(None).await.map_err(|x| x.to_string())?;
+            pc.set_local_description(o.clone()).await.map_err(|x| x.to_string())?;
+            to_ws.send(message("offer", json!({"sdp":o.sdp}), id)).unwrap();
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    tokio::select! {
+                        Some(m) = rx.recv() => match m["type"].as_str() {
+                            Some("answer") => pc.set_remote_description(RTCSessionDescription::answer(m["payload"]["sdp"].as_str().unwrap().into()).unwrap()).await.map_err(|x| x.to_string())?,
+                            Some("ice") => pc.add_ice_candidate(serde_json::from_value(m["payload"].clone()).unwrap()).await.map_err(|x| x.to_string())?,
+                            _ => return Err(format!("{m}")),
+                        },
+                        Some(ev) = events.recv() => if let Event::Ice(c) = ev { to_ws.send(message("ice", serde_json::to_value(c.candidate.to_json().unwrap()).unwrap(), id)).unwrap(); },
+                        ev = dc.poll() => match ev { Some(DataChannelEvent::OnOpen) => return Ok(()), Some(DataChannelEvent::OnClose) | None => return Err("closed".to_owned()), _ => {} },
+                    }
+                }
+            }).await.map_err(|_| "open timeout".to_owned())??;
+            let b = Binding { connection_id: auth::uuid_bytes(id).unwrap(), room_id: auth::uuid_bytes(ROOM).unwrap(), fp_offerer: local_fp, fp_answerer: remote_fingerprint(&pc).await.map_err(e)? };
+            Ok((pc, dc, b))
+        }
+        // As duas negociações correm ao mesmo tempo.
+        let (a, b) = tokio::join!(offer(ids[0], to_ws.clone(), a_rx), offer(ids[1], to_ws.clone(), b_rx));
+        let ((pc_a, dc_a, bind_a), (pc_b, dc_b, bind_b)) = (a.unwrap(), b.unwrap());
+        let (sk_a, sk_b) = (SigningKey::from_bytes(&[31; 32]), SigningKey::from_bytes(&[32; 32]));
+        // OTK é de uso único: um pareamento por vez, com as duas conexões abertas.
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        authenticate_dc(&dc_a, ids[0], bind_a, Some(otk), sk_a, host.pk()).await.unwrap();
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        authenticate_dc(&dc_b, ids[1], bind_b, Some(otk), sk_b, host.pk()).await.unwrap();
+        let (ea, eb) = tokio::join!(c3_echo_once(&dc_a, ids[0]), c3_echo_once(&dc_b, ids[1]));
+        ea.unwrap(); eb.unwrap();
+        // Queda de A: o host avisa o Worker só com o id de A; B e o WS de presença seguem.
+        let _ = tokio::time::timeout(Duration::from_secs(2), pc_a.close()).await;
+        let t = Instant::now();
+        while !closes.lock().unwrap().contains(&ids[0].to_owned()) { assert!(t.elapsed() < Duration::from_secs(10), "close de A"); tokio::time::sleep(Duration::from_millis(20)).await; }
+        assert!(!closes.lock().unwrap().contains(&ids[1].to_owned()));
+        echo(&dc_b, ids[1]).await.unwrap();
+        assert!(!task.is_finished(), "socket de presença sobrevive");
+        let _ = tokio::time::timeout(Duration::from_secs(2), pc_b.close()).await;
+        task.abort(); worker.abort();
     }
     #[test] fn d5a_room_id_persisted() {
         let dir = std::env::temp_dir().join(format!("live-cmd-d5a-room-{}", std::process::id()));
