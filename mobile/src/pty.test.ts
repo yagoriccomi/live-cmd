@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { AuthError } from './auth.ts';
-import { parseFrame, encodeFrame, parseControl, encodeControl, parseU64, uuidStr, InputWindow, MAX_IO } from './pty.ts';
+import { parseFrame, encodeFrame, parseControl, parseHostControl, encodeControl, parseU64, uuidStr, InputWindow, MAX_IO } from './pty.ts';
 
 const fx = (n: string) => JSON.parse(readFileSync(new URL(`../../desktop/tests/fixtures/${n}`, import.meta.url), 'utf8'));
 const res = (f: () => unknown) => { try { f(); return 'ok'; } catch (e) { if (e instanceof AuthError) return e.code; throw e; } };
@@ -26,6 +26,21 @@ test('controles: mesmo resultado do host', () => {
     assert.equal(res(() => parseControl(t, connection_id)), c.result, c.name); n++;
   }
   assert.ok(n >= 30);
+});
+
+test('host→cliente: mesmo resultado da spec nos corpos reais do host', () => {
+  const { connection_id, cases } = fx('c3-host-controls.json');
+  for (const c of cases) assert.equal(res(() => parseHostControl(c.text, connection_id)), c.result, c.name);
+  assert.ok(cases.length >= 35);
+  const by = (n: string) => parseHostControl(cases.find((c: any) => c.name === n).text, connection_id);
+  assert.deepEqual([by('error_fatal'), by('error_nao_fatal')].map(m => m.t === 'error' && m.fatal), [true, false]);
+  const s = by('screen_snapshot');
+  assert.ok(s.t === 'screen_snapshot' && new TextDecoder().decode(s.data).includes('hi'));
+  const cwd = by('evento_1'), cc = by('evento_0');
+  assert.ok(cwd.t === 'cwd_changed' && cwd.cwd === 'C:\\Users\\a b');
+  assert.ok(cc.t === 'command_completed' && cc.exitCode === 2);
+  const a = by('replay_end');
+  assert.ok(a.t === 'replay_end' && uuidStr(a.sessionId).length === 36 && typeof a.offset === 'bigint');
 });
 
 test('valores', () => {

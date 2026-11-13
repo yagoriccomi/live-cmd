@@ -1,6 +1,6 @@
 // C3 pty-channel (docs/planos/SPEC-C3-controle.md): frames binários (§3), controles JSON (§2.1–2.3) e janela de input (§4).
 // Espelha desktop/src/proto.rs; as fixtures desktop/tests/fixtures/c3-*.json provam a paridade. Puro: sem RN, sem rede.
-import { AuthError, uuidBytes, type Bytes, type Code } from './auth.ts';
+import { AuthError, b64d, uuidBytes, type Bytes, type Code } from './auth.ts';
 
 export const HEADER = 30;
 export const MAX_IO = 16384;
@@ -78,13 +78,18 @@ export type Control =
   | { kind: 'error'; requestId?: string; code: Code };
 
 /** Controles cliente→host, mesma regra do host. Campos desconhecidos, tipos errados ou faixas inválidas: INVALID_MESSAGE. */
-export function parseControl(text: string, connectionId: string): Control {
+function envelope(text: string, connectionId: string): any {
   if (new TextEncoder().encode(text).length > MAX_MSG) bad();
   let o: any;
   try { o = JSON.parse(text); } catch { bad(); }
   if (typeof o !== 'object' || o === null || Array.isArray(o)) bad();
   if (o.v !== 1) fail(typeof o.v === 'number' ? 'VERSION_UNSUPPORTED' : 'INVALID_MESSAGE');
   if (o.connection_id !== connectionId) bad();
+  return o;
+}
+
+export function parseControl(text: string, connectionId: string): Control {
+  const o = envelope(text, connectionId);
   const fields = (req: string[], opt: string[] = []) => {
     if (!req.every(k => k in o) || !Object.keys(o).every(k => ['v', 'type', 'connection_id', 'request_id', ...req, ...opt].includes(k))) bad();
   };
@@ -123,6 +128,95 @@ export function parseControl(text: string, connectionId: string): Control {
     default: return bad();
   }
   return { kind: 'request', requestId: requestId ?? bad(), req };
+}
+
+export type State = 'running' | 'exited';
+export interface SessionInfo {
+  sessionId: Bytes; label: string; state: State; createdAtMs: bigint; lastActivityMs: bigint; cols: number; rows: number; attachedCount: number;
+}
+export type HostMsg =
+  | { t: 'session_create_ok'; requestId: string; sessionId: Bytes }
+  | { t: 'session_list_ok'; requestId: string; sessions: SessionInfo[]; profiles: { profileId: string; label: string }[] }
+  | { t: 'session_attach_ok'; requestId: string; sessionId: Bytes; state: State; bufferStart: bigint; outputEnd: bigint; lastInputSeq: bigint; exitCode?: number }
+  | { t: 'session_detach_ok' | 'session_close_ok' | 'client_focus_ok'; requestId: string }
+  /** `fatal`: sem `request_id` (§2) — fechar a PeerConnection. */
+  | { t: 'error'; requestId?: string; code: Code; fatal: boolean }
+  | { t: 'input_ack'; sessionId: Bytes; seq: bigint }
+  | { t: 'replay_begin'; sessionId: Bytes; fromOffset: bigint; toOffset: bigint }
+  | { t: 'replay_gap'; sessionId: Bytes; requested: bigint; availableFrom: bigint }
+  | { t: 'replay_end'; sessionId: Bytes; offset: bigint }
+  | { t: 'session_exited'; sessionId: Bytes; exitCode: number; finalOffset: bigint }
+  /** `data`: sequência ANSI que redesenha a tela (base64url sem padding). */
+  | { t: 'screen_snapshot'; sessionId: Bytes; offset: bigint; cols: number; rows: number; data: Bytes }
+  | { t: 'command_completed'; sessionId: Bytes; exitCode?: number }
+  | { t: 'cwd_changed'; sessionId: Bytes; cwd: string | null };
+
+const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
+const keys = (o: Record<string, unknown>, req: string[], opt: string[] = []) => {
+  if (!req.every(k => k in o) || !Object.keys(o).every(k => req.includes(k) || opt.includes(k))) bad();
+};
+const str = (x: unknown): string => typeof x === 'string' ? x : bad();
+const dimv = (x: unknown): number => Number.isInteger(x) ? dim(x as number) : bad();
+const i32 = (x: unknown): number => Number.isInteger(x) && (x as number) >= -(2 ** 31) && (x as number) < 2 ** 31 ? x as number : bad();
+const state = (x: unknown): State => x === 'running' || x === 'exited' ? x : bad();
+const label64 = (x: unknown): string => [...str(x)].length <= 64 ? x as string : bad();
+
+/** Controles host→cliente (§2.1 respostas, §2.2, §2.3). Mesmas regras de `parseControl`; pedidos do cliente aqui são INVALID_MESSAGE. */
+export function parseHostControl(text: string, connectionId: string): HostMsg {
+  const o = envelope(text, connectionId);
+  const E = ['v', 'type', 'connection_id'];
+  const reply = (f: string[], opt: string[] = []): string => { keys(o, [...E, 'request_id', ...f], opt); uuidV4Lower(o.request_id); return o.request_id; };
+  const live = (f: string[], opt: string[] = []): Bytes => { keys(o, [...E, 'session_id', ...f], opt); return uuidV4Lower(o.session_id); };
+  const t = str(o.type);
+  switch (t) {
+    case 'session_create_ok': { const requestId = reply(['session_id']); return { t, requestId, sessionId: uuidV4Lower(o.session_id) }; }
+    case 'session_detach_ok': case 'session_close_ok': case 'client_focus_ok': return { t, requestId: reply([]) };
+    case 'session_list_ok': {
+      const requestId = reply(['sessions', 'profiles']);
+      if (!Array.isArray(o.sessions) || !Array.isArray(o.profiles)) bad();
+      const sessions = o.sessions.map((s: unknown): SessionInfo => {
+        if (!isObj(s)) bad();
+        const x = s as Record<string, unknown>;
+        keys(x, ['session_id', 'label', 'state', 'created_at_ms', 'last_activity_ms', 'cols', 'rows', 'attached_count']);
+        const n = x.attached_count;
+        return { sessionId: uuidV4Lower(x.session_id), label: label64(x.label), state: state(x.state), createdAtMs: parseU64(x.created_at_ms),
+          lastActivityMs: parseU64(x.last_activity_ms), cols: dimv(x.cols), rows: dimv(x.rows),
+          attachedCount: Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 4 ? n as number : bad() };
+      });
+      const profiles = o.profiles.map((p: unknown) => {
+        if (!isObj(p)) bad();
+        const x = p as Record<string, unknown>;
+        keys(x, ['profile_id', 'label']);
+        return { profileId: str(x.profile_id), label: str(x.label) };
+      });
+      return { t, requestId, sessions, profiles };
+    }
+    case 'session_attach_ok': {
+      const requestId = reply(['session_id', 'state', 'buffer_start', 'output_end', 'last_input_seq'], ['exit_code']);
+      return { t, requestId, sessionId: uuidV4Lower(o.session_id), state: state(o.state), bufferStart: parseU64(o.buffer_start),
+        outputEnd: parseU64(o.output_end), lastInputSeq: parseU64(o.last_input_seq), ...('exit_code' in o && { exitCode: i32(o.exit_code) }) };
+    }
+    case 'error': {
+      keys(o, [...E, 'code'], ['request_id']);
+      const code: Code = CODES.includes(o.code) ? o.code : bad();
+      if (!('request_id' in o)) return { t, code, fatal: true };
+      uuidV4Lower(o.request_id);
+      return { t, requestId: o.request_id, code, fatal: false };
+    }
+    case 'input_ack': { const sessionId = live(['seq']); return { t, sessionId, seq: parseU64(o.seq) }; }
+    case 'replay_begin': { const sessionId = live(['from_offset', 'to_offset']); return { t, sessionId, fromOffset: parseU64(o.from_offset), toOffset: parseU64(o.to_offset) }; }
+    case 'replay_gap': { const sessionId = live(['requested', 'available_from']); return { t, sessionId, requested: parseU64(o.requested), availableFrom: parseU64(o.available_from) }; }
+    case 'replay_end': { const sessionId = live(['offset']); return { t, sessionId, offset: parseU64(o.offset) }; }
+    case 'session_exited': { const sessionId = live(['exit_code', 'final_offset']); return { t, sessionId, exitCode: i32(o.exit_code), finalOffset: parseU64(o.final_offset) }; }
+    case 'screen_snapshot': {
+      const sessionId = live(['offset', 'cols', 'rows', 'data']);
+      const d = str(o.data);
+      return { t, sessionId, offset: parseU64(o.offset), cols: dimv(o.cols), rows: dimv(o.rows), data: b64d(d, Math.floor(d.length * 3 / 4)) };
+    }
+    case 'command_completed': { const sessionId = live([], ['exit_code']); return { t, sessionId, ...('exit_code' in o && { exitCode: i32(o.exit_code) }) }; }
+    case 'cwd_changed': { const sessionId = live(['cwd']); return { t, sessionId, cwd: o.cwd === null ? null : str(o.cwd) }; }
+    default: return bad();
+  }
 }
 
 /** `body` tem `type` e campos (u64 já como string via `u64s`); adiciona `v`, `connection_id`, `request_id?`. */

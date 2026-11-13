@@ -1,7 +1,12 @@
 mod auth;
+mod conpty;
 mod proto;
-use std::{path::PathBuf, sync::Arc, time::{Duration, Instant}};
+mod screen;
+mod session;
+use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicU64, Arc, LazyLock, Mutex, MutexGuard, OnceLock}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 use auth::{Binding, Host, HostHandshake, Msg, State};
+use proto::{Control, Focus, Op, Req};
+use session::{ConnId, Out, Pk, Sid};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
@@ -55,9 +60,172 @@ async fn remote_fingerprint(pc: &impl PeerConnection) -> Result<[u8; 32]> {
     Ok(Sha256::digest(certs.first().ok_or("no remote certificate")?).into())
 }
 fn peer(cert: RTCCertificate) -> PeerConnectionBuilder<&'static str> {
+    // Acima de PAUSE o envio de saída já para (C3 §6); o limite só evita `send` bloqueante no loop.
     PeerConnectionBuilder::new()
         .with_configuration(RTCConfigurationBuilder::new().with_certificates(vec![cert]).build())
-        .with_udp_addrs(vec!["127.0.0.1:0"]).with_data_channel_send_buffer_limit(32768)
+        .with_udp_addrs(vec!["127.0.0.1:0"]).with_data_channel_send_buffer_limit(PAUSE + (1 << 20))
+}
+
+// ---- D3c: pty-channel após AUTHENTICATED (C3) ----
+const PAUSE: usize = 1 << 20;
+const RESUME: u32 = 256 << 10;
+#[derive(Clone)]
+struct Profile { label: String, command: String, osc: bool }
+/// Estado do processo: sessões vivem além da conexão; a saída do PTY chega por `conns`.
+#[derive(Default)]
+struct Hub { s: session::Sessions, screens: HashMap<Sid, screen::Screen>, /// Tela em `buffer_start`: é a do `screen_snapshot` (§5); a ao vivo só gera eventos.
+    base: HashMap<Sid, screen::Screen>, plain: HashSet<Sid>, conns: HashMap<ConnId, mpsc::UnboundedSender<Out>>, profiles: Vec<(String, Profile)> }
+static HUB: LazyLock<Mutex<Hub>> = LazyLock::new(Default::default);
+static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
+fn hub() -> MutexGuard<'static, Hub> { HUB.lock().unwrap_or_else(|e| e.into_inner()) }
+fn now_ms() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64) }
+impl Hub {
+    fn deliver(&mut self, outs: impl IntoIterator<Item = (ConnId, Out)>) {
+        for (c, o) in outs {
+            let o = match o {
+                Out::Snapshot { session_id, offset } => match self.base.get(&session_id) { Some(s) => Out::Ctl(s.snapshot_body(&session_id, offset)), None => continue },
+                o => o,
+            };
+            if let Some(tx) = self.conns.get(&c) { let _ = tx.send(o); }
+        }
+    }
+    /// A tela do host acompanha o tamanho do PTY.
+    // ponytail: a tela-base muda de tamanho na hora, não no offset do resize; replay após resize antigo pode desalinhar. Guardar (offset, tamanho) se E7 mostrar.
+    fn sync(&mut self, sid: &Sid) {
+        let Some((c, r)) = self.s.size(sid) else { return };
+        for m in [&mut self.screens, &mut self.base] { if let Some(s) = m.get_mut(sid) { s.resize(c, r); } }
+    }
+    fn pty(&mut self, sid: Sid, ev: conpty::Ev) {
+        let outs = match ev {
+            conpty::Ev::Output(d) => {
+                let events = self.screens.get_mut(&sid).map(|s| s.feed(&d)).unwrap_or_default();
+                let mut outs = self.s.on_output(sid, &d, now_ms());
+                if let Some(b) = self.base.get_mut(&sid) { b.feed(self.s.dropped(&sid)); }
+                for c in self.s.attached(&sid) { outs.extend(events.iter().map(|e| (c, Out::Ctl(screen::event_body(&sid, e))))); }
+                outs
+            }
+            conpty::Ev::Exit(code) => self.s.on_exit(sid, code),
+        };
+        self.deliver(outs);
+        self.forget(&[sid]);
+    }
+    /// Solta a tela das sessões que saíram da tabela (close após o `05`, TTL).
+    fn forget(&mut self, sids: &[Sid]) {
+        for sid in sids { if self.s.size(sid).is_none() { self.screens.remove(sid); self.base.remove(sid); self.plain.remove(sid); } }
+    }
+    fn request(&mut self, conn: ConnId, pk: Pk, req: Req, now: u64) -> std::result::Result<Value, auth::Error> {
+        Ok(match req {
+            Req::Create { profile_id, cols, rows, label } => {
+                let p = self.profiles.iter().find(|p| p.0 == profile_id).ok_or(auth::Error::NotFound)?.1.clone();
+                let cell = Arc::new(OnceLock::new());
+                let c = cell.clone();
+                // O lock do hub é tomado antes de ler `cell`: a saída que chegar antes do `create` espera, não se perde.
+                let pty = conpty::ConPty::spawn(&p.command, cols, rows, move |ev| { let mut h = hub(); if let Some(sid) = c.get() { h.pty(*sid, ev) } }).map_err(|_| auth::Error::IoError)?;
+                let sid = self.s.create(Box::new(pty), label, cols, rows, now)?;
+                let _ = cell.set(sid);
+                self.screens.insert(sid, screen::Screen::new(cols, rows, p.osc));
+                self.base.insert(sid, screen::Screen::new(cols, rows, false));
+                if !p.osc { self.plain.insert(sid); }
+                json!({"type":"session_create_ok","session_id":proto::uuid_str(&sid)})
+            }
+            Req::List => json!({"type":"session_list_ok","sessions":self.s.list(),
+                "profiles":self.profiles.iter().map(|(id, p)| json!({"profile_id":id,"label":p.label})).collect::<Vec<_>>()}),
+            Req::Attach { session_id, from_offset, size } => {
+                let (ok, mut outs) = self.s.attach(conn, pk, session_id, from_offset, size, now)?;
+                self.sync(&session_id);
+                if self.plain.contains(&session_id) { outs.push(Out::Ctl(screen::cwd_unknown(&session_id))); }
+                self.deliver(outs.into_iter().map(|o| (conn, o)));
+                ok
+            }
+            Req::Detach(sid) => self.s.detach(conn, sid, now)?,
+            Req::Close(sid) => { let ok = self.s.close(sid)?; self.forget(&[sid]); ok }
+            Req::Focus(_) => unreachable!("tratado na conexão"),
+        })
+    }
+}
+/// Remove a conexão do hub em qualquer saída do loop.
+struct Reg(ConnId);
+impl Drop for Reg { fn drop(&mut self) { let mut h = hub(); h.conns.remove(&self.0); h.s.disconnect(self.0, now_ms()); } }
+struct Live { conn: ConnId, pk: Pk, paused: bool, bg: bool, tokens: f64, refill: Instant, last_rx: Instant, ping: u64, _reg: Reg }
+/// `a=max-message-size` do SDP remoto; ausente = 65536 (RFC 8841 §6.1).
+fn remote_max_message(sdp: &str) -> u64 {
+    sdp.lines().find_map(|l| l.trim().strip_prefix("a=max-message-size:")).and_then(|v| v.trim().parse().ok()).unwrap_or(65536)
+}
+async fn send_out(ch: &Arc<dyn DataChannel>, id: &str, conn: ConnId, o: Out) -> Result<()> {
+    match o {
+        Out::Ctl(v) => ch.send_text(&proto::encode_control(id, None, v)).await?,
+        Out::Frame(f) => {
+            ch.send(proto::encode_frame(&f)[..].into()).await?;
+            if let Op::Output(d) = &f.op { let mut h = hub(); let outs = h.s.sent(conn, f.session_id, d.len()); h.deliver(outs.into_iter().map(|o| (conn, o))); }
+        }
+        Out::Snapshot { .. } => {}
+    }
+    Ok(())
+}
+/// Mensagem do `pty-channel` após AUTHENTICATED. `Some(e)`: erro fatal (fecha com `error` sem `request_id`).
+async fn c3_message(ch: &Arc<dyn DataChannel>, id: &str, host: &Host, l: &mut Live, data: &[u8], is_string: bool) -> Result<Option<auth::Error>> {
+    use auth::Error::*;
+    l.last_rx = Instant::now();
+    let now = now_ms();
+    if !is_string {
+        let f = match proto::parse_frame(data) { Ok(f) => f, Err(e) => return Ok(Some(e)) };
+        let reply = {
+            let mut h = hub();
+            let r = match &f.op {
+                // Eco do ping do cliente; o eco do nosso ping só renova `last_rx`.
+                Op::Heartbeat => Ok((f.seq != l.ping).then(|| Out::Frame(f.clone()))),
+                Op::Input(d) => h.s.input(l.conn, f.session_id, f.seq, d, now).map(|a| a.map(Out::Ctl)),
+                Op::Resize { cols, rows } => h.s.resize(l.conn, f.session_id, *cols, *rows).map(|_| None),
+                _ => Err(InvalidMessage),
+            };
+            h.sync(&f.session_id);
+            match r {
+                // `input_ack` pela fila do hub: fica atrás do replay e da saída já enfileirados.
+                Ok(Some(o @ Out::Ctl(_))) => { h.deliver([(l.conn, o)]); None }
+                Ok(r) => r,
+                Err(e) => return Ok(Some(e)),
+            }
+        };
+        if let Some(o) = reply { send_out(ch, id, l.conn, o).await?; }
+        return Ok(None);
+    }
+    l.tokens = (l.tokens + l.refill.elapsed().as_secs_f64() * 50.0).min(100.0);
+    l.refill = Instant::now();
+    if l.tokens < 1.0 { return Ok(Some(LimitExceeded)); }
+    l.tokens -= 1.0;
+    let Ok(t) = std::str::from_utf8(data) else { return Ok(Some(InvalidMessage)) };
+    let (rid, req) = match proto::parse_control(t, id) {
+        Ok(Control::Request { request_id, req }) => (request_id, req),
+        Ok(Control::Error { request_id: Some(_), .. }) => return Ok(None),
+        Ok(Control::Error { request_id: None, .. }) => return Err("peer fatal error".into()),
+        Err(e) => return Ok(Some(e)),
+    };
+    // §7: todo pedido confere a trust store (a releitura do arquivo é o tick de 1 s).
+    if let Err(e) = host.check_trusted(&l.pk) { return Ok(Some(e)); }
+    let body = match req {
+        Req::Focus(f) => { l.bg = f == Focus::Background; Ok(json!({"type":"client_focus_ok"})) }
+        req => hub().request(l.conn, l.pk, req, now),
+    };
+    let body = match body { Ok(v) => v, Err(InvalidMessage) => return Ok(Some(InvalidMessage)), Err(e) => proto::error(e) };
+    ch.send_text(&proto::encode_control(id, Some(&rid), body)).await?;
+    Ok(None)
+}
+/// Perfis do host (`profiles.json` ao lado da trust store); sem arquivo, pwsh e WSL com integração OSC 133/7.
+fn profiles(path: &std::path::Path) -> Result<Vec<(String, Profile)>> {
+    let Ok(t) = std::fs::read_to_string(path) else {
+        let utf16: Vec<u8> = screen::PWSH_PROMPT.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let on_path = |exe: &str| std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(exe).is_file()));
+        let ps = if on_path("pwsh.exe") { "pwsh.exe" } else { "powershell.exe" };
+        let bash = base64::engine::general_purpose::STANDARD.encode(screen::BASH_PROMPT_COMMAND);
+        return Ok(vec![
+            ("pwsh".into(), Profile { label: "PowerShell".into(), command: format!("{ps} -NoLogo -NoExit -EncodedCommand {}", base64::engine::general_purpose::STANDARD.encode(utf16)), osc: true }),
+            ("wsl".into(), Profile { label: "WSL".into(), command: format!("wsl.exe -e bash -c \"PROMPT_COMMAND=$(echo {bash} | base64 -d) exec bash -i\""), osc: true }),
+        ]);
+    };
+    let v: Value = serde_json::from_str(&t)?;
+    v.as_array().ok_or("profiles")?.iter().map(|p| Ok((p["profile_id"].as_str().ok_or("profile_id")?.into(), Profile {
+        label: p["label"].as_str().ok_or("label")?.into(), command: p["command"].as_str().ok_or("command")?.into(), osc: p["osc"].as_bool().unwrap_or(false),
+    }))).collect()
 }
 async fn run(room: &str, id: &str, port: u16, host: Arc<Host>) -> Result<()> {
     let (cid, rid) = (auth::uuid_bytes(id).ok_or("connection UUID")?, auth::uuid_bytes(room).ok_or("room UUID")?);
@@ -80,6 +248,9 @@ async fn run(room: &str, id: &str, port: u16, host: Arc<Host>) -> Result<()> {
         // C2 §2.1: os 30 s contam do DTLS connected, com ou sem pty-channel aberto.
         let mut connected_at: Option<Instant> = None;
         let mut revocation = tokio::time::interval(Duration::from_secs(1));
+        let mut live: Option<Live> = None;
+        let mut out_rx: Option<mpsc::UnboundedReceiver<Out>> = None;
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
         loop {
             // Erro de auth: envia o código ao peer e encerra; o chamador fecha a PeerConnection inteira.
             let auth_error: auth::Error = tokio::select! {
@@ -114,7 +285,27 @@ async fn run(room: &str, id: &str, port: u16, host: Arc<Host>) -> Result<()> {
                 }
                 // ponytail: revogação vista ao reler o arquivo a cada 1 s; trocar por IPC se precisar de menos.
                 _ = revocation.tick(), if client_pk.is_some() => {
-                    match host.reload().map_err(|_| auth::Error::IoError).and_then(|_| host.check_trusted(&client_pk.unwrap())) { Err(e) => e, Ok(()) => continue }
+                    match host.reload().map_err(|_| auth::Error::IoError).and_then(|_| host.check_trusted(&client_pk.unwrap())) {
+                        Err(e) => { if e != auth::Error::IoError { hub().s.revoke(&client_pk.unwrap(), now_ms()); } e }
+                        Ok(()) => continue,
+                    }
+                }
+                // C3 §3: ping a cada 10 s; 30 s sem nada recebido fecha. Em segundo plano não há heartbeat (§9 item 9).
+                _ = heartbeat.tick(), if live.as_ref().is_some_and(|l| !l.bg) => {
+                    let l = live.as_mut().unwrap();
+                    if l.last_rx.elapsed() >= Duration::from_secs(30) { return Err("heartbeat timeout".into()); }
+                    l.ping += 1;
+                    let f = proto::Frame { session_id: [0; 16], seq: l.ping, op: Op::Heartbeat };
+                    tokio::time::timeout(Duration::from_secs(2), channel.as_ref().unwrap().send(proto::encode_frame(&f)[..].into())).await??;
+                    continue
+                }
+                // Saída do hub; pausa acima de 1 MiB pendente e em segundo plano (D10). A fila de 1 MiB da sessão segura o resto.
+                // ponytail: cliente PC fora de foco (5 s) trata como celular em segundo plano; separar quando existir cliente PC.
+                o = async { out_rx.as_mut().unwrap().recv().await }, if live.as_ref().is_some_and(|l| !l.paused && !l.bg) => {
+                    let (ch, l) = (channel.as_ref().unwrap(), live.as_mut().unwrap());
+                    tokio::time::timeout(Duration::from_secs(2), send_out(ch, id, l.conn, o.ok_or("hub closed")?)).await??;
+                    l.paused = ch.outstanding_bytes().await? > PAUSE;
+                    continue
                 }
                 // ponytail: C4 não implementado; qualquer mensagem no file-channel fecha (antes da auth: C2 N11).
                 event = async { file.as_ref().unwrap().poll().await }, if file.is_some() => match event {
@@ -137,13 +328,26 @@ async fn run(room: &str, id: &str, port: u16, host: Arc<Host>) -> Result<()> {
                             }
                         }
                         Some(DataChannelEvent::OnMessage(m)) => match hs.as_mut() {
-                            Some(h) if h.state() == State::Authenticated => { let t = text(&m.data, m.is_string)?; tokio::time::timeout(Duration::from_secs(2), ch.send_text(t)).await??; continue }
+                            Some(h) if h.state() == State::Authenticated => {
+                                match tokio::time::timeout(Duration::from_secs(2), c3_message(ch, id, &host, live.as_mut().unwrap(), &m.data, m.is_string)).await?? { Some(e) => e, None => continue }
+                            }
                             Some(h) => {
                                 let parsed = if m.is_string { std::str::from_utf8(&m.data).map_err(|_| auth::Error::InvalidMessage).and_then(|t| auth::parse_msg(t, id)) } else { Err(auth::Error::InvalidMessage) };
                                 match parsed.and_then(|msg| h.handle(msg, Instant::now())) {
                                     Ok(reply) => {
                                         tokio::time::timeout(Duration::from_secs(2), ch.send_text(&reply.to_json(id))).await??;
                                         client_pk = h.client_pk();
+                                        if let Some(pk) = client_pk {
+                                            // C3 §1: min(local 65536, remoto) < 65536 fecha; o erro é o log local.
+                                            if remote_max_message(&pc.remote_description().await.map(|d| d.sdp).unwrap_or_default()) < 65536 { return Err("LIMIT_EXCEEDED".into()); }
+                                            ch.set_buffered_amount_low_threshold(RESUME).await?;
+                                            let conn = NEXT_CONN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                            let (tx, rx) = mpsc::unbounded_channel();
+                                            hub().conns.insert(conn, tx);
+                                            out_rx = Some(rx);
+                                            live = Some(Live { conn, pk, paused: false, bg: false, tokens: 100.0, refill: Instant::now(), last_rx: Instant::now(), ping: 0, _reg: Reg(conn) });
+                                            heartbeat.reset();
+                                        }
                                         continue;
                                     }
                                     Err(e) => e,
@@ -151,6 +355,7 @@ async fn run(room: &str, id: &str, port: u16, host: Arc<Host>) -> Result<()> {
                             }
                             None => return Err("message before open".into()),
                         },
+                        Some(DataChannelEvent::OnBufferedAmountLow) => { if let Some(l) = live.as_mut() { l.paused = false; } continue }
                         Some(DataChannelEvent::OnClose) | None => return Ok(()),
                         _ => continue,
                     }
@@ -203,7 +408,8 @@ async fn run(room: &str, id: &str, port: u16, host: Arc<Host>) -> Result<()> {
     };
     let result: Result<()> = tokio::select! {
         _ = handshake => Err("handshake timeout".into()),
-        result = tokio::time::timeout(Duration::from_secs(300), attempt) => result.unwrap_or_else(|_| Err("attempt timeout".into())),
+        // Sem teto de duração: após a auth, o heartbeat (30 s) derruba conexão morta.
+        result = attempt => result,
         _ = tokio::signal::ctrl_c() => Ok(()),
     };
     let close_result = tokio::time::timeout(Duration::from_secs(2), pc.close()).await;
@@ -237,7 +443,11 @@ async fn main() {
         let mut room=None; let mut id=None; let mut port=8787; let mut pair=None; let mut revoke=None;
         let mut args=std::env::args().skip(1);
         while let Some(key)=args.next() { let value=args.next().ok_or("argument value")?; match key.as_str() { "--room-id" => room=Some(value), "--connection-id" => id=Some(value), "--port" => port=value.parse::<u16>()?, "--pair" => pair=Some(value), "--revoke" => revoke=Some(value), _ => return Err("argument".into()) } }
-        let host = Host::with_store(host_key()?, store_path()?)?;
+        let store = store_path()?;
+        hub().profiles = profiles(&store.with_file_name("profiles.json"))?;
+        // TTL de 24 h (C3 §5): varre a cada minuto.
+        tokio::spawn(async { let mut t = tokio::time::interval(Duration::from_secs(60)); loop { t.tick().await; let mut h = hub(); let dead = h.s.tick(now_ms()); h.forget(&dead); } });
+        let host = Host::with_store(host_key()?, store)?;
         if let Some(pk) = revoke {
             let pk: [u8; 32] = B64.decode(pk)?.try_into().map_err(|_| "client_pk")?;
             return host.revoke(pk).map_err(|e| e.code().into());
@@ -687,9 +897,85 @@ mod tests {
             other => format!("{other:?}"),
         }
     }
-    async fn echo(dc: &Arc<dyn DataChannel>) -> R2<()> {
-        dc.send_text("ping ação").await.map_err(|e| e.to_string())?;
-        if next_text(dc).await? == "ping ação" { Ok(()) } else { Err("echo".into()) }
+    const RID: &str = "00000000-0000-4000-8000-000000000001";
+    /// Pedido C3 autenticado e sua resposta (substitui o eco do M2).
+    async fn echo(dc: &Arc<dyn DataChannel>, id: &str) -> R2<()> {
+        dc.send_text(&json!({"v":1,"type":"session_list","connection_id":id,"request_id":RID}).to_string()).await.map_err(|e| e.to_string())?;
+        let v: Value = serde_json::from_str(&next_text(dc).await?).map_err(|e| e.to_string())?;
+        if v["type"] == "session_list_ok" && v["request_id"] == RID && v["sessions"].is_array() { Ok(()) } else { Err(format!("{v}")) }
+    }
+    async fn next_msg(dc: &Arc<dyn DataChannel>) -> R2<(bool, Vec<u8>)> {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match dc.poll().await {
+                    Some(DataChannelEvent::OnMessage(m)) => return Ok((m.is_string, m.data.to_vec())),
+                    Some(DataChannelEvent::OnClose) | None => return Err("closed".to_owned()),
+                    _ => {}
+                }
+            }
+        }).await.map_err(|_| "recv timeout".to_owned())?
+    }
+    /// D3c A1/A6 no loopback: create → attach → input `echo` → saída + `input_ack` → close → `05`. ConPTY real (cmd, sem OSC).
+    #[tokio::test]
+    async fn d3c_loopback_create_attach_input_close() {
+        hub().profiles.push(("test-cmd".into(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false }));
+        let (host, _, _tmp) = store("d3c");
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let (pc, l) = loopback(host.clone(), false).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), SigningKey::from_bytes(&[9; 32]), host.pk()).await.unwrap();
+        let ctl = |t: Value| { let mut t = t; t["v"] = 1.into(); t["connection_id"] = l.id.clone().into(); t["request_id"] = RID.into(); t.to_string() };
+        l.dc.send_text(&ctl(json!({"type":"session_create","profile_id":"test-cmd","cols":80,"rows":24}))).await.unwrap();
+        let v: Value = serde_json::from_str(&next_text(&l.dc).await.unwrap()).unwrap();
+        assert_eq!(v["type"], "session_create_ok", "{v}");
+        let sid_s = v["session_id"].as_str().unwrap().to_owned();
+        let sid = auth::uuid_bytes(&sid_s).unwrap();
+        l.dc.send_text(&ctl(json!({"type":"session_attach","session_id":sid_s,"from_offset":null}))).await.unwrap();
+        let input = proto::encode_frame(&proto::Frame { session_id: sid, seq: 1, op: Op::Input(b"echo d3c-ok\r".to_vec()) });
+        l.dc.send(input[..].into()).await.unwrap();
+        let (mut out, mut types, mut next) = (Vec::new(), Vec::<String>::new(), 0u64);
+        while !(String::from_utf8_lossy(&out).matches("d3c-ok").count() >= 2 && types.iter().any(|t| t == "input_ack")) {
+            match next_msg(&l.dc).await.unwrap() {
+                (true, t) => types.push(serde_json::from_slice::<Value>(&t).unwrap()["type"].as_str().unwrap().into()),
+                (false, b) => { let f = proto::parse_frame(&b).unwrap(); if let Op::Output(d) = f.op { assert_eq!(f.seq, next, "offset sem buraco"); next += d.len() as u64; out.extend(d); } }
+            }
+        }
+        assert!(types.starts_with(&["session_attach_ok".into(), "replay_begin".into()]), "{types:?}");
+        assert!(types.contains(&"cwd_changed".into()), "cmd anuncia cwd null");
+        l.dc.send_text(&ctl(json!({"type":"session_close","session_id":sid_s}))).await.unwrap();
+        loop {
+            if let (false, b) = next_msg(&l.dc).await.unwrap() { if let Op::Exited(_) = proto::parse_frame(&b).unwrap().op { break; } }
+        }
+        { let h = hub(); assert!(h.s.size(&sid).is_none() && !h.screens.contains_key(&sid) && !h.plain.contains(&sid), "close libera a vaga e a tela"); }
+        finish(pc, l).await;
+    }
+    /// §6: rajada acima de 100 controles → `error` LIMIT_EXCEEDED sem `request_id` e fecha.
+    #[tokio::test]
+    async fn d3c_control_burst_limit() {
+        let (host, _, _tmp) = store("d3c-burst");
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let (pc, l) = loopback(host.clone(), false).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), SigningKey::from_bytes(&[10; 32]), host.pk()).await.unwrap();
+        let m = json!({"v":1,"type":"session_list","connection_id":l.id,"request_id":RID}).to_string();
+        for _ in 0..130 { if l.dc.send_text(&m).await.is_err() { break; } }
+        let mut fatal = None;
+        while let Ok(t) = next_text(&l.dc).await { let v: Value = serde_json::from_str(&t).unwrap(); if v["type"] == "error" { fatal = Some(v); break; } }
+        let v = fatal.expect("sem error");
+        assert!(v["code"] == "LIMIT_EXCEEDED" && v.get("request_id").is_none(), "{v}");
+        let Loopback { host: h, keep, .. } = l;
+        assert_eq!(host_error(h, 5).await, "LIMIT_EXCEEDED");
+        keep.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(2), pc.close()).await;
+    }
+    #[test]
+    fn d3c_max_message_size_and_profiles() {
+        assert_eq!(remote_max_message("v=0
+a=max-message-size:1024
+"), 1024);
+        assert_eq!(remote_max_message("v=0
+"), 65536);
+        let p = profiles(std::path::Path::new("Z:/não/existe.json")).unwrap();
+        assert_eq!(p.iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["pwsh", "wsl"]);
+        assert!(p.iter().all(|p| p.1.osc));
     }
     async fn finish(pc: impl PeerConnection, l: Loopback) {
         l.keep.abort();
@@ -704,14 +990,14 @@ mod tests {
         let otk = host.issue_otk(Instant::now()).unwrap();
         let (pc, l) = loopback(host.clone(), false).await.unwrap();
         authenticate(&l, l.b.clone(), Some(otk), c_sk.clone(), host.pk()).await.unwrap();
-        echo(&l.dc).await.unwrap();
+        echo(&l.dc, &l.id).await.unwrap();
         finish(pc, l).await;
         assert!(std::fs::read_to_string(&path).unwrap().contains(&B64.encode(c_pk)), "pair persistido");
         // Reconexão: nova instância do host lê a store do disco.
         let host2 = Host::with_store(SigningKey::from_bytes(&[0x60; 32]), path.clone()).unwrap();
         let (pc, l) = loopback(host2.clone(), false).await.unwrap();
         authenticate(&l, l.b.clone(), None, c_sk.clone(), host2.pk()).await.unwrap();
-        echo(&l.dc).await.unwrap();
+        echo(&l.dc, &l.id).await.unwrap();
         // Revogação por outro processo (outra instância), com a sessão ativa.
         Host::with_store(SigningKey::from_bytes(&[0x60; 32]), path.clone()).unwrap().revoke(c_pk).unwrap();
         let got = next_text(&l.dc).await.unwrap();

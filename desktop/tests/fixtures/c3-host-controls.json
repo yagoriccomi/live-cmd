@@ -1,0 +1,200 @@
+{
+  "cases": [
+    {
+      "name": "create_ok",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"session_create_ok\",\"v\":1}"
+    },
+    {
+      "name": "list_ok",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"profiles\":[{\"label\":\"PowerShell\",\"profile_id\":\"pwsh\"}],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"sessions\":[{\"attached_count\":1,\"cols\":100,\"created_at_ms\":\"1700000000000\",\"label\":\"build\",\"last_activity_ms\":\"3\",\"rows\":30,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"running\"}],\"type\":\"session_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "list_vazia",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"profiles\":[],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"sessions\":[],\"type\":\"session_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "attach_ok",
+      "result": "ok",
+      "text": "{\"buffer_start\":\"10\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"last_input_seq\":\"0\",\"output_end\":\"8388618\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"running\",\"type\":\"session_attach_ok\",\"v\":1}"
+    },
+    {
+      "name": "attach_ok_exited",
+      "result": "ok",
+      "text": "{\"buffer_start\":\"10\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"exit_code\":-1,\"last_input_seq\":\"0\",\"output_end\":\"8388618\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"exited\",\"type\":\"session_attach_ok\",\"v\":1}"
+    },
+    {
+      "name": "detach_ok",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"session_detach_ok\",\"v\":1}"
+    },
+    {
+      "name": "close_ok",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"session_close_ok\",\"v\":1}"
+    },
+    {
+      "name": "focus_ok",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"client_focus_ok\",\"v\":1}"
+    },
+    {
+      "name": "error_nao_fatal",
+      "result": "ok",
+      "text": "{\"code\":\"NOT_FOUND\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"error\",\"v\":1}"
+    },
+    {
+      "name": "error_fatal",
+      "result": "ok",
+      "text": "{\"code\":\"LIMIT_EXCEEDED\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"type\":\"error\",\"v\":1}"
+    },
+    {
+      "name": "input_ack",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"seq\":\"1\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"input_ack\",\"v\":1}"
+    },
+    {
+      "name": "replay_gap",
+      "result": "ok",
+      "text": "{\"available_from\":\"10\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"requested\":\"0\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"replay_gap\",\"v\":1}"
+    },
+    {
+      "name": "replay_begin",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"from_offset\":\"10\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"to_offset\":\"8388618\",\"type\":\"replay_begin\",\"v\":1}"
+    },
+    {
+      "name": "replay_end",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"offset\":\"5\",\"session_id\":\"3f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"replay_end\",\"v\":1}"
+    },
+    {
+      "name": "session_exited",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"exit_code\":-1,\"final_offset\":\"0\",\"session_id\":\"2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"session_exited\",\"v\":1}"
+    },
+    {
+      "name": "screen_snapshot",
+      "result": "ok",
+      "text": "{\"cols\":80,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"data\":\"G1s_MjVoG1ttG1tIG1tKG1szMW1oaRs-G1s_MWwbWz8yMDA0bBtbMWQbWzFHGzcbWzFkG1szRxtbbRtbMzFt\",\"offset\":\"10\",\"rows\":24,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"screen_snapshot\",\"v\":1}"
+    },
+    {
+      "name": "cwd_null",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"cwd\":null,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"cwd_changed\",\"v\":1}"
+    },
+    {
+      "name": "ack_seq_numero",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"seq\":1,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"input_ack\",\"v\":1}"
+    },
+    {
+      "name": "ack_seq_2_64",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"seq\":\"18446744073709551616\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"input_ack\",\"v\":1}"
+    },
+    {
+      "name": "ack_campo_desconhecido",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"seq\":\"1\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"input_ack\",\"v\":1,\"x\":1}"
+    },
+    {
+      "name": "ack_sem_session",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"seq\":\"1\",\"type\":\"input_ack\",\"v\":1}"
+    },
+    {
+      "name": "ack_session_maiusculo",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"seq\":\"1\",\"session_id\":\"0F1E2D3C-4B5A-4968-8778-695A4B3C2D1E\",\"type\":\"input_ack\",\"v\":1}"
+    },
+    {
+      "name": "ok_sem_request_id",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"session_create_ok\",\"v\":1}"
+    },
+    {
+      "name": "attach_ok_state_invalido",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"buffer_start\":\"10\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"last_input_seq\":\"0\",\"output_end\":\"8388618\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"zombie\",\"type\":\"session_attach_ok\",\"v\":1}"
+    },
+    {
+      "name": "attach_ok_sem_last_input",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"buffer_start\":\"10\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"output_end\":\"8388618\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"running\",\"type\":\"session_attach_ok\",\"v\":1}"
+    },
+    {
+      "name": "list_cols_0",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"profiles\":[],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"sessions\":[{\"attached_count\":1,\"cols\":0,\"created_at_ms\":\"1700000000000\",\"label\":\"build\",\"last_activity_ms\":\"3\",\"rows\":30,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"running\"}],\"type\":\"session_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "list_created_numero",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"profiles\":[],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"sessions\":[{\"attached_count\":1,\"cols\":100,\"created_at_ms\":1,\"label\":\"build\",\"last_activity_ms\":\"3\",\"rows\":30,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"running\"}],\"type\":\"session_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "list_sem_profiles",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"sessions\":[],\"type\":\"session_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "error_codigo_desconhecido",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"code\":\"NOPE\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"error\",\"v\":1}"
+    },
+    {
+      "name": "snapshot_data_padding",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"cols\":80,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"data\":\"aGk=\",\"offset\":\"10\",\"rows\":24,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"screen_snapshot\",\"v\":1}"
+    },
+    {
+      "name": "snapshot_data_base64_padrao",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"cols\":80,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"data\":\"+/+/\",\"offset\":\"10\",\"rows\":24,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"screen_snapshot\",\"v\":1}"
+    },
+    {
+      "name": "snapshot_cols_1001",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"cols\":1001,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"data\":\"G1s_MjVoG1ttG1tIG1tKG1szMW1oaRs-G1s_MWwbWz8yMDA0bBtbMWQbWzFHGzcbWzFkG1szRxtbbRtbMzFt\",\"offset\":\"10\",\"rows\":24,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"screen_snapshot\",\"v\":1}"
+    },
+    {
+      "name": "exited_sem_final",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"exit_code\":-1,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"session_exited\",\"v\":1}"
+    },
+    {
+      "name": "cwd_numero",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"cwd\":1,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"cwd_changed\",\"v\":1}"
+    },
+    {
+      "name": "session_revoked",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"type\":\"session_revoked\",\"v\":1}"
+    },
+    {
+      "name": "pedido_do_cliente",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"session_list\",\"v\":1}"
+    },
+    {
+      "name": "v_2",
+      "result": "VERSION_UNSUPPORTED",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"seq\":\"1\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"input_ack\",\"v\":2}"
+    },
+    {
+      "name": "evento_0",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"exit_code\":2,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"command_completed\",\"v\":1}"
+    },
+    {
+      "name": "evento_1",
+      "result": "ok",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"cwd\":\"C:\\\\Users\\\\a b\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"cwd_changed\",\"v\":1}"
+    }
+  ],
+  "connection_id": "9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d"
+}

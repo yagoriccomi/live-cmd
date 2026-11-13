@@ -265,6 +265,87 @@ mod tests {
         fixture("c3-controls.json", json!({"connection_id": CID, "cases": v}));
     }
 
+    /// Host→cliente: corpos gerados pelos construtores reais (session.rs, screen.rs, `error`) + mutações inválidas.
+    /// O host só emite; o resultado esperado é a regra da spec, checado no app (mobile/src/pty.test.ts).
+    #[test]
+    fn host_controls() {
+        use crate::session::{Out, Pty, Sessions};
+        struct P;
+        impl Pty for P {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<()> { Ok(()) }
+            fn resize(&mut self, _: u16, _: u16) -> std::io::Result<()> { Ok(()) }
+            fn kill(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+        let wrap = |rid: Option<&str>, b: Value| encode_control(CID, rid, b);
+        let mut t = Sessions::default();
+        let s = t.create(Box::new(P), Some("build".into()), 80, 24, 1_700_000_000_000).unwrap();
+        let ss = uuid_str(&s);
+        t.on_output(s, &vec![b'x'; crate::session::RING_BYTES + 10], 1);
+        let (attach_ok, outs) = t.attach(1, [1; 32], s, Some(0), Some((100, 30)), 2).unwrap();
+        let ack = t.input(1, s, 1, b"a", 3).unwrap().unwrap();
+        // ring cheio estoura a fila de 1 MiB antes do replay_end: begin/end vêm de uma sessão pequena.
+        let s3 = t.create(Box::new(P), None, 80, 24, 0).unwrap();
+        t.on_output(s3, b"hello", 1);
+        let (_, outs3) = t.attach(3, [3; 32], s3, Some(0), None, 2).unwrap();
+        let ctl: Vec<Value> = outs.into_iter().chain(outs3).filter_map(|o| if let Out::Ctl(v) = o { Some(v) } else { None }).collect();
+        let by = |ty: &str| ctl.iter().find(|v| v["type"] == ty).unwrap().clone();
+        let s2 = t.create(Box::new(P), None, 80, 24, 0).unwrap();
+        t.attach(2, [2; 32], s2, None, None, 0).unwrap();
+        let exited = t.on_exit(s2, -1).into_iter().find_map(|(_, o)| match o { Out::Ctl(v) if v["type"] == "session_exited" => Some(v), _ => None }).unwrap();
+        let mut sc = crate::screen::Screen::new(80, 24, true);
+        let ev = sc.feed(b"\x1b[31mhi\x1b]133;D;2\x07\x1b]7;file:///C:/Users/a%20b\x07");
+        let snap = sc.snapshot_body(&s, 10);
+        let mut after = attach_ok.clone();
+        after["exit_code"] = (-1).into();
+        let list = json!({"type":"session_list_ok","sessions":t.list().into_iter().filter(|x| x["session_id"] == ss.as_str()).collect::<Vec<_>>(),"profiles":[{"profile_id":"pwsh","label":"PowerShell"}]});
+        let with = |mut v: Value, k: &str, x: Value| { v[k] = x; v };
+        let mut cases: Vec<(&str, String, &str)> = vec![
+            ("create_ok", wrap(Some(RID), json!({"type":"session_create_ok","session_id":ss})), "ok"),
+            ("list_ok", wrap(Some(RID), list.clone()), "ok"),
+            ("list_vazia", wrap(Some(RID), json!({"type":"session_list_ok","sessions":[],"profiles":[]})), "ok"),
+            ("attach_ok", wrap(Some(RID), attach_ok.clone()), "ok"),
+            ("attach_ok_exited", wrap(Some(RID), with(after, "state", "exited".into())), "ok"),
+            ("detach_ok", wrap(Some(RID), t.detach(1, s, 4).unwrap()), "ok"),
+            ("close_ok", wrap(Some(RID), t.close(s).unwrap()), "ok"),
+            ("focus_ok", wrap(Some(RID), json!({"type":"client_focus_ok"})), "ok"),
+            ("error_nao_fatal", wrap(Some(RID), error(NotFound)), "ok"),
+            ("error_fatal", wrap(None, error(LimitExceeded)), "ok"),
+            ("input_ack", wrap(None, ack.clone()), "ok"),
+            ("replay_gap", wrap(None, by("replay_gap")), "ok"),
+            ("replay_begin", wrap(None, by("replay_begin")), "ok"),
+            ("replay_end", wrap(None, by("replay_end")), "ok"),
+            ("session_exited", wrap(None, exited.clone()), "ok"),
+            ("screen_snapshot", wrap(None, snap.clone()), "ok"),
+            ("cwd_null", wrap(None, crate::screen::cwd_unknown(&s)), "ok"),
+            ("ack_seq_numero", wrap(None, with(ack.clone(), "seq", 1.into())), "INVALID_MESSAGE"),
+            ("ack_seq_2_64", wrap(None, with(ack.clone(), "seq", "18446744073709551616".into())), "INVALID_MESSAGE"),
+            ("ack_campo_desconhecido", wrap(None, with(ack.clone(), "x", 1.into())), "INVALID_MESSAGE"),
+            ("ack_sem_session", wrap(None, json!({"type":"input_ack","seq":"1"})), "INVALID_MESSAGE"),
+            ("ack_session_maiusculo", wrap(None, with(ack.clone(), "session_id", ss.to_uppercase().into())), "INVALID_MESSAGE"),
+            ("ok_sem_request_id", wrap(None, json!({"type":"session_create_ok","session_id":ss})), "INVALID_MESSAGE"),
+            ("attach_ok_state_invalido", wrap(Some(RID), with(attach_ok.clone(), "state", "zombie".into())), "INVALID_MESSAGE"),
+            ("attach_ok_sem_last_input", wrap(Some(RID), { let mut v = attach_ok.clone(); v.as_object_mut().unwrap().remove("last_input_seq"); v }), "INVALID_MESSAGE"),
+            ("list_cols_0", wrap(Some(RID), json!({"type":"session_list_ok","profiles":[],"sessions":[with(list["sessions"][0].clone(), "cols", 0.into())]})), "INVALID_MESSAGE"),
+            ("list_created_numero", wrap(Some(RID), json!({"type":"session_list_ok","profiles":[],"sessions":[with(list["sessions"][0].clone(), "created_at_ms", 1.into())]})), "INVALID_MESSAGE"),
+            ("list_sem_profiles", wrap(Some(RID), json!({"type":"session_list_ok","sessions":[]})), "INVALID_MESSAGE"),
+            ("error_codigo_desconhecido", wrap(Some(RID), json!({"type":"error","code":"NOPE"})), "INVALID_MESSAGE"),
+            ("snapshot_data_padding", wrap(None, with(snap.clone(), "data", "aGk=".into())), "INVALID_MESSAGE"),
+            ("snapshot_data_base64_padrao", wrap(None, with(snap.clone(), "data", "+/+/".into())), "INVALID_MESSAGE"),
+            ("snapshot_cols_1001", wrap(None, with(snap.clone(), "cols", 1001.into())), "INVALID_MESSAGE"),
+            ("exited_sem_final", wrap(None, json!({"type":"session_exited","session_id":ss,"exit_code":-1})), "INVALID_MESSAGE"),
+            ("cwd_numero", wrap(None, json!({"type":"cwd_changed","session_id":ss,"cwd":1})), "INVALID_MESSAGE"),
+            ("session_revoked", wrap(None, json!({"type":"session_revoked"})), "INVALID_MESSAGE"),
+            ("pedido_do_cliente", wrap(Some(RID), json!({"type":"session_list"})), "INVALID_MESSAGE"),
+            ("v_2", with(serde_json::from_str(&wrap(None, ack.clone())).unwrap(), "v", 2.into()).to_string(), "VERSION_UNSUPPORTED"),
+        ];
+        cases.extend(ev.iter().enumerate().map(|(i, e)| (["evento_0", "evento_1"][i], wrap(None, crate::screen::event_body(&s, e)), "ok")));
+        assert_eq!(ev.len(), 2);
+        // session_id vem do getrandom: fixa no texto para a fixture ser estável.
+        let fix = |x: String| x.replace(&ss, SID).replace(&ss.to_uppercase(), &SID.to_uppercase()).replace(&uuid_str(&s2), "2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e").replace(&uuid_str(&s3), "3f1e2d3c-4b5a-4968-8778-695a4b3c2d1e");
+        let v: Vec<Value> = cases.into_iter().map(|(n, t, r)| { let t = fix(t); assert!(t.len() <= MAX_MSG, "{n}"); json!({"name":n,"text":t,"result":r}) }).collect();
+        fixture("c3-host-controls.json", json!({"connection_id": CID, "cases": v}));
+    }
+
     #[test]
     fn values() {
         let Ok(Control::Request { req: Req::Attach { from_offset, size, .. }, request_id }) =
