@@ -301,7 +301,13 @@ fn hash_beat(f: &mut fs::File, beat: &dyn Fn() -> bool) -> io::Result<[u8; 32]> 
     loop { let n = f.read(&mut b)?; if n == 0 { break; } h.update(&b[..n]); if !beat() { return Err(gave_up()); } }
     Ok(h.finalize().into())
 }
-fn read_at(f: &mut fs::File, off: u64, n: usize) -> io::Result<Vec<u8>> { let mut b = vec![0; n]; f.seek(SeekFrom::Start(off))?; f.read_exact(&mut b)?; Ok(b) }
+/// Leitura posicional (`seek_read`): uma thread de rede abandonada não desloca o cursor de quem lê depois.
+fn read_at(f: &fs::File, off: u64, n: usize) -> io::Result<Vec<u8>> {
+    use std::os::windows::fs::FileExt;
+    let (mut b, mut k) = (vec![0; n], 0);
+    while k < n { match f.seek_read(&mut b[k..], off + k as u64)? { 0 => return Err(io::ErrorKind::UnexpectedEof.into()), r => k += r } }
+    Ok(b)
+}
 fn mtime_ms(m: &fs::Metadata) -> u64 { m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64) }
 fn io_code(e: &io::Error) -> Error { match e.kind() { io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => NotFound, io::ErrorKind::PermissionDenied => Unauthorized, _ => IoError } }
 
@@ -350,10 +356,15 @@ impl T {
             "dir_volume":self.dir_id.0,"dir_index":u64s(self.dir_id.1),"mtime_ms":u64s(self.mtime)})
     }
     /// Download: a versão iniciada mudou (tamanho, mtime ou identidade; §4).
-    fn changed(&self) -> bool {
-        let m = fs::metadata(&self.dir).ok();
-        !(m.is_some_and(|m| m.len() == self.size && mtime_ms(&m) == self.mtime) && same_id(&self.dir, self.dir_id))
+    /// Em rede, com prazo (§8B).
+    fn changed(&self, ms: u64) -> R<bool> {
+        let (p, size, mtime, id) = (self.dir.clone(), self.size, self.mtime, self.dir_id);
+        net(ms, &self.dir, move |_| changed(&p, size, mtime, id))
     }
+}
+fn changed(p: &Path, size: u64, mtime: u64, id: (u32, u64)) -> bool {
+    let m = fs::metadata(p).ok();
+    !(m.is_some_and(|m| m.len() == size && mtime_ms(&m) == mtime) && same_id(p, id))
 }
 fn load(p: &Path) -> Option<(Fid, T)> {
     if fs::symlink_metadata(p).ok().is_none_or(|m| is_link(&m) || !m.is_dir()) { return None; }
@@ -388,6 +399,10 @@ fn timed<X: Send + 'static>(ms: u64, f: impl FnOnce(&dyn Fn() -> bool) -> X + Se
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || { let b = tx.clone(); let x = f(&move || b.send(None).is_ok()); let _ = tx.send(Some(x)); });
     loop { match rx.recv_timeout(std::time::Duration::from_millis(ms)) { Ok(Some(x)) => return Ok(x), Ok(None) => {} Err(_) => return Err(Expired) } }
+}
+/// `timed` só quando `p` está em rede; local roda direto, sem thread.
+fn net<X: Send + 'static>(ms: u64, p: &Path, f: impl FnOnce(&dyn Fn() -> bool) -> X + Send + 'static) -> R<X> {
+    if is_net(p) { timed(ms, f) } else { Ok(f(&|| true)) }
 }
 fn gave_up() -> io::Error { io::Error::from(io::ErrorKind::TimedOut) }
 fn copy_beat(a: &mut fs::File, o: &mut fs::File, beat: &dyn Fn() -> bool) -> io::Result<()> {
@@ -627,10 +642,15 @@ impl Files {
         let staged: u64 = self.t.values().filter(|t| t.up).map(|t| t.size).sum();
         if total_files > self.lim.max_entries as u64 || total_bytes > self.lim.max_file || staged + total_bytes > self.lim.staging_total { return Err(LimitExceeded); }
         self.batch_slots(conn)?;
-        let parent = canon(dir.ok_or(NotFound)?).map_err(|e| io_code(&e))?;
-        if !parent.is_dir() { return Err(NotFound); }
-        let root = parent.join(&root_name);
-        let root_conflict = fs::symlink_metadata(&root).is_ok();
+        let (dir, name) = (dir.ok_or(NotFound)?, root_name.clone());
+        // ponytail: a conferência de conflitos do manifesto (última página) ainda roda sem prazo de rede.
+        let (parent, root, root_conflict) = net(self.lim.net_ms, &dir.clone(), move |_| -> R<_> {
+            let parent = canon(dir).map_err(|e| io_code(&e))?;
+            if !parent.is_dir() { return Err(NotFound); }
+            let root = parent.join(&name);
+            let c = fs::symlink_metadata(&root).is_ok();
+            Ok((parent, root, c))
+        })??;
         let b = B { owner: *pk, up: true, root, parent, root_name, total_files, total_bytes, more: true, root_conflict, last: now, conn: Some(conn), ..B::default() };
         self.b.insert(bid, b);
         match self.batch_add(bid, es, more, now) { Err(e) => { self.b.remove(&bid); Err(e) } ok => { self.bsave(&bid); ok } }
@@ -794,16 +814,20 @@ impl Files {
                 (0..26u8).filter(|i| mask >> i & 1 == 1).map(|i| json!({"name":format!("{}:\\", (b'A' + i) as char),"kind":"dir","mtime_ms":0,"hidden":false})).collect()
             }
             Some(d) => {
-                // ponytail: cada página relê a pasta (ordenada) e pula `skip`; mudanças entre páginas podem deslocar a lista.
-                let mut es: Vec<_> = fs::read_dir(d).map_err(|e| io_code(&e))?.flatten().collect();
-                es.sort_by_key(|e| e.file_name());
-                es.iter().skip(skip).filter_map(|e| {
-                    let m = e.metadata().ok()?;
-                    let kind = if is_link(&m) { "link" } else if m.is_dir() { "dir" } else if m.is_file() { "file" } else { "other" };
-                    let mut v = json!({"name":e.file_name().to_str()?,"kind":kind,"mtime_ms":mtime_ms(&m),"hidden":m.file_attributes() & FILE_ATTRIBUTE_HIDDEN.0 != 0});
-                    if kind == "file" { v["size_bytes"] = u64s(m.len()); }
-                    Some(v)
-                }).take(501).collect()
+                let d2 = d.clone();
+                // Listar uma página tem prazo quando a pasta está em rede (§8B).
+                net(self.lim.net_ms, d, move |_| -> R<Vec<Value>> {
+                    // ponytail: cada página relê a pasta (ordenada) e pula `skip`; mudanças entre páginas podem deslocar a lista.
+                    let mut es: Vec<_> = fs::read_dir(&d2).map_err(|e| io_code(&e))?.flatten().collect();
+                    es.sort_by_key(|e| e.file_name());
+                    Ok(es.iter().skip(skip).filter_map(|e| {
+                        let m = e.metadata().ok()?;
+                        let kind = if is_link(&m) { "link" } else if m.is_dir() { "dir" } else if m.is_file() { "file" } else { "other" };
+                        let mut v = json!({"name":e.file_name().to_str()?,"kind":kind,"mtime_ms":mtime_ms(&m),"hidden":m.file_attributes() & FILE_ATTRIBUTE_HIDDEN.0 != 0});
+                        if kind == "file" { v["size_bytes"] = u64s(m.len()); }
+                        Some(v)
+                    }).take(501).collect())
+                })??
             }
         };
         let (mut page, mut bytes) = (vec![], 0);
@@ -828,10 +852,14 @@ impl Files {
         if size == 0 && hex(&sha) != EMPTY_SHA { return Err(InvalidMessage); }
         if size > self.lim.max_file { return Err(LimitExceeded); }
         self.slots(conn)?;
-        let dir = canon(dir.ok_or(NotFound)?).map_err(|e| io_code(&e))?;
-        if !dir.is_dir() { return Err(NotFound); }
-        let dir_id = identity(&dir).ok_or(IoError)?;
-        if !overwrite && fs::symlink_metadata(dir.join(&filename)).is_ok() { return Err(AlreadyExists); }
+        let (dir, name) = (dir.ok_or(NotFound)?, filename.clone());
+        let (dir, dir_id) = net(self.lim.net_ms, &dir.clone(), move |_| -> R<_> {
+            let dir = canon(dir).map_err(|e| io_code(&e))?;
+            if !dir.is_dir() { return Err(NotFound); }
+            let id = identity(&dir).ok_or(IoError)?;
+            if !overwrite && fs::symlink_metadata(dir.join(&name)).is_ok() { return Err(AlreadyExists); }
+            Ok((dir, id))
+        })??;
         let staged: u64 = self.t.values().filter(|t| t.up).map(|t| t.size).sum();
         let root = self.data_dir.join("staging");
         // ponytail: destino e staging no mesmo volume são checados separadamente, sem somar as duas reservas.
@@ -904,16 +932,22 @@ impl Files {
     fn download_init(&mut self, conn: ConnId, pk: &Pk, fid: Fid, path: &str, now: u64) -> R<Value> {
         if self.t.contains_key(&fid) || fs::symlink_metadata(self.staging(&fid)).is_ok() { return Err(InvalidMessage); }
         self.slots(conn)?;
-        let p = canon(path).map_err(|e| io_code(&e))?;
-        let m = fs::metadata(&p).map_err(|e| io_code(&e))?;
-        if !m.is_file() { return Err(NotFound); }
-        if m.len() > self.lim.max_file { return Err(LimitExceeded); }
-        let mut f = fs::File::open(&p).map_err(|e| io_code(&e))?;
-        // ponytail: hash síncrono no init; roda no pool de disco da conexão (D4c, `file_worker`), mas trava os controles dela até acabar. Fatiar se arquivos grandes travarem a UI.
-        let sha = hash_file(&mut f).map_err(|_| IoError)?;
-        let t = T { owner: *pk, conn: Some(conn), filename: p.file_name().and_then(|n| n.to_str()).ok_or(NotFound)?.into(), dir_id: identity(&p).ok_or(IoError)?,
+        let (max, ms, path) = (self.lim.max_file, self.lim.net_ms, PathBuf::from(path));
+        // Abrir, conferir e hashear com prazo quando a origem está em rede (§8B); cada bloco do hash renova o prazo.
+        let (p, m, f, sha, id) = net(ms, &path.clone(), move |beat| -> R<_> {
+            let p = canon(&path).map_err(|e| io_code(&e))?;
+            let m = fs::metadata(&p).map_err(|e| io_code(&e))?;
+            if !m.is_file() { return Err(NotFound); }
+            if m.len() > max { return Err(LimitExceeded); }
+            let mut f = fs::File::open(&p).map_err(|e| io_code(&e))?;
+            // ponytail: hash síncrono no init; roda no pool de disco da conexão (D4c, `file_worker`), mas trava os controles dela até acabar. Fatiar se arquivos grandes travarem a UI.
+            let sha = hash_beat(&mut f, beat).map_err(|_| IoError)?;
+            let id = identity(&p).ok_or(IoError)?;
+            Ok((p, m, f, sha, id))
+        })??;
+        let t = T { owner: *pk, conn: Some(conn), filename: p.file_name().and_then(|n| n.to_str()).ok_or(NotFound)?.into(), dir_id: id,
             mtime: mtime_ms(&m), size: m.len(), total: total_chunks(m.len()) as u32, sha, created: now, last: now, file: Some(f), dir: p, ..T::default() };
-        if t.changed() { return Err(NotFound); }
+        if t.changed(ms)? { return Err(NotFound); }
         if self.persist(&fid, &t).is_err() { rm(&self.staging(&fid)); return Err(IoError); }
         let v = json!({"type":"file_download_init_ok","file_id":uuid_str(&fid),"filename":t.filename,"size_bytes":u64s(t.size),"chunk_size":CHUNK,"total_chunks":t.total,"sha256":hex(&sha)});
         self.t.insert(fid, t);
@@ -932,7 +966,7 @@ impl Files {
     fn resume(&mut self, conn: ConnId, pk: &Pk, fid: Fid, cursor: Option<String>, now: u64) -> R<Value> {
         let from = cursor.map(|c| c.parse::<u32>().map_err(|_| InvalidMessage)).transpose()?.unwrap_or(0);
         let t = self.t.get(&fid).filter(|t| t.owner == *pk && now < t.last + self.lim.ttl_ms).ok_or(NotFound)?;
-        if !t.up && t.changed() { self.delete(&fid, now); return Err(NotFound); }
+        if !t.up && t.changed(self.lim.net_ms)? { self.delete(&fid, now); return Err(NotFound); }
         if t.conn != Some(conn) { self.slots(conn)?; }
         self.detach(&fid, now);
         self.gone.remove(&fid);
@@ -1020,11 +1054,22 @@ impl Files {
         let w = self.lim.window;
         let fid = *self.t.iter().find(|(_, t)| !t.up && t.conn == Some(conn) && !t.queue.is_empty() && t.sent.len() < w)?.0;
         let t = self.t.get_mut(&fid).unwrap();
-        if t.changed() { self.delete(&fid, now); return Some(Pull::Ctl(file_error(NotFound, &fid))); }
+        let ms = self.lim.net_ms;
+        match t.changed(ms) {
+            Ok(false) => {}
+            Ok(true) => { self.delete(&fid, now); return Some(Pull::Ctl(file_error(NotFound, &fid))); }
+            Err(e) => { self.detach(&fid, now); return Some(Pull::Ctl(file_error(e, &fid))); }
+        }
         let i = t.queue.pop_first().unwrap();
-        match t.file.as_mut().map(|f| read_at(f, i as u64 * CHUNK, chunk_len(t.size, i) as usize)) {
-            Some(Ok(d)) => { t.sent.insert(i); t.last = now; Some(Pull::Frames(fid, frags(fid, i, &d))) }
-            _ => { self.detach(&fid, now); Some(Pull::Ctl(file_error(IoError, &fid))) }
+        let (off, n) = (i as u64 * CHUNK, chunk_len(t.size, i) as usize);
+        // Handle duplicado: a thread de rede pode ficar presa depois do `EXPIRED` sem segurar o da transferência.
+        let r = match t.file.as_ref().map(fs::File::try_clone) {
+            Some(Ok(f)) => net(ms, &t.dir, move |_| read_at(&f, off, n)).map(|r| r.map_err(|_| IoError)).and_then(|r| r),
+            _ => Err(IoError),
+        };
+        match r {
+            Ok(d) => { t.sent.insert(i); t.last = now; Some(Pull::Frames(fid, frags(fid, i, &d))) }
+            Err(e) => { self.detach(&fid, now); Some(Pull::Ctl(file_error(e, &fid))) }
         }
     }
     /// `file_ack` do cliente no download: libera a janela.
@@ -1758,6 +1803,14 @@ mod tests {
         let empty = || fs::read_dir(d.0.join("dst")).unwrap().count() == 0;
         for _ in 0..100 { if empty() { break; } std::thread::sleep(std::time::Duration::from_millis(50)); }
         assert!(empty(), "thread abandonada não renomeia e apaga o temporário");
+    }
+
+    #[test] fn n25b_network_deadline_only_on_share() {
+        let slow = |_: &dyn Fn() -> bool| std::thread::sleep(std::time::Duration::from_millis(300));
+        let d = tmp();
+        assert_eq!(net(50, &d.0, slow), Ok(()), "local roda direto, sem prazo");
+        let Some(u) = unc(&d) else { eprintln!("n25b: sem \\\\localhost\\S$; parte de rede pulada"); return };
+        assert_eq!(net(50, &u, slow), Err(Expired));
     }
 
     #[test] fn n27_unauthorized_share_maps_to_unauthorized() {
