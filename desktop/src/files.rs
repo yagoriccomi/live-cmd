@@ -655,3 +655,395 @@ impl Files {
         for fid in fids { self.delete(&fid, now); }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    const CID: &str = "9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d";
+    const RID: &str = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+    const PK: Pk = [7; 32];
+    const NOW: u64 = 1_000_000;
+    static N: AtomicU64 = AtomicU64::new(1);
+
+    /// Pasta temporária única, apagada no drop.
+    struct Tmp(PathBuf);
+    impl Drop for Tmp { fn drop(&mut self) { rm(&self.0); } }
+    fn tmp() -> Tmp {
+        let p = std::env::temp_dir().join(format!("livecmd-files-{}-{}", std::process::id(), N.fetch_add(1, Relaxed)));
+        fs::create_dir_all(p.join("dst")).unwrap();
+        Tmp(canon(p).unwrap())
+    }
+    fn new_fid() -> Fid { uuid_v4_lower(&format!("00000000-0000-4000-8000-{:012x}", N.fetch_add(1, Relaxed))).unwrap() }
+    fn files(d: &Tmp) -> Files { Files::open(&d.0.join("data"), Limits::default(), Env::default(), NOW) }
+    fn ctl(mut v: Value) -> String { v["v"] = 1.into(); v["connection_id"] = CID.into(); v["request_id"] = RID.into(); v.to_string() }
+    fn req(f: &mut Files, conn: ConnId, pk: &Pk, v: Value, now: u64) -> (Value, Vec<Value>) {
+        let Control::Request { req, .. } = parse_control(&ctl(v), CID).unwrap() else { panic!() };
+        f.request(conn, pk, req, None, now).unwrap()
+    }
+    fn init(f: &mut Files, fid: &Fid, dir: &Path, name: &str, data: &[u8], overwrite: bool) -> (Value, Vec<Value>) {
+        req(f, 1, &PK, json!({"type":"file_upload_init","file_id":uuid_str(fid),"session_id":null,"filename":name,"target_dir":dir.to_str(),
+            "size_bytes":data.len().to_string(),"chunk_size":65536,"total_chunks":total_chunks(data.len() as u64),"sha256":hex(&sha(data)),"overwrite":overwrite}), NOW)
+    }
+    fn piece(data: &[u8], i: u32) -> &[u8] { let a = i as usize * CHUNK as usize; &data[a..(a + CHUNK as usize).min(data.len())] }
+    fn send(f: &mut Files, fid: Fid, i: u32, chunk: &[u8], now: u64) -> R<Vec<Value>> {
+        let mut out = vec![];
+        for b in frags(fid, i, chunk) { out.extend(f.on_frame(1, &b, now)?); }
+        Ok(out)
+    }
+    fn ticked(f: &mut Files, now: u64) -> Vec<Value> { f.tick(now).into_iter().map(|x| x.1).collect() }
+    /// Envia todos os chunks e força o commit por tempo.
+    fn send_all(f: &mut Files, fid: Fid, data: &[u8]) -> Vec<Value> {
+        let mut out = vec![];
+        for i in 0..total_chunks(data.len() as u64) as u32 { out.extend(send(f, fid, i, piece(data, i), NOW).unwrap()); }
+        out.extend(ticked(f, NOW + 100));
+        out
+    }
+    fn types(v: &[Value]) -> Vec<String> { v.iter().map(|v| format!("{}{}", v["type"].as_str().unwrap(), v["code"].as_str().map(|c| format!(":{c}")).unwrap_or_default())).collect() }
+    fn bytes(n: usize) -> Vec<u8> { (0..n).map(|i| (i * 31 % 251) as u8).collect() }
+    fn junction(link: &Path, target: &Path) -> bool {
+        std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(target).output().is_ok_and(|o| o.status.success())
+    }
+    fn staged(d: &Tmp, fid: &Fid) -> PathBuf { d.0.join("data/staging").join(uuid_str(fid)) }
+
+    #[test] fn frame_roundtrip_and_rules() {
+        let fid = new_fid();
+        let f = Frag { file_id: fid, index: 3, offset: 16384, chunk_len: 65536, sha: [9; 32], data: vec![1; 16384] };
+        assert_eq!(parse_frag(&encode_frag(&f)).unwrap(), f);
+        assert_eq!(frags(fid, 0, &[0; 1]).len(), 1);
+        assert_eq!(frags(fid, 0, &[0; 65536]).len(), 4);
+        let bad = |g: fn(&mut Frag)| { let mut x = f.clone(); g(&mut x); parse_frag(&encode_frag(&x)) };
+        assert_eq!(bad(|x| x.offset = 100), Err(InvalidMessage));
+        assert_eq!(bad(|x| x.offset = 65536), Err(InvalidMessage));
+        assert_eq!(bad(|x| x.chunk_len = 65537), Err(InvalidMessage));
+        assert_eq!(bad(|x| { x.data.pop(); }), Err(InvalidMessage));
+        let mut v = encode_frag(&f); v[0] = 2;
+        assert_eq!(parse_frag(&v), Err(VersionUnsupported));
+        let mut v = encode_frag(&f); v[64] ^= 1;
+        assert_eq!(parse_frag(&v), Err(InvalidMessage));
+    }
+
+    #[test] fn n2_filename_rules() {
+        let long = "x".repeat(256);
+        for s in ["..", ".", "", "a/b", "a\\b", "C:x", "x:stream", "CON", "con.txt", "COM1", "LPT¹", "com³.log", "CONIN$", "conout$.x", "a ", "a.", "\x01", "a<b", "a|b", "a?", "a*", "a\"b", &long] {
+            assert!(!valid_filename(s), "{s:?}");
+        }
+        let max = "x".repeat(255);
+        for s in ["a.txt", ".hidden", "COM0", "COM10", "LPT", "console", "ação 🦀.md", &max] { assert!(valid_filename(s), "{s:?}"); }
+    }
+
+    #[test] fn n3_target_dir_rules() {
+        let long = format!("C:\\{}", "a".repeat(4096));
+        for s in ["rel\\x", "C:", "C:x", "C:\\a\\..\\b", "C:\\.\\b", "\\\\.\\C:\\x", "\\\\?\\C:\\x", "\\\\?\\UNC\\s\\h", "//?/C:/x", "\\\\srv", "C:\\a:b", &long] {
+            assert!(!valid_path(s), "{s:?}");
+        }
+        for s in ["C:\\", "C:\\Users\\x", "D:/a/b", "\\\\srv\\share", "\\\\srv\\share\\dir"] { assert!(valid_path(s), "{s:?}"); }
+    }
+
+    #[test] fn n9_upload_init_validation() {
+        let fid = uuid_str(&new_fid());
+        let base = json!({"type":"file_upload_init","file_id":fid,"session_id":null,"filename":"a","target_dir":"C:\\","size_bytes":"65537","chunk_size":65536,"total_chunks":2,"sha256":EMPTY_SHA,"overwrite":false});
+        assert!(parse_control(&ctl(base.clone()), CID).is_ok());
+        for (k, v) in [("total_chunks", json!(1)), ("chunk_size", json!(16384)), ("size_bytes", json!(65537)), ("size_bytes", json!("065537")), ("sha256", json!(EMPTY_SHA.to_uppercase())),
+            ("filename", json!("CON")), ("target_dir", json!("rel")), ("extra", json!(1)), ("file_id", json!("x"))] {
+            let mut b = base.clone(); b[k] = v;
+            assert_eq!(parse_control(&ctl(b), CID), Err(InvalidMessage), "{k}");
+        }
+        let mut b = base.clone(); b.as_object_mut().unwrap().remove("overwrite");
+        assert_eq!(parse_control(&ctl(b), CID), Err(InvalidMessage));
+        assert_eq!(parse_control(&ctl(json!({"type":"file_get","file_id":fid,"ranges":[[2,1]]})), CID), Err(InvalidMessage));
+        assert_eq!(parse_control(&ctl(json!({"type":"file_get","file_id":fid,"ranges":vec![[0,1];65]})), CID), Err(InvalidMessage));
+        assert!(matches!(parse_control(&json!({"v":1,"connection_id":CID,"type":"error","code":"HASH_MISMATCH","file_id":fid}).to_string(), CID), Ok(Control::Error { file_id: Some(_), .. })));
+    }
+
+    #[test] fn a4_empty_one_and_two_chunks() {
+        let d = tmp();
+        let mut f = files(&d);
+        let dst = d.0.join("dst");
+        let (ok, sp) = init(&mut f, &new_fid(), &dst, "empty", b"", false);
+        assert_eq!((ok["missing"]["ranges"].clone(), types(&sp)), (json!([]), vec!["file_complete".to_string()]));
+        assert_eq!(fs::read(dst.join("empty")).unwrap(), b"");
+        for (n, chunks) in [(65536, 1), (65537, 2)] {
+            let (data, fid) = (bytes(n), new_fid());
+            let (ok, _) = init(&mut f, &fid, &dst, &format!("f{n}"), &data, false);
+            assert_eq!(ok["missing"]["ranges"], json!([[0, chunks]]));
+            assert_eq!(chunk_len(n as u64, chunks - 1), if n == 65537 { 1 } else { 65536 });
+            assert_eq!(types(&send_all(&mut f, fid, &data)), ["file_ack", "file_complete"]);
+            assert_eq!(fs::read(dst.join(format!("f{n}"))).unwrap(), data);
+        }
+        assert_eq!((f.len(), fs::read_dir(d.0.join("data/staging")).unwrap().count()), (0, 0));
+    }
+
+    #[test] fn a3_restart_resumes_from_persisted_bitmap() {
+        let d = tmp();
+        let (data, fid) = (bytes(3 * 65536), new_fid());
+        let mut f = files(&d);
+        init(&mut f, &fid, &d.0.join("dst"), "x", &data, false);
+        assert!(send(&mut f, fid, 1, piece(&data, 1), NOW).unwrap().is_empty(), "ACK só após commit");
+        assert_eq!(ticked(&mut f, NOW + 100)[0]["ranges"], json!([[1, 2]]));
+        drop(f);
+        fs::create_dir_all(d.0.join("data/staging/lixo")).unwrap();
+        let mut f = files(&d);
+        assert!(!d.0.join("data/staging/lixo").exists(), "pasta sem manifesto descartada");
+        let (r, _) = req(&mut f, 2, &PK, json!({"type":"file_resume","file_id":uuid_str(&fid)}), NOW + 200);
+        assert_eq!((r["direction"].clone(), r["missing"]["ranges"].clone()), (json!("upload"), json!([[0, 1], [2, 3]])));
+        for i in [0, 2] { for b in frags(fid, i, piece(&data, i)) { f.on_frame(2, &b, NOW).unwrap(); } }
+        assert_eq!(types(&ticked(&mut f, NOW + 300)), ["file_ack", "file_complete"]);
+        assert_eq!(fs::read(d.0.join("dst/x")).unwrap(), data);
+    }
+
+    #[test] fn a5_cross_volume_copy_via_temp() {
+        let d = tmp();
+        let mut f = files(&d);
+        f.env.same_volume = |_, _| false;
+        let (data, fid) = (bytes(70000), new_fid());
+        init(&mut f, &fid, &d.0.join("dst"), "x", &data, false);
+        assert_eq!(types(&send_all(&mut f, fid, &data)), ["file_ack", "file_complete"]);
+        let names: Vec<_> = fs::read_dir(d.0.join("dst")).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(names, ["x"]);
+        assert_eq!(fs::read(d.0.join("dst/x")).unwrap(), data);
+        assert!(!staged(&d, &fid).exists());
+    }
+
+    #[test] fn a6_overwrite_keeps_original_until_rename() {
+        let d = tmp();
+        let mut f = files(&d);
+        let dst = d.0.join("dst");
+        fs::write(dst.join("x"), b"old").unwrap();
+        let (data, fid) = (bytes(65537), new_fid());
+        assert_eq!(init(&mut f, &new_fid(), &dst, "x", &data, false).0["code"], "ALREADY_EXISTS");
+        init(&mut f, &fid, &dst, "x", &data, true);
+        send(&mut f, fid, 0, piece(&data, 0), NOW).unwrap();
+        ticked(&mut f, NOW + 100);
+        assert_eq!(fs::read(dst.join("x")).unwrap(), b"old");
+        send(&mut f, fid, 1, piece(&data, 1), NOW).unwrap();
+        assert_eq!(types(&ticked(&mut f, NOW + 200)), ["file_ack", "file_complete"]);
+        assert_eq!(fs::read(dst.join("x")).unwrap(), data);
+    }
+
+    #[test] fn finalize_race_already_exists_keeps_partial() {
+        let d = tmp();
+        let mut f = files(&d);
+        let (data, fid) = (bytes(10), new_fid());
+        init(&mut f, &fid, &d.0.join("dst"), "x", &data, false);
+        fs::write(d.0.join("dst/x"), b"other").unwrap();
+        assert_eq!(types(&send_all(&mut f, fid, &data)), ["file_ack", "error:ALREADY_EXISTS"]);
+        assert_eq!(fs::read(d.0.join("dst/x")).unwrap(), b"other");
+        assert!(staged(&d, &fid).join("data.part").exists());
+    }
+
+    #[test] fn a8_purge_after_24h_reset_by_valid_chunk() {
+        let d = tmp();
+        let mut f = files(&d);
+        let (data, fid) = (bytes(2 * 65536), new_fid());
+        init(&mut f, &fid, &d.0.join("dst"), "x", &data, false);
+        let day = f.lim.ttl_ms;
+        f.tick(NOW + day - 1);
+        assert!(staged(&d, &fid).exists(), "não antes de 24 h");
+        send(&mut f, fid, 0, piece(&data, 0), NOW + day - 1).unwrap();
+        f.tick(NOW + day + 99);
+        f.tick(NOW + day + 100);
+        assert!(staged(&d, &fid).exists(), "chunk válido zera a contagem");
+        f.tick(NOW + 2 * day + 99);
+        assert!(!staged(&d, &fid).exists() && f.len() == 0);
+    }
+
+    #[test] fn a9_missing_paginated() {
+        let total = 4100u32;
+        let mut bm = vec![0u8; 4100usize.div_ceil(8)];
+        for i in (0..total).step_by(2) { bm[i as usize / 8] |= 1 << (i % 8); }
+        let p1 = missing(&bm, total, 0);
+        assert_eq!((p1["ranges"].as_array().unwrap().len(), p1["ranges"][0].clone()), (1024, json!([1, 2])));
+        let p2 = missing(&bm, total, p1["next_cursor"].as_str().unwrap().parse().unwrap());
+        assert_eq!((p2["ranges"].as_array().unwrap().len(), p2["ranges"][0].clone()), (1024, json!([2049, 2050])));
+        let p3 = missing(&bm, total, p2["next_cursor"].as_str().unwrap().parse().unwrap());
+        assert_eq!((p3["ranges"].as_array().unwrap().len(), p3["next_cursor"].clone()), (2, Value::Null));
+    }
+
+    #[test] fn n4_final_name_is_junction() {
+        let d = tmp();
+        let (dst, out) = (d.0.join("dst"), d.0.join("fora"));
+        fs::create_dir(&out).unwrap();
+        if !junction(&dst.join("x"), &out) { return; }
+        let mut f = files(&d);
+        assert_eq!(init(&mut f, &new_fid(), &dst, "x", b"abc", false).0["code"], "ALREADY_EXISTS");
+        let fid = new_fid();
+        init(&mut f, &fid, &dst, "x", b"abc", true);
+        send_all(&mut f, fid, b"abc");
+        assert_eq!(fs::read_dir(&out).unwrap().count(), 0, "alvo nunca tocado");
+    }
+
+    #[test] fn n5_dir_swapped_by_junction() {
+        let d = tmp();
+        let (dst, out) = (d.0.join("dst"), d.0.join("fora"));
+        fs::create_dir(&out).unwrap();
+        let mut f = files(&d);
+        let (data, fid) = (bytes(10), new_fid());
+        init(&mut f, &fid, &dst, "x", &data, false);
+        fs::rename(&dst, d.0.join("velho")).unwrap();
+        if !junction(&dst, &out) { return; }
+        assert_eq!(types(&send_all(&mut f, fid, &data)), ["file_ack", "error:IO_ERROR"]);
+        assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
+        assert!(staged(&d, &fid).join("data.part").exists());
+    }
+
+    #[test] fn n6_chunk_hash_wrong_twice_cancels_keeps_staging() {
+        let d = tmp();
+        let mut f = files(&d);
+        let (data, fid) = (bytes(100), new_fid());
+        init(&mut f, &fid, &d.0.join("dst"), "x", &data, false);
+        let bad = encode_frag(&Frag { file_id: fid, index: 0, offset: 0, chunk_len: 100, sha: [0; 32], data: data.clone() });
+        assert_eq!(types(&f.on_frame(1, &bad, NOW).unwrap()), ["error:HASH_MISMATCH"]);
+        assert_eq!(types(&f.on_frame(1, &bad, NOW).unwrap()), ["error:HASH_MISMATCH"]);
+        assert!(f.tick(NOW + 100).is_empty(), "sem ACK");
+        assert_eq!(f.on_frame(1, &bad, NOW + 200), Ok(vec![]), "em trânsito ignorado");
+        assert_eq!(f.on_frame(1, &bad, NOW + 200 + f.lim.cancel_grace_ms + 1), Err(InvalidMessage));
+        assert_eq!(req(&mut f, 1, &PK, json!({"type":"file_resume","file_id":uuid_str(&fid)}), NOW + 300).0["missing"]["ranges"], json!([[0, 1]]));
+    }
+
+    #[test] fn n7_duplicate_with_different_content_cancels() {
+        let d = tmp();
+        let mut f = files(&d);
+        let (data, fid) = (bytes(2 * 65536), new_fid());
+        init(&mut f, &fid, &d.0.join("dst"), "x", &data, false);
+        send(&mut f, fid, 0, piece(&data, 0), NOW).unwrap();
+        f.tick(NOW + 100);
+        assert_eq!(types(&send(&mut f, fid, 0, piece(&data, 0), NOW).unwrap()), ["file_ack"]);
+        assert_eq!(types(&send(&mut f, fid, 0, &[1; 65536], NOW).unwrap()), ["error:HASH_MISMATCH"]);
+        assert!(f.len() == 0 && !staged(&d, &fid).exists());
+    }
+
+    #[test] fn n8_total_hash_wrong() {
+        let d = tmp();
+        let mut f = files(&d);
+        let (data, fid) = (bytes(100), new_fid());
+        req(&mut f, 1, &PK, json!({"type":"file_upload_init","file_id":uuid_str(&fid),"session_id":null,"filename":"x","target_dir":d.0.join("dst").to_str(),
+            "size_bytes":"100","chunk_size":65536,"total_chunks":1,"sha256":hex(&[1; 32]),"overwrite":false}), NOW);
+        assert_eq!(types(&send_all(&mut f, fid, &data)), ["file_ack", "error:HASH_MISMATCH"]);
+        assert_eq!(fs::read_dir(d.0.join("dst")).unwrap().count(), 0);
+        assert!(!staged(&d, &fid).exists());
+    }
+
+    #[test] fn n10_fatal_frames() {
+        let d = tmp();
+        let data = bytes(2 * 65536);
+        let mut f = files(&d);
+        let fid = new_fid();
+        init(&mut f, &fid, &d.0.join("dst"), "x", &data, false);
+        let fr = frags(fid, 0, piece(&data, 0));
+        assert_eq!(f.on_frame(1, &frags(fid, 2, &[0; 10])[0], NOW), Err(InvalidMessage), "index >= total");
+        assert_eq!(f.on_frame(1, &fr[1], NOW), Err(InvalidMessage), "fora de ordem");
+        assert_eq!(f.on_frame(1, &frags(new_fid(), 0, &[0; 10])[0], NOW), Err(InvalidMessage), "file_id desconhecido");
+        assert_eq!(f.on_frame(2, &fr[0], NOW), Err(InvalidMessage), "outra conexão");
+        assert_eq!(f.on_frame(1, &frags(fid, 1, &[0; 10])[0], NOW), Err(InvalidMessage), "último chunk com tamanho errado");
+        f.on_frame(1, &fr[0], NOW).unwrap();
+        let other = Frag { file_id: fid, index: 0, offset: 16384, chunk_len: 65536, sha: [0; 32], data: vec![0; 16384] };
+        assert_eq!(f.on_frame(1, &encode_frag(&other), NOW), Err(InvalidMessage), "sha diverge entre fragmentos");
+        let mut g = files(&d);
+        g.lim.window = 1;
+        let fid = new_fid();
+        init(&mut g, &fid, &d.0.join("dst"), "z", &data, false);
+        send(&mut g, fid, 0, piece(&data, 0), NOW).unwrap();
+        assert_eq!(send(&mut g, fid, 1, piece(&data, 1), NOW), Err(InvalidMessage), "além da janela");
+    }
+
+    #[test] fn n11_resume_not_found_identical() {
+        let d = tmp();
+        let mut f = files(&d);
+        let fid = new_fid();
+        init(&mut f, &fid, &d.0.join("dst"), "x", b"abc", false);
+        let r = |f: &mut Files, pk: &Pk, id: &Fid, now| req(f, 2, pk, json!({"type":"file_resume","file_id":uuid_str(id)}), now).0;
+        let a = r(&mut f, &[8; 32], &fid, NOW);
+        let b = r(&mut f, &PK, &new_fid(), NOW);
+        let c = r(&mut f, &PK, &fid, NOW + Limits::default().ttl_ms);
+        assert_eq!((&a, &b), (&c, &crate::proto::error(NotFound)));
+        assert_eq!(req(&mut f, 2, &[8; 32], json!({"type":"file_cancel","file_id":uuid_str(&fid)}), NOW).0, a);
+        assert_eq!(req(&mut f, 2, &PK, json!({"type":"file_cancel","file_id":uuid_str(&fid)}), NOW).0["type"], "file_cancel_ok");
+        assert!(!staged(&d, &fid).exists());
+    }
+
+    #[test] fn n12_revoke_deletes_staging() {
+        let d = tmp();
+        let mut f = files(&d);
+        let fid = new_fid();
+        init(&mut f, &fid, &d.0.join("dst"), "x", b"abc", false);
+        f.revoke(&PK, NOW);
+        assert!(f.len() == 0 && !staged(&d, &fid).exists());
+    }
+
+    #[test] fn n13_disk_full() {
+        let d = tmp();
+        let dst = d.0.join("dst");
+        let mut f = files(&d);
+        f.env.free = |_| Some(GIB);
+        assert_eq!(init(&mut f, &new_fid(), &dst, "x", b"abc", false).0["code"], "LIMIT_EXCEEDED");
+        f.env.free = |_| None;
+        fs::write(dst.join("x"), b"old").unwrap();
+        let (data, fid) = (bytes(65537), new_fid());
+        init(&mut f, &fid, &dst, "x", &data, true);
+        send(&mut f, fid, 0, piece(&data, 0), NOW).unwrap();
+        f.tick(NOW + 100);
+        f.env.fail_io = true;
+        assert_eq!(types(&send(&mut f, fid, 1, piece(&data, 1), NOW + 200).unwrap()), ["error:IO_ERROR"]);
+        assert_eq!(fs::read(dst.join("x")).unwrap(), b"old");
+        f.env.fail_io = false;
+        let (r, _) = req(&mut f, 1, &PK, json!({"type":"file_resume","file_id":uuid_str(&fid)}), NOW + 300);
+        assert_eq!(r["missing"]["ranges"], json!([[1, 2]]));
+        send(&mut f, fid, 1, piece(&data, 1), NOW + 300).unwrap();
+        assert_eq!(types(&ticked(&mut f, NOW + 400)), ["file_ack", "file_complete"]);
+        assert_eq!(fs::read(dst.join("x")).unwrap(), data);
+    }
+
+    #[test] fn n14_limits() {
+        let d = tmp();
+        let mut f = files(&d);
+        for i in 0..4 { assert_eq!(init(&mut f, &new_fid(), &d.0.join("dst"), &format!("f{i}"), b"a", false).0["type"], "file_upload_init_ok"); }
+        assert_eq!(init(&mut f, &new_fid(), &d.0.join("dst"), "f5", b"a", false).0["code"], "LIMIT_EXCEEDED");
+        let mut g = files(&d);
+        g.lim.max_file = 2;
+        assert_eq!(init(&mut g, &new_fid(), &d.0.join("dst"), "big", b"abc", false).0["code"], "LIMIT_EXCEEDED");
+    }
+
+    #[test] fn n15_download_and_source_changed() {
+        let d = tmp();
+        let mut f = files(&d);
+        let (src, data, fid) = (d.0.join("dst/src.bin"), bytes(70000), new_fid());
+        fs::write(&src, &data).unwrap();
+        let dl = |f: &mut Files, id: &Fid, p: &Path| req(f, 1, &PK, json!({"type":"file_download_init","file_id":uuid_str(id),"path":p.to_str()}), NOW).0;
+        assert_eq!(dl(&mut f, &new_fid(), &d.0.join("dst"))["code"], "NOT_FOUND", "diretório");
+        let ok = dl(&mut f, &fid, &src);
+        assert_eq!((ok["total_chunks"].clone(), ok["sha256"].clone()), (json!(2), json!(hex(&sha(&data)))));
+        f.lim.get_pending = 1;
+        assert_eq!(req(&mut f, 1, &PK, json!({"type":"file_get","file_id":uuid_str(&fid),"ranges":[[0,2]]}), NOW).0["code"], "LIMIT_EXCEEDED");
+        f.lim.get_pending = 32;
+        req(&mut f, 1, &PK, json!({"type":"file_get","file_id":uuid_str(&fid),"ranges":[[0,2]]}), NOW);
+        let Some(Pull::Frames(_, fr)) = f.pull(1, NOW) else { panic!() };
+        let got: Vec<u8> = fr.iter().flat_map(|b| parse_frag(b).unwrap().data).collect();
+        assert_eq!(got, piece(&data, 0));
+        fs::write(&src, b"mudou").unwrap();
+        assert_eq!(f.pull(1, NOW), Some(Pull::Ctl(file_error(NotFound, &fid))));
+        assert_eq!(f.len(), 0);
+    }
+
+    #[test] fn fs_list_pages_hidden_links_roots() {
+        let d = tmp();
+        let dst = d.0.join("dst");
+        for i in 0..501 { fs::write(dst.join(format!("f{i:03}")), b"x").unwrap(); }
+        fs::OpenOptions::new().write(true).create_new(true).attributes(FILE_ATTRIBUTE_HIDDEN.0).open(dst.join("_oculto")).unwrap();
+        let j = junction(&dst.join("_link"), &d.0);
+        let mut f = files(&d);
+        let list = |f: &mut Files, v: Value, now| req(f, 1, &PK, v, now).0;
+        let p1 = list(&mut f, json!({"type":"fs_list","path":dst.to_str()}), NOW);
+        let e = p1["entries"].as_array().unwrap();
+        assert_eq!(e.len(), 500);
+        assert!(e.iter().any(|e| e["name"] == "_oculto" && e["hidden"] == true));
+        if j { assert!(e.iter().any(|e| e["name"] == "_link" && e["kind"] == "link" && e.get("size_bytes").is_none())); }
+        assert_eq!(list(&mut f, json!({"type":"fs_list","path":null,"cursor":p1["next_cursor"]}), NOW + 60_000)["code"], "NOT_FOUND", "cursor expira em 60 s");
+        let p1 = list(&mut f, json!({"type":"fs_list","path":dst.to_str()}), NOW);
+        let p2 = list(&mut f, json!({"type":"fs_list","path":null,"cursor":p1["next_cursor"]}), NOW + 1000);
+        assert_eq!((p2["entries"].as_array().unwrap().len(), p2["next_cursor"].clone()), (2 + j as usize, Value::Null));
+        let roots = list(&mut f, json!({"type":"fs_list","path":null}), NOW);
+        assert!(roots["path"].is_null() && roots["entries"].as_array().unwrap().iter().all(|e| e["name"].as_str().unwrap().ends_with(":\\")));
+    }
+}
