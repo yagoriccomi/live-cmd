@@ -8,7 +8,7 @@ export function admitIp(ip: string, now = Date.now()): boolean {
   connectionsByIp.set(ip, entry);
   return ++entry.count <= MAX_CONNECTIONS_PER_IP;
 }
-// ROOM_ID: the one local host room (SPEC-C1-presenca); connection_id comes per attempt in the client hello.
+// ROOM_ID: the one local host room (SPEC-C1-presenca); each client hello brings its own connection_id.
 type Env = { ROOM: DurableObjectNamespace; ROOM_ID: string };
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -32,6 +32,7 @@ export class SignalingRoom {
   async fetch(): Promise<Response> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
+    // Socket cap (MAX_SOCKETS); per-role limits answer busy inside the room.
     if (!this.room.add(server)) return new Response('Room busy', { status: 409 });
     server.accept();
     const cleanup = () => {
