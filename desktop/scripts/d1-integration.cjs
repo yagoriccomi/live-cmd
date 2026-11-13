@@ -132,15 +132,15 @@ async function runCase(name, interruption) {
   await checkPort(PORT);
   await checkPort(INSPECTOR_PORT);
   interruption.throwIfAborted();
-  const room = randomUUID(), connection = randomUUID();
+  const room = randomUUID();
   const env = {
-    ...process.env, ROOM_ID: room, CONNECTION_ID: connection, PORT: String(PORT),
+    ...process.env, ROOM_ID: room, PORT: String(PORT),
     CI: 'true', NO_COLOR: '1', CARGO_TERM_COLOR: 'never', WRANGLER_SEND_METRICS: 'false',
     WRANGLER_LOG_PATH: path.join(STATE, 'd1-logs'),
     WRANGLER_CACHE_DIR: path.join(STATE, 'd1-cache'),
     WRANGLER_REGISTRY_PATH: path.join(STATE, 'd1-registry'),
   };
-  console.log(`CASE ${name} ROOM_ID=${room} CONNECTION_ID=${connection}`);
+  console.log(`CASE ${name} ROOM_ID=${room}`);
   const failed = new AbortController();
   const signal = AbortSignal.any([interruption, failed.signal]);
   let worker, cargo, closing = false, failure;
@@ -153,7 +153,7 @@ async function runCase(name, interruption) {
       '--ip', '127.0.0.1', '--port', String(PORT),
       '--inspector-ip', '127.0.0.1', '--inspector-port', String(INSPECTOR_PORT),
       '--persist-to', path.join(STATE, 'd1'),
-      '--var', `ROOM_ID:${room}`, '--var', `CONNECTION_ID:${connection}`,
+      '--var', `ROOM_ID:${room}`,
       '--no-show-interactive-dev-session',
     ], env, text => {
       if (/\[ERROR\]|(?:^|\n)\s*(?:Error|[A-Za-z]+Error):/.test(text)) {
