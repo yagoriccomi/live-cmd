@@ -42,12 +42,12 @@
 | P8 | Agentes nível `alto` (Loop) | regra da skill | — |
 | P9 | Fluxo git do projeto: fatia em branch, revisão do coordenador, fast-forward em `main` e push (autorizado: "pode dar push"); sem PR | histórico do repo vai direto a `main` | abrir PR por branch |
 | P10 | `get_usage` indisponível neste ambiente; checkpoints de uso não aplicáveis | ferramenta ausente | — |
-| P11 | Pareamento PC-a-PC por "Copiar link para outro PC" (design §8 item 1a): clipboard fora do histórico `Win+V`, limpo ao expirar/usar. **Desvio de C2 §1, pendente de aprovação do usuário** | recomendada no design; PCs costumam estar longe um do outro | remover o botão e o campo de colar link; PC-a-PC fica sem pareamento |
+| P11 | Pareamento PC-a-PC por "Copiar link para outro PC" (design §8 item 1a): clipboard fora do histórico `Win+V`, limpo ao expirar/usar. **Desvio de C2 §1 aprovado (answers 018)** | recomendada no design; PCs costumam estar longe um do outro | remover o botão e o campo de colar link; PC-a-PC fica sem pareamento |
 | P12 | Parear, Aparelhos e Configurações em uma janela com 3 abas (design §8 item 2a) | menos código | três janelas |
-| P14 | Presença (SPEC-C1-presenca P3/P4): uma sala por instância local; motivo `busy` + WS 1013 novos; presença pós-hibernação fora. **Pendente de aprovação do usuário** | local-only, deploy vetado | revisar a spec antes do deploy |
+| P14 | Presença: conexões **simultâneas** de vários aparelhos (answers 018); só os comandos são serializados (`seq` C3 §4). `busy`/1013 deixa de ser o caminho normal. Presença pós-hibernação fora | decisão do usuário | — |
 | P15 | Confirmação de Sair via `tauri-plugin-dialog` (botões `Sair`/`Cancelar`); servidor padrão `ws://127.0.0.1:8787` até haver deploy; `Status` ganha evento "pareou" pela D5a | recomendadas pela D5b; plugin oficial coberto por P1 | MessageBox OK/Cancelar atual |
 | P16 | Até 4 agentes simultâneos (pedido do usuário, 2026-11-13); fatias antecipadas sobre contrato fixo quando a dependência ainda roda | acelerar | rebase na entrega |
-| P13 | Fechar a janela invalida a OTK; trocar de aba não (design §8 item 3b) | OTK sem ninguém olhando é só risco | manter a OTK até 300 s |
+| P13 | Fechar a janela **não** invalida a OTK: vale até 300 s ou uso (answers 018); QR oculto com janela fechada/minimizada | decisão do usuário | — |
 
 ## 4. Decisão Visual
 
@@ -78,6 +78,8 @@
 | D5a | desktop/ | `lib.rs` + laço de presença do host (aceita conexões em sequência e reconexão) | alto | D4c, S1 | `feat/d5a-host-lib` | em `main` (87 ok, clippy limpo, signaling 32/32; `wrangler_echo`/`wrangler_second_channel` do d1-integration ainda esperam eco M1: fica para D4c) |
 | D5b | desktop/app | Tauri: bandeja, QR, aparelhos/revogar, autostart HKCU Run, Sair; instalador NSIS | alto | D5a, D5-design | `feat/d5b-tray` | em `main` (8 ok, clippy limpo; `host.rs` stub até D5a; "Copiar link" isolado em 8371f85) |
 | D5c | desktop/app | cliente local (terminal desta máquina) e remoto (offerer + C2 + C3) | alto | D5b | `feat/d5c-client` | rodando (sobre o stub) |
+| S2 | signaling/ + desktop/ + SPEC-C1-presenca | presença simultânea: vários clientes negociando ao mesmo tempo na sala do host (P14) | alto | D5a | `feat/s2-presence-multi` | na fila (entra após D4c, que mexe em `lib.rs`) |
+| D5d | desktop/app | trocar stub `host.rs` por `live_cmd_echo::Service`; fechar janela sem `cancel_pair` (P13); instalador final | alto | D5c | `feat/d5d-host-wire` | na fila |
 | D-int | desktop/scripts | `d1-integration.cjs`: `wrangler_echo` e `wrangler_second_channel` falam C2/C3 em vez do eco M1 | alto | D5a | `feat/dint-wrangler` | rodando |
 
 ## 7. Impacto em Dados e Contratos
