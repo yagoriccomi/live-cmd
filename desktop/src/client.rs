@@ -46,6 +46,12 @@ impl Shared {
             self.seq.lock().unwrap().insert(sid, n);
         }
     }
+    fn next_seq(&self, sid: Sid) -> u64 {
+        let mut m = self.seq.lock().unwrap();
+        let n = m.entry(sid).or_insert(0);
+        *n += 1;
+        *n
+    }
     fn control(&self, v: Value) {
         self.attached(&v);
         let waiter = v["request_id"].as_str().and_then(|r| self.pending.lock().unwrap().remove(r));
@@ -136,8 +142,8 @@ impl Client {
     pub fn input(&self, session_id: &str, data: &[u8]) -> std::result::Result<(), String> {
         let sid = auth::uuid_bytes(session_id).ok_or("INVALID_MESSAGE")?;
         for chunk in data.chunks(proto::MAX_IO) {
-            let seq = { let mut m = self.shared.seq.lock().unwrap(); let n = m.entry(sid).or_insert(0); *n += 1; *n };
-            self.send(proto::Frame { session_id: sid, seq, op: Op::Input(chunk.to_vec()) })?;
+            // `seq` é dado na hora do envio (`next_seq`): frame descartado antes do attach não gasta número.
+            self.send(proto::Frame { session_id: sid, seq: 0, op: Op::Input(chunk.to_vec()) })?;
         }
         Ok(())
     }
@@ -154,7 +160,7 @@ impl Client {
             Wire::Local { conn, .. } => {
                 let mut h = hub();
                 let r = match &f.op {
-                    Op::Input(d) => h.s.input(*conn, f.session_id, f.seq, d, now_ms()).map(|a| a.map(Out::Ctl)),
+                    Op::Input(d) => h.s.input(*conn, f.session_id, self.shared.next_seq(f.session_id), d, now_ms()).map(|a| a.map(Out::Ctl)),
                     Op::Resize { cols, rows } => h.s.resize(*conn, f.session_id, *cols, *rows).map(|_| None),
                     _ => Ok(None),
                 };
@@ -287,7 +293,10 @@ async fn attempt_once(pin: &RemotePin, otk: Option<[u8; 32]>, sk: &SigningKey, s
                 o = rx.recv() => match o {
                     None => return Ok(()),
                     Some(Outbound::Ctl(mut v)) => { v["v"] = 1.into(); v["connection_id"] = id.as_str().into(); dc.send_text(&v.to_string()).await?; }
-                    Some(Outbound::Frame(f)) => if attached.contains(&f.session_id) { dc.send(proto::encode_frame(&f)[..].into()).await?; },
+                    Some(Outbound::Frame(mut f)) => if attached.contains(&f.session_id) {
+                        if matches!(f.op, Op::Input(_)) { f.seq = s.next_seq(f.session_id); }
+                        dc.send(proto::encode_frame(&f)[..].into()).await?;
+                    },
                 },
                 e = dc.poll() => match e {
                     Some(DataChannelEvent::OnMessage(m)) if m.is_string => {
