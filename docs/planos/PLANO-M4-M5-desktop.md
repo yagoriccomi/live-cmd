@@ -73,8 +73,8 @@
 | D5-design | docs | mockup das telas (bandeja, QR, aparelhos, config, terminal) | alto | — | `feat/d5-design` | em `main` (b19990e) |
 | D4b | desktop/ | §8A lotes + §8B rede em `files.rs` (A10–A17, N17–N30 no PC) | alto | D4a | `feat/d4b-files-batch` | na fila |
 | D4c | desktop/ | `file-channel` em `main.rs`: controles/frames, backpressure 512/128 KiB, prioridade do PTY, taxa conjunta; loopback A1, A2, A7 (N9), N1, N12 | alto | D4b | `feat/d4c-file-channel` | na fila |
-| D5a | desktop/ | `lib.rs` + laço de presença do host (aceita conexões em sequência e reconexão) | alto | D4c, S1 | `feat/d5a-host-lib` | na fila |
-| D5b | desktop/app | Tauri: bandeja, QR, aparelhos/revogar, autostart HKCU Run, Sair; instalador NSIS | alto | D5a, D5-design | `feat/d5b-tray` | na fila |
+| D5a | desktop/ | `lib.rs` + laço de presença do host (aceita conexões em sequência e reconexão) | alto | D4c, S1 | `feat/d5a-host-lib` | rodando (antecipada: contrato `Service` fixo; D4c liga arquivos depois) |
+| D5b | desktop/app | Tauri: bandeja, QR, aparelhos/revogar, autostart HKCU Run, Sair; instalador NSIS | alto | D5a, D5-design | `feat/d5b-tray` | rodando (adaptador `host.rs` com stub até D5a) |
 | D5c | desktop/app | cliente local (terminal desta máquina) e remoto (offerer + C2 + C3) | alto | D5b | `feat/d5c-client` | na fila |
 
 ## 7. Impacto em Dados e Contratos
