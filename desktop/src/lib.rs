@@ -1,10 +1,12 @@
 //! Host live-cmd como biblioteca: o binário (`main.rs`) e o app de bandeja (D5b) usam [`Service`].
 mod auth;
+mod client;
 mod conpty;
 mod files;
 mod proto;
 mod screen;
 mod session;
+pub use client::{Client, ClientEvent, RemotePin, parse_pair_link};
 use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, sync::{atomic::{AtomicBool, AtomicU64, Ordering::Relaxed}, Arc, LazyLock, Mutex, MutexGuard, OnceLock}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 use auth::{Binding, Host, HostHandshake, Msg};
 use proto::{Control, Focus, Op, Req};
@@ -468,20 +470,26 @@ pub fn room_id(data_dir: &Path) -> std::result::Result<String, String> {
     match std::fs::read_to_string(&path) {
         Ok(t) => auth::uuid_v4_lower(t.trim()).map(|_| t.trim().to_owned()).ok_or_else(|| "room.txt".into()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let mut b = [0u8; 16];
-            getrandom::getrandom(&mut b).map_err(|_| "random")?;
-            (b[6], b[8]) = ((b[6] & 0x0f) | 0x40, (b[8] & 0x3f) | 0x80);
-            let room = proto::uuid_str(&b);
+            let room = uuid_v4()?;
             std::fs::create_dir_all(data_dir).and_then(|_| std::fs::write(&path, &room)).map_err(|e| e.to_string())?;
             Ok(room)
         }
         Err(e) => Err(e.to_string()),
     }
 }
+/// UUID v4 minúsculo aleatório.
+fn uuid_v4() -> std::result::Result<String, String> {
+    let mut b = [0u8; 16];
+    getrandom::getrandom(&mut b).map_err(|_| "random")?;
+    (b[6], b[8]) = ((b[6] & 0x0f) | 0x40, (b[8] & 0x3f) | 0x80);
+    Ok(proto::uuid_str(&b))
+}
 /// Chave Ed25519 do host no cofre do SO, criada na primeira execução (C2 §6).
 // ponytail: só o backend Windows (Credential Manager) habilitado; ativar apple-native/linux-native ao portar.
-fn host_key() -> Result<SigningKey> {
-    let entry = keyring::Entry::new("live-cmd", "host-ed25519")?;
+fn host_key() -> Result<SigningKey> { stored_key("host-ed25519") }
+/// Chave Ed25519 guardada no cofre do SO sob `name`; criada se não existir.
+fn stored_key(name: &str) -> Result<SigningKey> {
+    let entry = keyring::Entry::new("live-cmd", name)?;
     let seed: [u8; 32] = match entry.get_secret() {
         Ok(s) => s.try_into().map_err(|_| "host key")?,
         Err(keyring::Error::NoEntry) => { let mut s = [0; 32]; getrandom::getrandom(&mut s).map_err(|_| "random")?; entry.set_secret(&s)?; s }
