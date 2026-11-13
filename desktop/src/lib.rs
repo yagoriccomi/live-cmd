@@ -82,7 +82,9 @@ struct Profile { label: String, command: String, osc: bool }
 struct Hub { s: session::Sessions, screens: HashMap<Sid, screen::Screen>, /// Tela em `buffer_start`: é a do `screen_snapshot` (§5); a ao vivo só gera eventos.
     base: HashMap<Sid, screen::Screen>, plain: HashSet<Sid>, conns: HashMap<ConnId, mpsc::UnboundedSender<Out>>,
     /// Aparelho de cada conexão autenticada (`Status.connected`, `Device.connected`).
-    peers: HashMap<ConnId, Pk>, profiles: Vec<(String, Profile)> }
+    peers: HashMap<ConnId, Pk>, profiles: Vec<(String, Profile)>,
+    /// Último cwd anunciado por OSC 7 (destino padrão do C4, §2.3).
+    cwds: HashMap<Sid, PathBuf> }
 static HUB: LazyLock<Mutex<Hub>> = LazyLock::new(Default::default);
 static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
 fn hub() -> MutexGuard<'static, Hub> { HUB.lock().unwrap_or_else(|e| e.into_inner()) }
@@ -107,6 +109,7 @@ impl Hub {
         let outs = match ev {
             conpty::Ev::Output(d) => {
                 let events = self.screens.get_mut(&sid).map(|s| s.feed(&d)).unwrap_or_default();
+                for e in &events { if let screen::Event::Cwd(c) = e { self.cwds.insert(sid, c.into()); } }
                 let mut outs = self.s.on_output(sid, &d, now_ms());
                 if let Some(b) = self.base.get_mut(&sid) { b.feed(self.s.dropped(&sid)); }
                 for c in self.s.attached(&sid) { outs.extend(events.iter().map(|e| (c, Out::Ctl(screen::event_body(&sid, e))))); }
@@ -119,7 +122,7 @@ impl Hub {
     }
     /// Solta a tela das sessões que saíram da tabela (close após o `05`, TTL).
     fn forget(&mut self, sids: &[Sid]) {
-        for sid in sids { if self.s.size(sid).is_none() { self.screens.remove(sid); self.base.remove(sid); self.plain.remove(sid); } }
+        for sid in sids { if self.s.size(sid).is_none() { self.screens.remove(sid); self.base.remove(sid); self.plain.remove(sid); self.cwds.remove(sid); } }
     }
     fn request(&mut self, conn: ConnId, pk: Pk, req: Req, now: u64) -> std::result::Result<Value, auth::Error> {
         Ok(match req {
@@ -170,6 +173,98 @@ async fn send_out(ch: &Arc<dyn DataChannel>, id: &str, conn: ConnId, o: Out) -> 
     }
     Ok(())
 }
+/// Controles dos dois canais somam no mesmo balde (C3 §6, C4 §7): 50/s, rajada 100.
+fn take_token(l: &mut Live) -> bool {
+    l.tokens = (l.tokens + l.refill.elapsed().as_secs_f64() * 50.0).min(100.0);
+    l.refill = Instant::now();
+    if l.tokens < 1.0 { return false; }
+    l.tokens -= 1.0;
+    true
+}
+
+// ---- D4c: file-channel após AUTHENTICATED (C4) ----
+/// `bufferedAmount` do `file-channel` (§7): pausa acima de 512 KiB, retoma no `bufferedamountlow` de 128 KiB.
+const FPAUSE: usize = 512 << 10;
+const FRESUME: u32 = 128 << 10;
+enum FIn { Text(Vec<u8>), Frame(Vec<u8>), Pull, Tick }
+enum FOut { Ctl(Option<String>, Value), Frames(Vec<Vec<u8>>), Idle, Fatal(auth::Error), Close }
+struct FileHub { f: files::Files, tx: HashMap<ConnId, mpsc::UnboundedSender<FOut>> }
+/// Transferências C4; lock próprio para o disco nunca segurar o do hub (saída do PTY).
+static FILES: Mutex<Option<FileHub>> = Mutex::new(None);
+fn files() -> MutexGuard<'static, Option<FileHub>> { FILES.lock().unwrap_or_else(|e| e.into_inner()) }
+/// Commit por tempo e expurgo (§5); os `file_ack` vão para a conexão dona.
+fn files_tick() {
+    let mut g = files();
+    let Some(FileHub { f, tx }) = g.as_mut() else { return };
+    for (c, v) in f.tick(now_ms()) { if let Some(t) = tx.get(&c) { let _ = t.send(FOut::Ctl(None, v)); } }
+}
+/// Abre o staging uma vez por processo (§5).
+fn files_open(data_dir: &Path) {
+    let mut g = files();
+    if g.is_none() { *g = Some(FileHub { f: files::Files::open(data_dir, Default::default(), Default::default(), now_ms()), tx: HashMap::new() }); }
+}
+/// Revogação (§8): apaga staging e manifestos do aparelho.
+fn files_revoke(pk: &Pk) { if let Some(h) = files().as_mut() { h.f.revoke(pk, now_ms()); } }
+/// Pool de disco da conexão (§7): hash, gravação, `fsync` e leitura fora do laço do PTY.
+/// Fila de 8 chunks (× 4 fragmentos); cheia, o laço para de ler o `file-channel`. Fim da fila = queda (§8, pausa).
+fn file_worker(conn: ConnId, pk: Pk, id: String, host: Arc<Host>) -> (mpsc::Sender<FIn>, mpsc::UnboundedReceiver<FOut>) {
+    let (tx, mut rx) = mpsc::channel(8 * 4);
+    let (otx, orx) = mpsc::unbounded_channel();
+    if let Some(h) = files().as_mut() { h.tx.insert(conn, otx.clone()); }
+    tokio::task::spawn_blocking(move || {
+        while let Some(m) = rx.blocking_recv() {
+            match file_step(conn, &pk, &id, &host, m, &otx) {
+                Ok(true) => {}
+                Ok(false) => { let _ = otx.send(FOut::Close); break }
+                Err(e) => { let _ = otx.send(FOut::Fatal(e)); break }
+            }
+        }
+        if let Some(h) = files().as_mut() { h.f.disconnect(conn, now_ms()); h.tx.remove(&conn); }
+    });
+    (tx, orx)
+}
+/// Um item da fila. `Err` = fatal; `Ok(false)` = `error` fatal do peer (fecha sem responder).
+fn file_step(conn: ConnId, pk: &Pk, id: &str, host: &Host, m: FIn, out: &mpsc::UnboundedSender<FOut>) -> std::result::Result<bool, auth::Error> {
+    use files::{Control as C, Pull, Req as F};
+    let now = now_ms();
+    let send = |rid: Option<String>, v: Value| { let _ = out.send(FOut::Ctl(rid, v)); };
+    // O cwd sai do hub antes do lock de arquivos: os dois locks nunca ficam juntos.
+    let ctl = match &m {
+        FIn::Tick => { files_tick(); return Ok(true) }
+        FIn::Text(t) => {
+            let c = files::parse_control(std::str::from_utf8(t).map_err(|_| auth::Error::InvalidMessage)?, id)?;
+            // C3 §7 vale aqui: todo pedido confere a trust store.
+            if matches!(c, C::Request { .. }) { host.check_trusted(pk)?; }
+            let sid = match &c { C::Request { req: F::FsList { session_id, .. } | F::UploadInit { session_id, .. }, .. } => *session_id, _ => None };
+            Some((c, sid.and_then(|s| hub().cwds.get(&s).cloned())))
+        }
+        _ => None,
+    };
+    let mut g = files();
+    let f = &mut g.as_mut().ok_or(auth::Error::IoError)?.f;
+    match (m, ctl) {
+        (_, Some((C::Error { request_id: None, file_id: None, .. }, _))) => return Ok(false),
+        // ponytail: `error` do cliente com `file_id` não pausa a transferência no host; o cliente só para de pedir/enviar.
+        (_, Some((C::Error { .. }, _))) => {}
+        (_, Some((C::Ack { file_id, ranges }, _))) => f.client_ack(conn, &file_id, &ranges, now),
+        (_, Some((C::Complete(fid), _))) => f.client_complete(conn, &fid, now),
+        (_, Some((C::Request { request_id, req }, cwd))) => {
+            let (body, extra) = f.request(conn, pk, req, cwd.as_deref(), now)?;
+            if !body.is_null() { send(Some(request_id), body); }
+            for v in extra { send(None, v); }
+        }
+        (FIn::Frame(b), _) => for v in f.on_frame(conn, &b, now)? { send(None, v); },
+        (FIn::Pull, _) => { let _ = out.send(match f.pull(conn, now) {
+            Some(Pull::Frames(_, fr)) => FOut::Frames(fr),
+            // Erro de uma transferência: a vez volta ao laço, que pede de novo.
+            Some(Pull::Ctl(v)) => { send(None, v); FOut::Frames(vec![]) }
+            None => FOut::Idle,
+        }); }
+        _ => {}
+    }
+    Ok(true)
+}
+
 /// Mensagem do `pty-channel` após AUTHENTICATED. `Some(e)`: erro fatal (fecha com `error` sem `request_id`).
 async fn c3_message(ch: &Arc<dyn DataChannel>, id: &str, host: &Host, l: &mut Live, data: &[u8], is_string: bool) -> Result<Option<auth::Error>> {
     use auth::Error::*;
@@ -198,10 +293,7 @@ async fn c3_message(ch: &Arc<dyn DataChannel>, id: &str, host: &Host, l: &mut Li
         if let Some(o) = reply { send_out(ch, id, l.conn, o).await?; }
         return Ok(None);
     }
-    l.tokens = (l.tokens + l.refill.elapsed().as_secs_f64() * 50.0).min(100.0);
-    l.refill = Instant::now();
-    if l.tokens < 1.0 { return Ok(Some(LimitExceeded)); }
-    l.tokens -= 1.0;
+    if !take_token(l) { return Ok(Some(LimitExceeded)); }
     let Ok(t) = std::str::from_utf8(data) else { return Ok(Some(InvalidMessage)) };
     let (rid, req) = match proto::parse_control(t, id) {
         Ok(Control::Request { request_id, req }) => (request_id, req),
@@ -286,6 +378,12 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
         let mut live: Option<Live> = None;
         let mut out_rx: Option<mpsc::UnboundedReceiver<Out>> = None;
         let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
+        // C4: fila do pool de disco, fragmentos de download à espera da vez, pausa do file-channel.
+        let mut fq: Option<mpsc::Sender<FIn>> = None;
+        let mut fo: Option<mpsc::UnboundedReceiver<FOut>> = None;
+        let mut fpend: std::collections::VecDeque<Vec<u8>> = Default::default();
+        let (mut fpaused, mut pulling, mut fidle, mut fdirty) = (false, false, true, false);
+        let mut ftick = tokio::time::interval(Duration::from_millis(100));
         loop {
             // Erro de auth: envia o código ao peer e encerra; o chamador fecha a PeerConnection inteira.
             let auth_error: auth::Error = tokio::select! {
@@ -321,7 +419,7 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
                 // ponytail: revogação vista ao reler o arquivo a cada 1 s; trocar por IPC se precisar de menos.
                 _ = revocation.tick(), if client_pk.is_some() => {
                     match host.reload().map_err(|_| auth::Error::IoError).and_then(|_| host.check_trusted(&client_pk.unwrap())) {
-                        Err(e) => { if e != auth::Error::IoError { hub().s.revoke(&client_pk.unwrap(), now_ms()); } e }
+                        Err(e) => { if e != auth::Error::IoError { hub().s.revoke(&client_pk.unwrap(), now_ms()); files_revoke(&client_pk.unwrap()); } e }
                         Ok(()) => continue,
                     }
                 }
@@ -343,10 +441,51 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
                     l.paused = ch.outstanding_bytes().await? > PAUSE;
                     continue
                 }
-                // ponytail: C4 não implementado; qualquer mensagem no file-channel fecha (antes da auth: C2 N11).
-                event = async { file.as_ref().unwrap().poll().await }, if file.is_some() => match event {
-                    Some(DataChannelEvent::OnMessage(_)) => return Err("file-channel".into()),
-                    Some(DataChannelEvent::OnClose) | None => { file = None; continue }
+                // C4 §7: o terminal tem a vez; um fragmento só sai sem frame PTY pendente (ou com o PTY pausado).
+                _ = std::future::ready(()), if !fpend.is_empty() && !fpaused && (live.as_ref().is_some_and(|l| l.paused || l.bg) || out_rx.as_ref().is_none_or(|r| r.is_empty())) => {
+                    let fc = file.as_ref().ok_or("file-channel")?;
+                    let f = fpend.pop_front().unwrap();
+                    tokio::time::timeout(Duration::from_secs(2), fc.send(f[..].into())).await??;
+                    fpaused = fc.outstanding_bytes().await? > FPAUSE;
+                    continue
+                }
+                // Próximo chunk de download; `fidle` até chegar controle novo (file_get/file_ack).
+                _ = std::future::ready(()), if fpend.is_empty() && !fpaused && !pulling && !fidle && fq.as_ref().is_some_and(|q| q.capacity() > 0) => {
+                    pulling = fq.as_ref().unwrap().try_send(FIn::Pull).is_ok();
+                    (fidle, fdirty) = (!pulling, false);
+                    continue
+                }
+                _ = ftick.tick(), if fq.is_some() => { let _ = fq.as_ref().unwrap().try_send(FIn::Tick); continue }
+                o = async { fo.as_mut().unwrap().recv().await }, if fo.is_some() => match o {
+                    Some(FOut::Ctl(rid, v)) => {
+                        let fc = file.as_ref().ok_or("file-channel")?;
+                        tokio::time::timeout(Duration::from_secs(2), fc.send_text(&proto::encode_control(id, rid.as_deref(), v))).await??;
+                        continue
+                    }
+                    Some(FOut::Frames(fr)) => { fpend.extend(fr); pulling = false; continue }
+                    // Controle chegado durante o `Pull` pode ter enfileirado chunks: não dorme.
+                    Some(FOut::Idle) => { (pulling, fidle) = (false, !fdirty); continue }
+                    Some(FOut::Fatal(e)) => e,
+                    Some(FOut::Close) => return Err("peer error".into()),
+                    None => return Err("file worker".into()),
+                },
+                // Antes da auth qualquer mensagem fecha (C2 N11). Fila do pool cheia: para de ler o canal (§7).
+                event = async { file.as_ref().unwrap().poll().await }, if file.is_some() && fq.as_ref().is_none_or(|q| q.capacity() > 0) => match event {
+                    Some(DataChannelEvent::OnMessage(m)) => {
+                        let Some(l) = live.as_mut() else { return Err("file-channel".into()) };
+                        if fq.is_none() {
+                            file.as_ref().unwrap().set_buffered_amount_low_threshold(FRESUME).await?;
+                            let (q, o) = file_worker(l.conn, l.pk, id.to_owned(), host.clone());
+                            (fq, fo) = (Some(q), Some(o));
+                        }
+                        l.last_rx = Instant::now();
+                        let q = fq.as_ref().unwrap();
+                        if !m.is_string { let _ = q.try_send(FIn::Frame(m.data.to_vec())); continue }
+                        if !take_token(l) { auth::Error::LimitExceeded } else { (fidle, fdirty) = (false, true); let _ = q.try_send(FIn::Text(m.data.to_vec())); continue }
+                    }
+                    Some(DataChannelEvent::OnBufferedAmountLow) => { fpaused = false; continue }
+                    // Canal fechado: a fila cai, o pool pausa as transferências (§8).
+                    Some(DataChannelEvent::OnClose) | None => { (file, fq, fo) = (None, None, None); fpend.clear(); continue }
                     _ => continue,
                 },
                 event = async { channel.as_ref().unwrap().poll().await }, if channel.is_some() => {
@@ -524,12 +663,13 @@ impl Service {
     }
     fn with_host(cfg: Config, host: Arc<Host>) -> std::result::Result<Service, String> {
         auth::uuid_v4_lower(&cfg.room).ok_or("room UUID")?;
+        files_open(&cfg.data_dir);
         let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|e| e.to_string())?;
         let inner = Arc::new(Inner { host, server: cfg.server, room: cfg.room, link: Link::default(), stop: tokio::sync::watch::channel(false).0, thread: Mutex::new(None) });
         let i = inner.clone();
         let thread = std::thread::Builder::new().name("live-cmd-host".into()).spawn(move || rt.block_on(async move {
             // TTL de 24 h (C3 §5): varre a cada minuto.
-            tokio::spawn(async { let mut t = tokio::time::interval(Duration::from_secs(60)); loop { t.tick().await; let mut h = hub(); let dead = h.s.tick(now_ms()); h.forget(&dead); } });
+            tokio::spawn(async { let mut t = tokio::time::interval(Duration::from_secs(60)); loop { t.tick().await; { let mut h = hub(); let dead = h.s.tick(now_ms()); h.forget(&dead); } let _ = tokio::task::spawn_blocking(files_tick).await; } });
             presence(&i).await
         })).map_err(|e| e.to_string())?;
         *inner.thread.lock().unwrap() = Some(thread);
@@ -563,7 +703,9 @@ impl Service {
     /// Tombstone persistido; a conexão ativa desse aparelho cai na releitura de 1 s.
     pub fn revoke(&self, client_pk: [u8; 32]) -> std::result::Result<(), String> {
         let _ = self.0.host.reload();
-        self.0.host.revoke(client_pk).map_err(|e| e.code().into())
+        self.0.host.revoke(client_pk).map_err(|e| e.code().to_owned())?;
+        files_revoke(&client_pk);
+        Ok(())
     }
     /// Encerra a tentativa atual e o laço; espera a thread (a PeerConnection fecha em até 2 s).
     pub fn stop(&self) {
@@ -640,6 +782,7 @@ mod tests {
     }
     #[tokio::test]
     async fn loopback_backpressure() {
+        let _heavy = HEAVY.lock().await;
         const MESSAGE_BYTES: usize = 16384;
         const MAX_MESSAGES: usize = 1024;
         const BUFFER_LIMIT: usize = 32768;
@@ -1279,20 +1422,270 @@ a=max-message-size:1024
     }
     #[tokio::test]
     async fn d2b_n11_nothing_before_auth() {
-        for case in ["binary", "control", "file"] {
+        // C4 N1: controle ou frame no file-channel antes de AUTHENTICATED fecha.
+        for case in ["binary", "control", "file", "file-binary"] {
             let (host, _, _tmp) = store(case);
-            let (pc, l) = loopback(host, case == "file").await.unwrap();
+            let (pc, l) = loopback(host, case.starts_with("file")).await.unwrap();
             match case {
                 "binary" => l.dc.send(b"\x01\x02"[..].into()).await.unwrap(),
                 "control" => l.dc.send_text(&json!({"v":1,"type":"session_list","connection_id":l.id}).to_string()).await.unwrap(),
-                _ => l.fc.as_ref().unwrap().send_text("x").await.unwrap(),
+                "file" => l.fc.as_ref().unwrap().send_text("x").await.unwrap(),
+                _ => l.fc.as_ref().unwrap().send(b"\x01"[..].into()).await.unwrap(),
             }
             let Loopback { host: h, keep, .. } = l;
-            let want = if case == "file" { "file-channel" } else { "INVALID_MESSAGE" };
+            let want = if case.starts_with("file") { "file-channel" } else { "INVALID_MESSAGE" };
             assert_eq!(host_error(h, 5).await, want, "{case}");
             keep.abort();
             let _ = tokio::time::timeout(Duration::from_secs(2), pc.close()).await;
         }
+    }
+    // --- D4c: file-channel no loopback (C4 §10). Tamanhos menores que os 100 MB da spec; a queda é o fim da PeerConnection. ---
+    type Rx = mpsc::UnboundedReceiver<(bool, Vec<u8>)>;
+    /// Testes que saturam o loopback UDP (vazão e tempo) rodam um de cada vez.
+    static HEAVY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    /// Staging de teste único por processo (`FILES` é global).
+    fn fdir() -> PathBuf { let d = std::env::temp_dir().join(format!("live-cmd-d4c-{}", std::process::id())); files_open(&d); d }
+    fn new_fid(n: u8) -> [u8; 16] { let mut b = [n; 16]; (b[6], b[8]) = ((b[6] & 0x0f) | 0x40, (b[8] & 0x3f) | 0x80); b }
+    fn fctl(id: &str, t: Value, rid: bool) -> String { let mut t = t; t["v"] = 1.into(); t["connection_id"] = id.into(); if rid { t["request_id"] = RID.into(); } t.to_string() }
+    fn drain(fc: Arc<dyn DataChannel>) -> Rx {
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(e) = fc.poll().await {
+                match e { DataChannelEvent::OnMessage(m) => if tx.send((m.is_string, m.data.to_vec())).is_err() { break }, DataChannelEvent::OnClose => break, _ => {} }
+            }
+        });
+        rx
+    }
+    /// Lê até o controle `ty`; `file_ack` no caminho é ignorado, qualquer outro controle falha o teste.
+    async fn until(rx: &mut Rx, ty: &str) -> Value {
+        tokio::time::timeout(Duration::from_secs(30), async { loop {
+            let (s, b) = rx.recv().await.expect("file-channel fechou");
+            if !s { continue }
+            let v: Value = serde_json::from_slice(&b).unwrap();
+            if v["type"] == ty { return v }
+            assert_eq!(v["type"], "file_ack", "{v}");
+        } }).await.expect(ty)
+    }
+    /// Remonta fragmentos de download até `n` chunks novos completos.
+    async fn got(rx: &mut Rx, have: &mut HashMap<u32, Vec<u8>>, size: u64, n: usize) {
+        let done = |h: &HashMap<u32, Vec<u8>>| h.iter().filter(|(i, c)| c.len() as u32 == files::chunk_len(size, **i)).count();
+        let target = done(have) + n;
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while done(have) < target {
+                let (s, b) = rx.recv().await.expect("file-channel fechou");
+                assert!(!s, "{}", String::from_utf8_lossy(&b));
+                let f = files::parse_frag(&b).unwrap();
+                let c = have.entry(f.index).or_default();
+                assert_eq!(c.len(), f.offset as usize, "fragmentos em ordem");
+                c.extend(&f.data);
+            }
+        }).await.expect("chunks");
+    }
+    /// Remetente do cliente dentro da §7 (pausa ≤ 512 KiB, volta abaixo de 128 KiB).
+    /// ponytail: pausa em 128 KiB, não 512 KiB: com 512 KiB no loopback UDP do Windows há perdas e RTO de ~1 s do SCTP no eco (N9). Reavaliar em rede real (E7).
+    async fn put(fc: &Arc<dyn DataChannel>, fid: [u8; 16], data: &[u8], idx: impl Iterator<Item = u32>) -> R2<()> {
+        let e = |e: webrtc::error::Error| e.to_string();
+        for i in idx {
+            let c = &data[i as usize * 65536..((i as usize + 1) * 65536).min(data.len())];
+            for f in files::frags(fid, i, c) {
+                if fc.outstanding_bytes().await.map_err(e)? > FRESUME as usize {
+                    while fc.outstanding_bytes().await.map_err(e)? > FRESUME as usize { tokio::time::sleep(Duration::from_millis(2)).await; }
+                }
+                fc.send(f[..].into()).await.map_err(e)?;
+            }
+        }
+        Ok(())
+    }
+    fn blob(n: usize) -> Vec<u8> { (0..n as u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect() }
+    fn upload_init(id: &str, fid: &[u8; 16], name: &str, dst: &Path, data: &[u8]) -> String {
+        fctl(id, json!({"type":"file_upload_init","file_id":proto::uuid_str(fid),"session_id":null,"filename":name,"target_dir":dst.to_str(),
+            "size_bytes":data.len().to_string(),"chunk_size":65536,"total_chunks":files::total_chunks(data.len() as u64),"sha256":files::hex(&files::sha(data)),"overwrite":false}), true)
+    }
+    fn ranges(v: &Value) -> Vec<(u32, u32)> { v.as_array().unwrap().iter().map(|r| (r[0].as_u64().unwrap() as u32, r[1].as_u64().unwrap() as u32)).collect() }
+    /// A1: upload cai no meio (fim da PeerConnection), volta com `file_resume`, termina com hash certo e `file_complete`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn d4c_a1_upload_drop_resume() {
+        let _heavy = HEAVY.lock().await;
+        fdir();
+        let (host, _, tmp) = store("d4c-a1");
+        let dst = tmp.0.join("dst"); std::fs::create_dir_all(&dst).unwrap();
+        let sk = SigningKey::from_bytes(&[31; 32]);
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let data = blob((6 << 20) + 123);
+        let total = files::total_chunks(data.len() as u64) as u32;
+        let fid = new_fid(0xa1);
+        let (pc, l) = loopback(host.clone(), true).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), sk.clone(), host.pk()).await.unwrap();
+        let fc = l.fc.clone().unwrap(); let mut rx = drain(fc.clone());
+        fc.send_text(&upload_init(&l.id, &fid, "a1.bin", &dst, &data)).await.unwrap();
+        assert_eq!(until(&mut rx, "file_upload_init_ok").await["missing"]["ranges"], json!([[0, total]]));
+        put(&fc, fid, &data, 0..total / 2).await.unwrap();
+        until(&mut rx, "file_ack").await;
+        finish(pc, l).await;
+        let (pc, l) = loopback(host.clone(), true).await.unwrap();
+        authenticate(&l, l.b.clone(), None, sk, host.pk()).await.unwrap();
+        let fc = l.fc.clone().unwrap(); let mut rx = drain(fc.clone());
+        fc.send_text(&fctl(&l.id, json!({"type":"file_resume","file_id":proto::uuid_str(&fid)}), true)).await.unwrap();
+        let r = until(&mut rx, "file_resume_ok").await;
+        assert_eq!(r["direction"], "upload");
+        let miss = ranges(&r["missing"]["ranges"]);
+        assert!(miss.iter().map(|r| r.1 - r.0).sum::<u32>() < total, "o já confirmado não volta: {miss:?}");
+        for (a, b) in miss { put(&fc, fid, &data, a..b).await.unwrap(); }
+        until(&mut rx, "file_complete").await;
+        assert!(std::fs::read(dst.join("a1.bin")).unwrap() == data, "hash do destino");
+        assert!(!fdir().join("staging").join(proto::uuid_str(&fid)).exists(), "staging limpo");
+        finish(pc, l).await;
+    }
+    /// A2: download com a mesma queda; `file_get` em janelas, `file_ack`, retomada e `file_complete`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn d4c_a2_download_drop_resume() {
+        let _heavy = HEAVY.lock().await;
+        fdir();
+        let (host, _, tmp) = store("d4c-a2");
+        let src = tmp.0.join("src.bin");
+        let data = blob((3 << 20) + 77);
+        std::fs::write(&src, &data).unwrap();
+        let size = data.len() as u64;
+        let sk = SigningKey::from_bytes(&[32; 32]);
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let fid = new_fid(0xa2);
+        let s = proto::uuid_str(&fid);
+        let (pc, l) = loopback(host.clone(), true).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), sk.clone(), host.pk()).await.unwrap();
+        let fc = l.fc.clone().unwrap(); let mut rx = drain(fc.clone());
+        fc.send_text(&fctl(&l.id, json!({"type":"file_download_init","file_id":s,"path":src.to_str()}), true)).await.unwrap();
+        let ok = until(&mut rx, "file_download_init_ok").await;
+        let total = ok["total_chunks"].as_u64().unwrap() as u32;
+        assert_eq!((total, ok["sha256"].as_str().unwrap()), (49, files::hex(&files::sha(&data)).as_str()));
+        let mut have = HashMap::new();
+        // 16 chunks = 1 MiB: passa do limite de 512 KiB e exercita a pausa/retomada do bufferedAmount.
+        fc.send_text(&fctl(&l.id, json!({"type":"file_get","file_id":s,"ranges":[[0,16]]}), true)).await.unwrap();
+        got(&mut rx, &mut have, size, 16).await;
+        fc.send_text(&fctl(&l.id, json!({"type":"file_ack","file_id":s,"ranges":[[0,16]]}), false)).await.unwrap();
+        finish(pc, l).await;
+        let (pc, l) = loopback(host.clone(), true).await.unwrap();
+        authenticate(&l, l.b.clone(), None, sk, host.pk()).await.unwrap();
+        let fc = l.fc.clone().unwrap(); let mut rx = drain(fc.clone());
+        fc.send_text(&fctl(&l.id, json!({"type":"file_resume","file_id":s}), true)).await.unwrap();
+        assert_eq!(until(&mut rx, "file_resume_ok").await["direction"], "download");
+        for (a, b) in [(16, 32), (32, total)] {
+            fc.send_text(&fctl(&l.id, json!({"type":"file_get","file_id":s,"ranges":[[a,b]]}), true)).await.unwrap();
+            got(&mut rx, &mut have, size, (b - a) as usize).await;
+            fc.send_text(&fctl(&l.id, json!({"type":"file_ack","file_id":s,"ranges":[[a,b]]}), false)).await.unwrap();
+        }
+        fc.send_text(&fctl(&l.id, json!({"type":"file_complete","file_id":s}), false)).await.unwrap();
+        let out: Vec<u8> = (0..total).flat_map(|i| have.remove(&i).unwrap()).collect();
+        assert!(out == data, "conteúdo remontado");
+        // `file_complete` apaga o manifesto: novo resume não acha a transferência.
+        fc.send_text(&fctl(&l.id, json!({"type":"file_resume","file_id":s}), true)).await.unwrap();
+        assert_eq!(until(&mut rx, "error").await["code"], "NOT_FOUND");
+        finish(pc, l).await;
+    }
+    /// A7 / C3 N9: digitação durante upload a toda velocidade; eco p95 < 150 ms.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn d4c_a7_typing_during_upload() {
+        let _heavy = HEAVY.lock().await;
+        fdir();
+        hub().profiles.push(("test-d4c".into(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false }));
+        let (host, _, tmp) = store("d4c-a7");
+        let dst = tmp.0.join("dst"); std::fs::create_dir_all(&dst).unwrap();
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let (pc, l) = loopback(host.clone(), true).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), SigningKey::from_bytes(&[33; 32]), host.pk()).await.unwrap();
+        let ctl = |t: Value| fctl(&l.id, t, true);
+        l.dc.send_text(&ctl(json!({"type":"session_create","profile_id":"test-d4c","cols":80,"rows":24}))).await.unwrap();
+        let v: Value = serde_json::from_str(&next_text(&l.dc).await.unwrap()).unwrap();
+        let sid_s = v["session_id"].as_str().unwrap().to_owned();
+        let sid = auth::uuid_bytes(&sid_s).unwrap();
+        l.dc.send_text(&ctl(json!({"type":"session_attach","session_id":sid_s,"from_offset":null}))).await.unwrap();
+        let mut out = Vec::new();
+        while !out.contains(&b'>') { if let (false, b) = next_msg(&l.dc).await.unwrap() && let Op::Output(d) = proto::parse_frame(&b).unwrap().op { out.extend(d); } }
+        let fc = l.fc.clone().unwrap(); let mut rx = drain(fc.clone());
+        let data = blob(48 << 20);
+        let fid = new_fid(0xa7);
+        fc.send_text(&upload_init(&l.id, &fid, "a7.bin", &dst, &data)).await.unwrap();
+        until(&mut rx, "file_upload_init_ok").await;
+        let total = files::total_chunks(data.len() as u64) as u32;
+        let up = tokio::spawn({ let fc = fc.clone(); async move { put(&fc, fid, &data, 0..total).await } });
+        until(&mut rx, "file_ack").await;
+        let mut lat = vec![];
+        for seq in 1..=20u64 {
+            assert!(!up.is_finished(), "upload acabou antes da amostra {seq}; aumentar o arquivo");
+            let t = Instant::now();
+            l.dc.send(proto::encode_frame(&proto::Frame { session_id: sid, seq, op: Op::Input(b"q".to_vec()) })[..].into()).await.unwrap();
+            loop { if let (false, b) = next_msg(&l.dc).await.unwrap() && let Op::Output(d) = proto::parse_frame(&b).unwrap().op && d.contains(&b'q') { break } }
+            lat.push(t.elapsed());
+        }
+        lat.sort();
+        assert!(lat[18] < Duration::from_millis(150), "eco p95 {:?} (todas {lat:?})", lat[18]);
+        up.abort();
+        l.dc.send_text(&ctl(json!({"type":"session_close","session_id":sid_s}))).await.unwrap();
+        finish(pc, l).await;
+    }
+    /// N12: revogação durante upload fecha em ≤ 1 s, cancela e apaga o staging; retomar fica impossível.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn d4c_n12_revoke_during_upload() {
+        let _heavy = HEAVY.lock().await;
+        let staging = fdir().join("staging");
+        let (host, path, tmp) = store("d4c-n12");
+        let dst = tmp.0.join("dst"); std::fs::create_dir_all(&dst).unwrap();
+        let sk = SigningKey::from_bytes(&[34; 32]);
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let (pc, l) = loopback(host.clone(), true).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), sk.clone(), host.pk()).await.unwrap();
+        let fc = l.fc.clone().unwrap(); let mut rx = drain(fc.clone());
+        let data = blob(32 << 20);
+        let fid = new_fid(0x12);
+        fc.send_text(&upload_init(&l.id, &fid, "n12.bin", &dst, &data)).await.unwrap();
+        until(&mut rx, "file_upload_init_ok").await;
+        let total = files::total_chunks(data.len() as u64) as u32;
+        let up = tokio::spawn({ let fc = fc.clone(); async move { put(&fc, fid, &data, 0..total).await } });
+        until(&mut rx, "file_ack").await;
+        assert!(staging.join(proto::uuid_str(&fid)).exists());
+        let started = Instant::now();
+        Host::with_store(SigningKey::from_bytes(&[0x60; 32]), path).unwrap().revoke(sk.verifying_key().to_bytes()).unwrap();
+        let Loopback { host: h, keep, .. } = l;
+        assert_eq!(host_error(h, 5).await, "REVOKED");
+        assert!(started.elapsed() <= Duration::from_millis(1100), "fechou em {:?}", started.elapsed());
+        up.abort();
+        keep.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(2), pc.close()).await;
+        assert!(!staging.join(proto::uuid_str(&fid)).exists(), "staging apagado na revogação");
+        assert!(!dst.join("n12.bin").exists());
+        let (pc, l) = loopback(host.clone(), true).await.unwrap();
+        assert_eq!(authenticate(&l, l.b.clone(), None, sk, host.pk()).await, Err("REVOKED".into()));
+        finish(pc, l).await;
+    }
+    /// §7: controles dos dois canais somam no mesmo balde (50/s, rajada 100); nenhum dos dois sozinho estoura.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn d4c_joint_control_limit() {
+        fdir();
+        let (host, _, tmp) = store("d4c-rate");
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let (pc, l) = loopback(host.clone(), true).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), SigningKey::from_bytes(&[35; 32]), host.pk()).await.unwrap();
+        let fc = l.fc.clone().unwrap(); let _rx = drain(fc.clone());
+        let pty = json!({"v":1,"type":"session_list","connection_id":l.id,"request_id":RID}).to_string();
+        let file = fctl(&l.id, json!({"type":"fs_list","path":tmp.0.to_str()}), true);
+        for _ in 0..80 { if l.dc.send_text(&pty).await.is_err() || fc.send_text(&file).await.is_err() { break } }
+        let Loopback { host: h, keep, .. } = l;
+        assert_eq!(host_error(h, 5).await, "LIMIT_EXCEEDED");
+        keep.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(2), pc.close()).await;
+    }
+    /// Controle inválido no file-channel após a auth: `INVALID_MESSAGE` fatal (§1).
+    #[tokio::test]
+    async fn d4c_invalid_control_after_auth() {
+        fdir();
+        let (host, _, _tmp) = store("d4c-inv");
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let (pc, l) = loopback(host.clone(), true).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), SigningKey::from_bytes(&[36; 32]), host.pk()).await.unwrap();
+        l.fc.as_ref().unwrap().send_text(&fctl(&l.id, json!({"type":"file_get"}), true)).await.unwrap();
+        let Loopback { host: h, keep, .. } = l;
+        assert_eq!(host_error(h, 5).await, "INVALID_MESSAGE");
+        keep.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(2), pc.close()).await;
     }
     #[tokio::test]
     async fn d2b_n12_auth_timeout_30s() {
