@@ -45,6 +45,7 @@
 | P11 | Pareamento PC-a-PC por "Copiar link para outro PC" (design §8 item 1a): clipboard fora do histórico `Win+V`, limpo ao expirar/usar. **Desvio de C2 §1, pendente de aprovação do usuário** | recomendada no design; PCs costumam estar longe um do outro | remover o botão e o campo de colar link; PC-a-PC fica sem pareamento |
 | P12 | Parear, Aparelhos e Configurações em uma janela com 3 abas (design §8 item 2a) | menos código | três janelas |
 | P14 | Presença (SPEC-C1-presenca P3/P4): uma sala por instância local; motivo `busy` + WS 1013 novos; presença pós-hibernação fora. **Pendente de aprovação do usuário** | local-only, deploy vetado | revisar a spec antes do deploy |
+| P15 | Confirmação de Sair via `tauri-plugin-dialog` (botões `Sair`/`Cancelar`); servidor padrão `ws://127.0.0.1:8787` até haver deploy; `Status` ganha evento "pareou" pela D5a | recomendadas pela D5b; plugin oficial coberto por P1 | MessageBox OK/Cancelar atual |
 | P13 | Fechar a janela invalida a OTK; trocar de aba não (design §8 item 3b) | OTK sem ninguém olhando é só risco | manter a OTK até 300 s |
 
 ## 4. Decisão Visual
@@ -74,8 +75,8 @@
 | D4b | desktop/ | §8A lotes + §8B rede em `files.rs` (A10–A17, N17–N30 no PC) | alto | D4a | `feat/d4b-files-batch` | rodando |
 | D4c | desktop/ | `file-channel` em `main.rs`: controles/frames, backpressure 512/128 KiB, prioridade do PTY, taxa conjunta; loopback A1, A2, A7 (N9), N1, N12 | alto | D4b | `feat/d4c-file-channel` | na fila |
 | D5a | desktop/ | `lib.rs` + laço de presença do host (aceita conexões em sequência e reconexão) | alto | D4c, S1 | `feat/d5a-host-lib` | rodando (antecipada: contrato `Service` fixo; D4c liga arquivos depois) |
-| D5b | desktop/app | Tauri: bandeja, QR, aparelhos/revogar, autostart HKCU Run, Sair; instalador NSIS | alto | D5a, D5-design | `feat/d5b-tray` | rodando (adaptador `host.rs` com stub até D5a) |
-| D5c | desktop/app | cliente local (terminal desta máquina) e remoto (offerer + C2 + C3) | alto | D5b | `feat/d5c-client` | na fila |
+| D5b | desktop/app | Tauri: bandeja, QR, aparelhos/revogar, autostart HKCU Run, Sair; instalador NSIS | alto | D5a, D5-design | `feat/d5b-tray` | em `main` (8 ok, clippy limpo; `host.rs` stub até D5a; "Copiar link" isolado em 8371f85) |
+| D5c | desktop/app | cliente local (terminal desta máquina) e remoto (offerer + C2 + C3) | alto | D5b | `feat/d5c-client` | rodando (sobre o stub) |
 
 ## 7. Impacto em Dados e Contratos
 
