@@ -293,12 +293,12 @@ fn write_atomic(p: &Path, data: &[u8]) -> io::Result<()> {
     drop(f);
     move_file(&t, p, true)
 }
-fn hash_file(f: &mut fs::File) -> io::Result<[u8; 32]> { hash_beat(f, &|| {}) }
-fn hash_beat(f: &mut fs::File, beat: &dyn Fn()) -> io::Result<[u8; 32]> {
+fn hash_file(f: &mut fs::File) -> io::Result<[u8; 32]> { hash_beat(f, &|| true) }
+fn hash_beat(f: &mut fs::File, beat: &dyn Fn() -> bool) -> io::Result<[u8; 32]> {
     use sha2::Digest;
     f.seek(SeekFrom::Start(0))?;
     let (mut h, mut b) = (sha2::Sha256::new(), vec![0; 1 << 20]);
-    loop { let n = f.read(&mut b)?; if n == 0 { break; } h.update(&b[..n]); beat(); }
+    loop { let n = f.read(&mut b)?; if n == 0 { break; } h.update(&b[..n]); if !beat() { return Err(gave_up()); } }
     Ok(h.finalize().into())
 }
 fn read_at(f: &mut fs::File, off: u64, n: usize) -> io::Result<Vec<u8>> { let mut b = vec![0; n]; f.seek(SeekFrom::Start(off))?; f.read_exact(&mut b)?; Ok(b) }
@@ -376,17 +376,23 @@ fn load(p: &Path) -> Option<(Fid, T)> {
 }
 /// Identidade conferida; servidor sem file ID estável (índice 0) → aceito, valendo caminho + tamanho + mtime (§8B, §9 item 13).
 fn same_id(p: &Path, id: (u32, u64)) -> bool { id.1 == 0 || identity(p) == Some(id) }
-fn is_net(p: &Path) -> bool { p.as_os_str().to_str().is_some_and(|s| s.starts_with(r"\\")) }
-/// Operação de rede com prazo (§8B): roda numa thread; cada `beat()` (um bloco lido/gravado) renova o prazo; estourou → `EXPIRED`.
-/// ponytail: a thread presa não é cancelada e segue até o SO desistir; um rename atrasado pode concluir depois do `EXPIRED` (a retomada vê o destino: `ALREADY_EXISTS`).
-fn timed<X: Send + 'static>(ms: u64, f: impl FnOnce(&dyn Fn()) -> X + Send + 'static) -> R<X> {
+/// UNC ou unidade mapeada (`DRIVE_REMOTE` = 4).
+/// ponytail: a letra mapeada não é trocada pelo UNC no manifesto; se a letra mudar, a retomada falha com `IO_ERROR` (identidade da pasta).
+fn is_net(p: &Path) -> bool {
+    let Some(s) = p.to_str() else { return false };
+    s.starts_with(r"\\") || s.get(..3).is_some_and(|r| unsafe { GetDriveTypeW(PCWSTR(wide(Path::new(r)).as_ptr())) } == 4)
+}
+/// Operação de rede com prazo (§8B): roda numa thread; cada `beat()` (um bloco lido/gravado) renova o prazo e diz se quem chamou ainda espera.
+/// Estourou → `EXPIRED`. ponytail: a thread presa numa chamada do SO não é cancelada; ela só desiste no próximo `beat()`.
+fn timed<X: Send + 'static>(ms: u64, f: impl FnOnce(&dyn Fn() -> bool) -> X + Send + 'static) -> R<X> {
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || { let b = tx.clone(); let x = f(&move || { let _ = b.send(None); }); let _ = tx.send(Some(x)); });
+    std::thread::spawn(move || { let b = tx.clone(); let x = f(&move || b.send(None).is_ok()); let _ = tx.send(Some(x)); });
     loop { match rx.recv_timeout(std::time::Duration::from_millis(ms)) { Ok(Some(x)) => return Ok(x), Ok(None) => {} Err(_) => return Err(Expired) } }
 }
-fn copy_beat(a: &mut fs::File, o: &mut fs::File, beat: &dyn Fn()) -> io::Result<()> {
+fn gave_up() -> io::Error { io::Error::from(io::ErrorKind::TimedOut) }
+fn copy_beat(a: &mut fs::File, o: &mut fs::File, beat: &dyn Fn() -> bool) -> io::Result<()> {
     let mut b = vec![0; 1 << 20];
-    loop { let n = a.read(&mut b)?; if n == 0 { return Ok(()); } o.write_all(&b[..n])?; beat(); }
+    loop { let n = a.read(&mut b)?; if n == 0 { return Ok(()); } o.write_all(&b[..n])?; if !beat() { return Err(gave_up()); } }
 }
 /// Nome livre "nome (n).ext" no host (§8A conflitos).
 fn free_name(dir: &Path, name: &str) -> String {
@@ -402,26 +408,31 @@ fn no_links(root: &Path, p: &Path) -> bool {
 /// Finalização em compartilhamento (§8B): temporário exclusivo, flush, releitura com SHA-256, rename; tudo com prazo de rede.
 /// Erro: temporário removido, staging local preservado (quem chama pausa).
 fn net_put(part: PathBuf, tmp: PathBuf, fin: PathBuf, replace: bool, want: [u8; 32], pre: fn(&Path), ms: u64) -> R<()> {
-    let t2 = tmp.clone();
-    let r = timed(ms, move |beat| -> R<()> {
-        let io = |e: io::Error| if matches!(e.raw_os_error(), Some(80 | 183)) { AlreadyExists } else { io_code(&e) };
-        let mut o = create_new(&tmp).map_err(io)?;
-        copy_beat(&mut fs::File::open(&part).map_err(io)?, &mut o, beat).and_then(|_| o.sync_all()).map_err(io)?;
-        drop(o);
-        pre(&tmp);
-        if hash_beat(&mut fs::File::open(&tmp).map_err(io)?, beat).map_err(io)? != want { return Err(HashMismatch); }
-        move_file(&tmp, &fin, replace).map_err(io)
-    }).and_then(|x| x);
-    if r.is_err() { rm(&t2); }
-    r
+    timed(ms, move |beat| {
+        let r = (|| -> R<()> {
+            // Compartilhamento sumido no meio vira `IO_ERROR` (pausa, §8B), não `NOT_FOUND`.
+            let io = |e: io::Error| match (e.raw_os_error(), e.kind()) { (Some(80 | 183), _) => AlreadyExists, (_, io::ErrorKind::PermissionDenied) => Unauthorized, _ => IoError };
+            let mut o = create_new(&tmp).map_err(io)?;
+            copy_beat(&mut fs::File::open(&part).map_err(io)?, &mut o, beat).and_then(|_| o.sync_all()).map_err(io)?;
+            drop(o);
+            pre(&tmp);
+            if hash_beat(&mut fs::File::open(&tmp).map_err(io)?, beat).map_err(io)? != want { return Err(HashMismatch); }
+            // Quem chamou já respondeu `EXPIRED`: não renomeia (a retomada refaz).
+            if !beat() { return Err(Expired); }
+            move_file(&tmp, &fin, replace).map_err(io)
+        })();
+        // A própria thread apaga o temporário, inclusive depois de um `EXPIRED` já respondido.
+        if r.is_err() { rm(&tmp); }
+        r
+    }).and_then(|x| x)
 }
 /// Percorre a origem do download sem seguir links (§8A); links, especiais, ilegíveis e nomes inválidos vão para `skipped`.
 /// ponytail: caminhos absolutos + `symlink_metadata` em vez de handles relativos; a troca por link entre a listagem e o `file_download_init` é barrada lá por `no_links`.
-fn walk(root: &Path, max_n: usize, max_d: usize, max_b: u64, beat: &dyn Fn()) -> R<(Vec<E>, Vec<String>)> {
+fn walk(root: &Path, max_n: usize, max_d: usize, max_b: u64, beat: &dyn Fn() -> bool) -> R<(Vec<E>, Vec<String>)> {
     let (mut es, mut sk, mut st, mut bytes) = (vec![], vec![], vec![(root.to_path_buf(), String::new())], 0u64);
     while let Some((d, rel)) = st.pop() {
         let Ok(rd) = fs::read_dir(&d) else { if !rel.is_empty() { sk.push(rel); } continue };
-        beat();
+        if !beat() { return Err(Expired); }
         let mut list: Vec<_> = rd.flatten().collect();
         list.sort_by_key(|e| e.file_name());
         for x in list {
@@ -708,7 +719,8 @@ impl Files {
     fn track(&mut self, out: &[Value], now: u64) -> Vec<Value> {
         let mut extra = vec![];
         for v in out {
-            let st = match (v["type"].as_str(), v["code"].as_str()) { (Some("file_complete"), _) => 1, (Some("error"), Some(_)) => 3, _ => continue };
+            let st = match (v["type"].as_str(), v["code"].as_str()) { (Some("file_complete"), _) => 1, (Some("error"), Some("HASH_MISMATCH" | "NOT_FOUND")) => 3, _ => continue };
+            // Demais erros (`IO_ERROR`, `EXPIRED`, `ALREADY_EXISTS`) pausam: o arquivo segue pendente.
             let Some(fid) = v["file_id"].as_str().and_then(uuid_v4_lower) else { continue };
             let Some(bid) = self.batch_of(&fid) else { continue };
             let b = self.b.get_mut(&bid).unwrap();
@@ -1463,5 +1475,332 @@ mod tests {
         assert_eq!((p2["entries"].as_array().unwrap().len(), p2["next_cursor"].clone()), (2 + j as usize, Value::Null));
         let roots = list(&mut f, json!({"type":"fs_list","path":null}), NOW);
         assert!(roots["path"].is_null() && roots["entries"].as_array().unwrap().iter().all(|e| e["name"].as_str().unwrap().ends_with(":\\")));
+    }
+
+    // ---- §8A / §8B ----
+    fn ent(rel: &str, data: Option<&[u8]>) -> Value {
+        match data { None => json!({"rel_path":rel,"kind":"dir"}), Some(d) => json!({"rel_path":rel,"kind":"file","size_bytes":d.len().to_string(),"sha256":hex(&sha(d))}) }
+    }
+    fn binit(f: &mut Files, bid: &Fid, dir: &Path, root: &str, es: Vec<Value>, more: bool) -> Value {
+        req(f, 1, &PK, json!({"type":"batch_upload_init","batch_id":uuid_str(bid),"session_id":null,"root_name":root,"target_dir":dir.to_str(),
+            "total_files":"1","total_bytes":"1","entries":es,"more":more}), NOW).0
+    }
+    fn bfile(f: &mut Files, bid: &Fid, fid: &Fid, rel: &str, data: &[u8]) -> Value {
+        req(f, 1, &PK, json!({"type":"file_upload_init","file_id":uuid_str(fid),"batch_id":uuid_str(bid),"rel_path":rel,
+            "size_bytes":data.len().to_string(),"chunk_size":65536,"total_chunks":total_chunks(data.len() as u64),"sha256":hex(&sha(data))}), NOW).0
+    }
+    fn parse(v: Value) -> R<Control> { parse_control(&ctl(v), CID) }
+
+    #[test] fn a10_folder_upload_tree_and_empty_dirs() {
+        let d = tmp();
+        let mut f = files(&d);
+        let bid = new_fid();
+        let mut es = vec![ent("a", None), ent("a/b", None), ent("a/b/c", None), ent("vazia1", None), ent("a/vazia2", None)];
+        let files_: Vec<(String, Vec<u8>)> = (0..200).map(|i| (format!("{}/f{i}.bin", ["a", "a/b", "a/b/c"][i % 3]), bytes(i * 7 + (i % 3) * 65536))).collect();
+        es.extend(files_.iter().map(|(r, b)| ent(r, Some(b))));
+        let (first, rest) = es.split_at(100);
+        assert_eq!(binit(&mut f, &bid, &d.0.join("dst"), "raiz", first.to_vec(), true)["conflicts"], json!([]));
+        assert_eq!(bfile(&mut f, &bid, &new_fid(), "a/f0.bin", &files_[0].1)["code"], "NOT_FOUND", "manifesto incompleto");
+        let ok = req(&mut f, 1, &PK, json!({"type":"batch_entries","batch_id":uuid_str(&bid),"entries":rest,"more":false}), NOW).0;
+        assert_eq!((ok["type"].as_str(), &ok["conflicts"]), (Some("batch_entries_ok"), &json!([])));
+        let root = d.0.join("dst/raiz");
+        assert!(root.join("vazia1").is_dir() && root.join("a/vazia2").is_dir());
+        let mut out = vec![];
+        for (r, b) in &files_ {
+            let fid = new_fid();
+            assert_eq!(bfile(&mut f, &bid, &fid, r, b)["type"], "file_upload_init_ok");
+            if b.is_empty() { continue; }
+            for i in 0..total_chunks(b.len() as u64) as u32 { out.extend(send(&mut f, fid, i, piece(b, i), NOW).unwrap()); }
+            out.extend(ticked(&mut f, NOW + 100));
+        }
+        let bc: Vec<_> = out.iter().filter(|v| v["type"] == "batch_complete").collect();
+        assert_eq!(bc, [&json!({"type":"batch_complete","batch_id":uuid_str(&bid),"done":200,"skipped":0,"failed":0})]);
+        for (r, b) in &files_ { assert_eq!(&fs::read(rel_dir(&root, r)).unwrap(), b, "{r}"); }
+        assert!(!f.bdir(&bid).exists() && f.len() == 0);
+    }
+
+    #[test] fn a11_folder_download_manifest_and_files() {
+        let d = tmp();
+        let mut f = files(&d);
+        let src = d.0.join("dst/src");
+        fs::create_dir_all(src.join("x/vazia")).unwrap();
+        fs::write(src.join("x/a.bin"), bytes(70000)).unwrap();
+        fs::write(src.join("b.txt"), b"oi").unwrap();
+        let bid = new_fid();
+        let ok = req(&mut f, 1, &PK, json!({"type":"batch_download_init","batch_id":uuid_str(&bid),"path":src.to_str()}), NOW).0;
+        assert_eq!((ok["root_name"].as_str(), ok["total_files"].as_str(), ok["total_bytes"].as_str()), (Some("src"), Some("2"), Some("70002")));
+        let rels: Vec<_> = ok["entries"].as_array().unwrap().iter().map(|e| e["rel_path"].as_str().unwrap()).collect();
+        assert_eq!(rels, ["b.txt", "x", "x/a.bin", "x/vazia"]);
+        let fid = new_fid();
+        let r = req(&mut f, 1, &PK, json!({"type":"file_download_init","file_id":uuid_str(&fid),"batch_id":uuid_str(&bid),"rel_path":"x/a.bin"}), NOW).0;
+        assert_eq!(r["sha256"], json!(hex(&sha(&bytes(70000)))));
+        assert_eq!(req(&mut f, 1, &PK, json!({"type":"file_download_init","file_id":uuid_str(&new_fid()),"batch_id":uuid_str(&bid),"rel_path":"x/nada"}), NOW).0["code"], "NOT_FOUND");
+        f.client_complete(1, &fid, NOW);
+        let st = req(&mut f, 1, &PK, json!({"type":"batch_status","batch_id":uuid_str(&bid)}), NOW).0;
+        assert_eq!((st["done"].clone(), st["pending"].as_array().unwrap().len()), (json!(1), 1));
+        let msg = json!({"v":1,"connection_id":CID,"type":"batch_complete","batch_id":uuid_str(&bid),"done":2,"skipped":0,"failed":0}).to_string();
+        let Control::BatchComplete(b) = parse_control(&msg, CID).unwrap() else { panic!() };
+        f.client_batch_complete(1, &b, NOW);
+        assert!(!f.bdir(&bid).exists());
+    }
+
+    /// A12 (queda) e A13 (reinício): `batch_status` lista só os pendentes; concluídos intactos.
+    #[test] fn a12_a13_drop_and_restart_resume_only_pending() {
+        let d = tmp();
+        let mut f = files(&d);
+        let (bid, a, b) = (new_fid(), bytes(100), bytes(65537));
+        binit(&mut f, &bid, &d.0.join("dst"), "r", vec![ent("a", Some(&a)), ent("b", Some(&b))], false);
+        let (fa, fb) = (new_fid(), new_fid());
+        bfile(&mut f, &bid, &fa, "a", &a);
+        send_all(&mut f, fa, &a);
+        bfile(&mut f, &bid, &fb, "b", &b);
+        send(&mut f, fb, 0, piece(&b, 0), NOW).unwrap();
+        f.tick(NOW + 100);
+        f.disconnect(1, NOW + 200);
+        let st = req(&mut f, 2, &PK, json!({"type":"batch_status","batch_id":uuid_str(&bid)}), NOW + 300).0;
+        assert_eq!((st["done"].clone(), st["pending"].clone()), (json!(1), json!([{"rel_path":"b","file_id":uuid_str(&fb)}])));
+        drop(f);
+        let mut f = files(&d);
+        let st = req(&mut f, 2, &PK, json!({"type":"batch_status","batch_id":uuid_str(&bid)}), NOW + 400).0;
+        assert_eq!(st["pending"], json!([{"rel_path":"b","file_id":uuid_str(&fb)}]), "manifesto persistido");
+        let (r, _) = req(&mut f, 2, &PK, json!({"type":"file_resume","file_id":uuid_str(&fb)}), NOW + 400);
+        assert_eq!(r["missing"]["ranges"], json!([[1, 2]]));
+        let mut out = vec![];
+        for x in frags(fb, 1, piece(&b, 1)) { out.extend(f.on_frame(2, &x, NOW + 500).unwrap()); }
+        out.extend(ticked(&mut f, NOW + 600));
+        assert_eq!(types(&out), ["file_ack", "file_complete", "batch_complete"]);
+        assert_eq!((fs::read(d.0.join("dst/r/a")).unwrap(), fs::read(d.0.join("dst/r/b")).unwrap()), (a, b));
+    }
+
+    #[test] fn a14_cancel_keeps_done_leaves_no_partials() {
+        let d = tmp();
+        let mut f = files(&d);
+        let (bid, a, b) = (new_fid(), bytes(10), bytes(65537));
+        binit(&mut f, &bid, &d.0.join("dst"), "r", vec![ent("a", Some(&a)), ent("b", Some(&b))], false);
+        let (fa, fb) = (new_fid(), new_fid());
+        bfile(&mut f, &bid, &fa, "a", &a);
+        send_all(&mut f, fa, &a);
+        bfile(&mut f, &bid, &fb, "b", &b);
+        send(&mut f, fb, 0, piece(&b, 0), NOW).unwrap();
+        assert_eq!(req(&mut f, 1, &PK, json!({"type":"batch_cancel","batch_id":uuid_str(&bid)}), NOW).0["type"], "batch_cancel_ok");
+        let names: Vec<_> = fs::read_dir(d.0.join("dst/r")).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(names, ["a"]);
+        assert!(!staged(&d, &fb).exists() && !f.bdir(&bid).exists());
+        assert_eq!(req(&mut f, 1, &PK, json!({"type":"batch_cancel","batch_id":uuid_str(&bid)}), NOW).0["code"], "NOT_FOUND");
+    }
+
+    #[test] fn a15_ten_conflicts_apply_all_rename() {
+        let d = tmp();
+        let mut f = files(&d);
+        fs::create_dir(d.0.join("dst/r")).unwrap();
+        let mut es = vec![];
+        for i in 0..10 { fs::write(d.0.join(format!("dst/r/n{i}.txt")), b"orig").unwrap(); es.push(ent(&format!("n{i}.txt"), Some(b"novo"))); }
+        let bid = new_fid();
+        let c = binit(&mut f, &bid, &d.0.join("dst"), "r", es, false)["conflicts"].clone();
+        assert_eq!((c.as_array().unwrap().len(), c[0]["kind"].as_str()), (11, Some("root")));
+        assert_eq!(bfile(&mut f, &bid, &new_fid(), "n0.txt", b"novo")["code"], "ALREADY_EXISTS", "antes do resolve");
+        assert!(parse(json!({"type":"batch_resolve","batch_id":uuid_str(&bid),"apply_all":"apagar"})).is_err());
+        let ok = req(&mut f, 1, &PK, json!({"type":"batch_resolve","batch_id":uuid_str(&bid),"root":"merge","apply_all":"rename"}), NOW).0;
+        assert_eq!(ok["type"], "batch_resolve_ok");
+        let mut out = vec![];
+        for i in 0..10 { let fid = new_fid(); bfile(&mut f, &bid, &fid, &format!("n{i}.txt"), b"novo"); out.extend(send_all(&mut f, fid, b"novo")); }
+        assert_eq!(out.iter().filter(|v| v["type"] == "batch_complete").count(), 1);
+        for i in 0..10 {
+            assert_eq!(fs::read(d.0.join(format!("dst/r/n{i}.txt"))).unwrap(), b"orig");
+            assert_eq!(fs::read(d.0.join(format!("dst/r/n{i} (1).txt"))).unwrap(), b"novo");
+        }
+    }
+
+    /// Caminho UNC administrativo (`\\localhost\X$`) exercita o ramo de rede do §8B; pula se o compartilhamento não existir.
+    fn unc(d: &Tmp) -> Option<PathBuf> {
+        let s = d.0.to_str()?;
+        let p = PathBuf::from(format!(r"\\localhost\{}${}", &s[..1], &s[2..]));
+        p.join("dst").is_dir().then_some(p)
+    }
+
+    /// A16 (UNC; unidade mapeada exige `net use`, coberta por `is_net`/`GetDriveTypeW`) e A17.
+    #[test] fn a16_a17_unc_upload_and_download() {
+        let d = tmp();
+        let Some(u) = unc(&d) else { eprintln!("A16/A17 pulados: sem \\\\localhost\\X$"); return };
+        let mut f = files(&d);
+        assert!(is_net(&u) && !is_net(&d.0));
+        let (data, fid) = (bytes(3 * 65536 + 5), new_fid());
+        init(&mut f, &fid, &u.join("dst"), "net.bin", &data, false);
+        assert_eq!(types(&send_all(&mut f, fid, &data)), ["file_ack", "file_complete"]);
+        assert_eq!(fs::read(d.0.join("dst/net.bin")).unwrap(), data);
+        assert_eq!(fs::read_dir(d.0.join("dst")).unwrap().count(), 1, "sem temporário");
+        let fid = new_fid();
+        let ok = req(&mut f, 1, &PK, json!({"type":"file_download_init","file_id":uuid_str(&fid),"path":u.join("dst/net.bin").to_str()}), NOW).0;
+        assert_eq!(ok["sha256"], json!(hex(&sha(&data))));
+        req(&mut f, 1, &PK, json!({"type":"file_get","file_id":uuid_str(&fid),"ranges":[[0,4]]}), NOW);
+        let mut got = vec![];
+        while let Some(Pull::Frames(_, fr)) = f.pull(1, NOW) { got.extend(fr.iter().flat_map(|b| parse_frag(b).unwrap().data)); }
+        assert_eq!(got, data);
+    }
+
+    #[test] fn n17_n19_rel_path_rules() {
+        for r in ["..", "a/../b", "/abs", "C:/x", "//x", r"a\b", "a//b", "CON", "a/con.txt", "fim ", "a/fim.", "", "a/"] { assert!(!rel_ok(r), "{r:?}"); }
+        for r in ["a", "a/b/c.txt", "ação/🦀"] { assert!(rel_ok(r), "{r:?}"); }
+        assert!(!rel_ok(&format!("{}a", "a/".repeat(2048))) && rel_ok(&format!("{}a", "a/".repeat(2047))));
+        let d = tmp();
+        let mut f = files(&d);
+        let bad = json!({"type":"batch_upload_init","batch_id":uuid_str(&new_fid()),"session_id":null,"root_name":"r","target_dir":null,"total_files":"1","total_bytes":"0","entries":[ent("a/../b", Some(b""))],"more":false});
+        assert_eq!(parse(bad).err(), Some(InvalidMessage));
+        for es in [vec![ent("A.txt", Some(b"")), ent("a.txt", Some(b""))], vec![ent("\u{e9}", None), ent("e\u{301}", None)],
+            vec![ent("sem/pai", Some(b""))], vec![ent("d", Some(b"")), ent("d", Some(b""))]] {
+            let Control::Request { req, .. } = parse(json!({"type":"batch_upload_init","batch_id":uuid_str(&new_fid()),"session_id":null,"root_name":"r",
+                "target_dir":d.0.join("dst").to_str(),"total_files":"1","total_bytes":"0","entries":es,"more":false})).unwrap() else { panic!() };
+            assert_eq!(f.request(1, &PK, req, None, NOW), Err(InvalidMessage));
+        }
+        assert_eq!(fs::read_dir(d.0.join("dst")).unwrap().count(), 0, "nenhum byte gravado");
+    }
+
+    #[test] fn n20_download_skips_links_specials() {
+        let d = tmp();
+        let mut f = files(&d);
+        let src = d.0.join("dst").join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("ok.txt"), b"x").unwrap();
+        if !junction(&src.join("fora"), &d.0) { eprintln!("N20 pulado: sem mklink"); return; }
+        let bid = new_fid();
+        let ok = req(&mut f, 1, &PK, json!({"type":"batch_download_init","batch_id":uuid_str(&bid),"path":src.to_str()}), NOW).0;
+        assert_eq!((ok["entries"].as_array().unwrap().len(), ok["skipped"].clone()), (1, json!(["fora"])));
+        let r = req(&mut f, 1, &PK, json!({"type":"file_download_init","file_id":uuid_str(&new_fid()),"batch_id":uuid_str(&bid),"rel_path":"fora/dst"}), NOW).0;
+        assert_eq!(r["code"], "NOT_FOUND");
+    }
+
+    #[test] fn n21_batch_limits_before_any_chunk() {
+        let d = tmp();
+        let mut f = files(&d);
+        let dst = d.0.join("dst");
+        let r = |f: &mut Files, files: &str, bytes: String, es: Vec<Value>| req(f, 1, &PK, json!({"type":"batch_upload_init","batch_id":uuid_str(&new_fid()),"session_id":null,
+            "root_name":"r","target_dir":dst.to_str(),"total_files":files,"total_bytes":bytes,"entries":es,"more":false}), NOW).0["code"].clone();
+        assert_eq!(r(&mut f, "100001", "0".into(), vec![]), "LIMIT_EXCEEDED");
+        assert_eq!(r(&mut f, "1", (64 * GIB + 1).to_string(), vec![]), "LIMIT_EXCEEDED");
+        let deep: Vec<Value> = (1..=65).map(|n| ent(&vec!["d"; n].join("/"), None)).collect();
+        assert_eq!(r(&mut f, "0", "0".into(), deep), "LIMIT_EXCEEDED");
+        f.lim.max_entries = 2;
+        assert_eq!(r(&mut f, "1", "0".into(), vec![ent("a", None), ent("b", None), ent("c", None)]), "LIMIT_EXCEEDED");
+        assert_eq!(fs::read_dir(&dst).unwrap().count(), 0);
+        let bid = new_fid();
+        binit(&mut f, &bid, &dst, "r", vec![], true);
+        assert_eq!(binit(&mut f, &new_fid(), &dst, "s", vec![], true)["code"], "LIMIT_EXCEEDED", "1 lote por conexão");
+    }
+
+    #[test] fn n22_one_hash_failure_only_that_fails() {
+        let d = tmp();
+        let mut f = files(&d);
+        let (bid, a, b) = (new_fid(), bytes(10), bytes(20));
+        binit(&mut f, &bid, &d.0.join("dst"), "r", vec![ent("a", Some(&a)), ent("b", None), ent("b/x", None)], false);
+        let (fa, fb) = (new_fid(), new_fid());
+        bfile(&mut f, &bid, &fa, "a", &a);
+        // Manifesto sem sha: o arquivo declara um sha e manda outro conteúdo.
+        let f2 = &mut f;
+        f2.b.get_mut(&bid).unwrap().entries.push(E { rel: "b/y".into(), size: 20, ..E::default() });
+        assert_eq!(req(f2, 1, &PK, json!({"type":"file_upload_init","file_id":uuid_str(&fb),"batch_id":uuid_str(&bid),"rel_path":"b/y","size_bytes":"20",
+            "chunk_size":65536,"total_chunks":1,"sha256":hex(&sha(b"outro"))}), NOW).0["type"], "file_upload_init_ok");
+        let mut out = send_all(f2, fb, &b);
+        out.extend(send_all(f2, fa, &a));
+        assert!(types(&out).contains(&"error:HASH_MISMATCH".to_owned()));
+        let bc = out.iter().find(|v| v["type"] == "batch_complete").unwrap();
+        assert_eq!((bc["done"].clone(), bc["failed"].clone()), (json!(1), json!(1)));
+        let st = req(&mut f, 1, &PK, json!({"type":"batch_status","batch_id":uuid_str(&bid)}), NOW).0;
+        assert_eq!(st["failed"], json!([{"rel_path":"b/y","file_id":uuid_str(&fb)}]));
+    }
+
+    #[test] fn n23_revoke_cancels_batch() {
+        let d = tmp();
+        let mut f = files(&d);
+        let (bid, b) = (new_fid(), bytes(65537));
+        binit(&mut f, &bid, &d.0.join("dst"), "r", vec![ent("b", Some(&b))], false);
+        let fb = new_fid();
+        bfile(&mut f, &bid, &fb, "b", &b);
+        send(&mut f, fb, 0, piece(&b, 0), NOW).unwrap();
+        f.revoke(&PK, NOW);
+        assert!(!staged(&d, &fb).exists() && !f.bdir(&bid).exists());
+        assert_eq!(req(&mut f, 1, &PK, json!({"type":"batch_status","batch_id":uuid_str(&bid)}), NOW).0["code"], "NOT_FOUND");
+    }
+
+    /// N24 (compartilhamento sumiu: `IO_ERROR`, staging preservado, retomada conclui) e N26 (temporário alterado: `HASH_MISMATCH`).
+    #[test] fn n24_n26_network_finalize_failures() {
+        let d = tmp();
+        let Some(u) = unc(&d) else { eprintln!("N24/N26 pulados: sem \\\\localhost\\X$"); return };
+        let mut f = files(&d);
+        let (data, fid) = (bytes(70000), new_fid());
+        let dst = d.0.join("dst/sub");
+        fs::create_dir(&dst).unwrap();
+        init(&mut f, &fid, &u.join("dst/sub"), "x", &data, false);
+        f.env.pre_verify = |p| { let _ = fs::write(p, b"adulterado"); };
+        assert_eq!(types(&send_all(&mut f, fid, &data)), ["file_ack", "error:HASH_MISMATCH"]);
+        assert_eq!(fs::read_dir(&dst).unwrap().count(), 0, "nada com o nome final nem temporário");
+        assert!(staged(&d, &fid).join("data.part").exists());
+        f.env.pre_verify = |p| { let _ = fs::remove_file(p); };
+        let (_, ex) = req(&mut f, 1, &PK, json!({"type":"file_resume","file_id":uuid_str(&fid)}), NOW + 200);
+        assert_eq!(types(&ex), ["error:IO_ERROR"], "destino sumiu na releitura");
+        assert!(staged(&d, &fid).join("data.part").exists());
+        f.env.pre_verify = |_| {};
+        let (_, ex) = req(&mut f, 1, &PK, json!({"type":"file_resume","file_id":uuid_str(&fid)}), NOW + 300);
+        assert_eq!(types(&ex), ["file_complete"]);
+        assert_eq!(fs::read(dst.join("x")).unwrap(), data);
+    }
+
+    #[test] fn n25_slow_network_expires() {
+        assert_eq!(timed(50, |_| std::thread::sleep(std::time::Duration::from_millis(300))), Err(Expired));
+        assert_eq!(timed(400, |b| { for _ in 0..6 { std::thread::sleep(std::time::Duration::from_millis(150)); b(); } 7 }), Ok(7), "beat renova o prazo");
+        let d = tmp();
+        let Some(u) = unc(&d) else { return };
+        let mut f = files(&d);
+        f.lim.net_ms = 50;
+        let (data, fid) = (bytes(10), new_fid());
+        init(&mut f, &fid, &u.join("dst"), "x", &data, false);
+        f.env.pre_verify = |_| std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(types(&send_all(&mut f, fid, &data)), ["file_ack", "error:EXPIRED"]);
+        let empty = || fs::read_dir(d.0.join("dst")).unwrap().count() == 0;
+        for _ in 0..100 { if empty() { break; } std::thread::sleep(std::time::Duration::from_millis(50)); }
+        assert!(empty(), "thread abandonada não renomeia e apaga o temporário");
+    }
+
+    #[test] fn n27_unauthorized_share_maps_to_unauthorized() {
+        // ponytail: sem compartilhamento negado na máquina de teste; só o mapeamento do erro é verificado.
+        assert_eq!(io_code(&io::Error::from_raw_os_error(5)), Unauthorized);
+    }
+
+    #[test] fn n28_root_conflict_merge_rename_and_missing_root() {
+        let d = tmp();
+        let mut f = files(&d);
+        fs::create_dir(d.0.join("dst/r")).unwrap();
+        fs::write(d.0.join("dst/r/a"), b"old").unwrap();
+        let es = vec![ent("a", Some(b"new")), ent("b", Some(b"bb"))];
+        let bid = new_fid();
+        let c = binit(&mut f, &bid, &d.0.join("dst"), "r", es.clone(), false)["conflicts"].clone();
+        assert_eq!(c, json!([{"rel_path":null,"kind":"root"},{"rel_path":"a","kind":"exists"}]));
+        let r = |f: &mut Files, v: Value| { let Control::Request { req, .. } = parse(v).unwrap() else { panic!() }; f.request(1, &PK, req, None, NOW) };
+        assert_eq!(r(&mut f, json!({"type":"batch_resolve","batch_id":uuid_str(&bid),"apply_all":"skip"})), Err(InvalidMessage));
+        r(&mut f, json!({"type":"batch_resolve","batch_id":uuid_str(&bid),"root":"merge","decisions":[{"rel_path":"a","action":"overwrite"}]})).unwrap();
+        let fid = new_fid();
+        bfile(&mut f, &bid, &fid, "a", b"new");
+        send_all(&mut f, fid, b"new");
+        assert_eq!(fs::read(d.0.join("dst/r/a")).unwrap(), b"new");
+        f.disconnect(1, NOW);
+        let b2 = new_fid();
+        binit(&mut f, &b2, &d.0.join("dst"), "r", es, false);
+        r(&mut f, json!({"type":"batch_resolve","batch_id":uuid_str(&b2),"root":"rename"})).unwrap();
+        let fid = new_fid();
+        assert_eq!(bfile(&mut f, &b2, &fid, "a", b"new")["type"], "file_upload_init_ok", "sem conflito em r (1)");
+        send_all(&mut f, fid, b"new");
+        assert_eq!(fs::read(d.0.join("dst/r (1)/a")).unwrap(), b"new");
+    }
+
+    #[test] fn n29_no_file_id_falls_back_to_path_size_mtime() {
+        let d = tmp();
+        assert!(same_id(&d.0, (0, 0)) && same_id(&d.0, identity(&d.0).unwrap()) && !same_id(&d.0, (1, 1)));
+        let mut f = files(&d);
+        let (src, fid) = (d.0.join("dst/s.bin"), new_fid());
+        fs::write(&src, bytes(10)).unwrap();
+        req(&mut f, 1, &PK, json!({"type":"file_download_init","file_id":uuid_str(&fid),"path":src.to_str()}), NOW);
+        f.t.get_mut(&fid).unwrap().dir_id.1 = 0;
+        req(&mut f, 1, &PK, json!({"type":"file_get","file_id":uuid_str(&fid),"ranges":[[0,1]]}), NOW);
+        fs::write(&src, bytes(11)).unwrap();
+        assert_eq!(f.pull(1, NOW), Some(Pull::Ctl(file_error(NotFound, &fid))));
     }
 }
