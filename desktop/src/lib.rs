@@ -841,19 +841,19 @@ mod tests {
         let id = proto::uuid_str(&b);
         assert!(uuid(&room) && auth::uuid_v4_lower(&id).is_some());
         let port = std::env::var("PORT").unwrap_or("8787".into()).parse::<u16>().unwrap();
-        let mut host = spawn_run(port, &room, Host::new(SigningKey::from_bytes(&[0x60; 32])));
+        // C2: trust store temporária + OTK; o cliente pareia antes de C3 (reliable/second-channel).
+        let (h, _, _tmp) = store(&format!("wrangler-{case}"));
+        let otk = h.issue_otk(Instant::now()).unwrap();
+        hub().profiles.push(("test-cmd".into(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false }));
+        let mut host = spawn_run(port, &room, h.clone());
         let (tx, mut rx) = mpsc::channel(260);
-        let pc = PeerConnectionBuilder::new()
-            .with_handler(Arc::new(Handler { tx, failed: tokio::sync::Notify::new() }))
-            .with_udp_addrs(vec!["127.0.0.1:0"])
-            .with_data_channel_send_buffer_limit(32768).build().await.unwrap();
+        let (cert, local_fp) = certificate().unwrap();
+        let pc = peer(cert).with_handler(Arc::new(Handler { tx, failed: tokio::sync::Notify::new() })).build().await.unwrap();
         let mut host_result = None;
         let result: Result<()> = tokio::time::timeout(Duration::from_secs(30), async {
             let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/v1/ws/{room}")).await?;
             ws.send(message("hello", json!({"role":"mobile"}), &id).into()).await?;
             let dc = pc.create_data_channel(if case == "wrong-label" { "wrong-channel" } else { "pty-channel" }, Some(init)).await?;
-            let samples = [String::new(), "ação 日本語".into(), "repeated".into(), "repeated".into(), "a".repeat(16384)];
-            let mut received = 0;
             loop {
                 tokio::select! {
                     outcome = &mut host => {
@@ -888,28 +888,19 @@ mod tests {
                                 host_result = Some(tokio::time::timeout(Duration::from_secs(5), &mut host).await?);
                                 return Ok(());
                             }
-                            dc.send_text(&samples[0]).await?;
-                        },
-                        Some(DataChannelEvent::OnMessage(m)) => {
-                            if received >= samples.len() || text(&m.data,m.is_string)? != samples[received] { return Err("echo mismatch/duplicate".into()); }
-                            received += 1;
+                            let b = Binding { connection_id: auth::uuid_bytes(&id).ok_or("id")?, room_id: auth::uuid_bytes(&room).ok_or("room")?, fp_offerer: local_fp, fp_answerer: remote_fingerprint(&pc).await? };
+                            authenticate_dc(&dc, &id, b, Some(otk), SigningKey::from_bytes(&[0x61; 32]), h.pk()).await?;
                             if reject {
-                                if case != "second-channel" { return Err("host echoed forbidden channel".into()); }
+                                // Primeiro canal aceito (C2 completo); um segundo `pty-channel` viola C3 §1.
                                 pc.create_data_channel("pty-channel", None).await?;
-                                // The first channel was accepted (echo above); now require host rejection.
                                 host_result = Some(tokio::time::timeout(Duration::from_secs(5), &mut host).await?);
                                 return Ok(());
                             }
-                            if received == samples.len() {
-                                if tokio::time::timeout(Duration::from_millis(250), async {
-                                    loop { if matches!(dc.poll().await, Some(DataChannelEvent::OnMessage(_))) { break; } }
-                                }).await.is_ok() { return Err("duplicate echo".into()); }
-                                ws.close(None).await?;
-                                host_result = Some(tokio::time::timeout(Duration::from_secs(5), &mut host).await?);
-                                return Ok(());
-                            }
-                            dc.send_text(&samples[received]).await?;
-                        }
+                            c3_echo_once(&dc, &id).await?;
+                            ws.close(None).await?;
+                            host_result = Some(tokio::time::timeout(Duration::from_secs(5), &mut host).await?);
+                            return Ok(());
+                        },
                         Some(DataChannelEvent::OnClose) | None => return Err("channel closed".into()),
                         _ => {}
                     }
@@ -1028,15 +1019,52 @@ mod tests {
         }).await.map_err(|_| "recv timeout".to_owned())?
     }
     async fn authenticate(l: &Loopback, b: Binding, otk: Option<[u8; 32]>, sk: SigningKey, pin: [u8; 32]) -> R2<()> {
+        authenticate_dc(&l.dc, &l.id, b, otk, sk, pin).await
+    }
+    async fn authenticate_dc(dc: &Arc<dyn DataChannel>, id: &str, b: Binding, otk: Option<[u8; 32]>, sk: SigningKey, pin: [u8; 32]) -> R2<()> {
         let (mut o, hello) = auth::Offerer::new(otk, sk, pin, b, Instant::now()).map_err(|e| e.code().to_owned())?;
-        l.dc.send_text(&hello.to_json(&l.id)).await.map_err(|e| e.to_string())?;
+        dc.send_text(&hello.to_json(id)).await.map_err(|e| e.to_string())?;
         loop {
-            let m = auth::parse_msg(&next_text(&l.dc).await?, &l.id).map_err(|e| e.code().to_owned())?;
+            let m = auth::parse_msg(&next_text(dc).await?, id).map_err(|e| e.code().to_owned())?;
             if let Msg::Fail(e) = m { return Err(e.code().to_owned()); }
             match o.handle(m, Instant::now()).map_err(|e| e.code().to_owned())? {
-                Some(p) => l.dc.send_text(&p.to_json(&l.id)).await.map_err(|e| e.to_string())?,
+                Some(p) => dc.send_text(&p.to_json(id)).await.map_err(|e| e.to_string())?,
                 None => return Ok(()),
             }
+        }
+    }
+    /// C3 ponta a ponta: create → attach → um input → saída (eco do cmd + resultado) e um `input_ack`,
+    /// sem duplicar nos 500 ms seguintes → close → `05`.
+    async fn c3_echo_once(dc: &Arc<dyn DataChannel>, id: &str) -> R2<()> {
+        let ctl = |t: Value| { let mut t = t; t["v"] = 1.into(); t["connection_id"] = id.into(); t["request_id"] = RID.into(); t.to_string() };
+        dc.send_text(&ctl(json!({"type":"session_create","profile_id":"test-cmd","cols":80,"rows":24}))).await.map_err(|e| e.to_string())?;
+        let v: Value = serde_json::from_str(&next_text(dc).await?).map_err(|e| e.to_string())?;
+        let sid_s = v["session_id"].as_str().filter(|_| v["type"] == "session_create_ok").ok_or(format!("{v}"))?.to_owned();
+        let sid = auth::uuid_bytes(&sid_s).ok_or("sid")?;
+        dc.send_text(&ctl(json!({"type":"session_attach","session_id":sid_s,"from_offset":null}))).await.map_err(|e| e.to_string())?;
+        let input = proto::encode_frame(&proto::Frame { session_id: sid, seq: 1, op: Op::Input(b"echo wrangler-ok\r".to_vec()) });
+        dc.send(input[..].into()).await.map_err(|e| e.to_string())?;
+        let (mut out, mut acks) = (Vec::new(), 0);
+        let read = |m: (bool, Vec<u8>), out: &mut Vec<u8>, acks: &mut usize| -> R2<()> {
+            match m {
+                (true, t) => if serde_json::from_slice::<Value>(&t).map_err(|e| e.to_string())?["type"] == "input_ack" { *acks += 1 },
+                (false, b) => if let Op::Output(d) = proto::parse_frame(&b).map_err(|e| format!("{e:?}"))?.op { out.extend(d) },
+            }
+            Ok(())
+        };
+        while !(String::from_utf8_lossy(&out).matches("wrangler-ok").count() >= 2 && acks >= 1) {
+            read(next_msg(dc).await?, &mut out, &mut acks)?;
+        }
+        let quiet = tokio::time::sleep(Duration::from_millis(500));
+        tokio::pin!(quiet);
+        loop {
+            tokio::select! { _ = &mut quiet => break, m = next_msg(dc) => read(m?, &mut out, &mut acks)? }
+        }
+        let n = String::from_utf8_lossy(&out).matches("wrangler-ok").count();
+        if n != 2 || acks != 1 { return Err(format!("duplicado: saída={n} acks={acks}")); }
+        dc.send_text(&ctl(json!({"type":"session_close","session_id":sid_s}))).await.map_err(|e| e.to_string())?;
+        loop {
+            if let (false, b) = next_msg(dc).await? && let Op::Exited(_) = proto::parse_frame(&b).map_err(|e| format!("{e:?}"))?.op { return Ok(()); }
         }
     }
     async fn host_error(h: tokio::task::JoinHandle<Result<()>>, secs: u64) -> String {
