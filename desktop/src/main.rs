@@ -1,5 +1,6 @@
 mod auth;
 mod conpty;
+mod files;
 mod proto;
 mod screen;
 mod session;
