@@ -532,6 +532,57 @@ mod snapshot_tests {
         fn kill(&mut self) -> std::io::Result<()> { Ok(()) }
     }
 
+    /// E7 (PLANO-M3 §5) no PC: vim real no ConPTY, gap forçado, snapshot + replay = tela real.
+    #[test]
+    #[ignore = "precisa de vim (LIVE_CMD_VIM=caminho)"]
+    fn e7_vim_apos_gap() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let (cols, rows) = (80u16, 24u16);
+        let (tx, rx) = mpsc::channel();
+        let mut pty = crate::conpty::ConPty::spawn("cmd.exe", cols, rows, move |e| { if let crate::conpty::Ev::Output(d) = e { let _ = tx.send(d); } }).unwrap();
+        let mut t = Sessions::default();
+        let sid = t.create(Box::new(P), None, cols, rows, 0).unwrap();
+        let mut base = Screen::new(cols, rows, false);
+        let mut truth = vt100::Parser::new(rows.try_into().unwrap(), cols.try_into().unwrap(), 0);
+        // lê até `done` na tela real e 1 s sem saída
+        let mut pump = |t: &mut Sessions, done: &dyn Fn(&str) -> bool| loop {
+            match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(d) => { t.on_output(sid, &d, 0); base.feed(t.dropped(&sid)); truth.process(&d); }
+                Err(_) if done(&truth.screen().contents()) => return,
+                Err(e) => assert!(e == mpsc::RecvTimeoutError::Timeout, "pty fechou"),
+            }
+        };
+        pty.write(b"for /L %i in (1,1,11000) do @echo linha-%i\r").unwrap();
+        pump(&mut t, &|s| s.contains("linha-11000"));
+        let vim = std::env::var("LIVE_CMD_VIM").unwrap();
+        pty.write(format!("\"{vim}\" -u NONE -N -n\r").as_bytes()).unwrap();
+        pump(&mut t, &|s| s.contains('~'));
+        pty.write(b"ie7-vim-ok\x1b:set number\r").unwrap();
+        pump(&mut t, &|s| s.contains("1 e7-vim-ok"));
+        drop(pump);
+        assert!(t.s[&sid].ring.start > 0, "precisa de gap");
+        let (_, out) = t.attach(1, [1; 32], sid, Some(0), None, 0).unwrap();
+        let mut client = vt100::Parser::new(rows.try_into().unwrap(), cols.try_into().unwrap(), 0);
+        let mut snap = false;
+        let mut apply = |o: Out| match o {
+            Out::Snapshot { offset, .. } => { snap = true; client.process(&B64.decode(base.snapshot_body(&sid, offset)["data"].as_str().unwrap()).unwrap()); }
+            Out::Frame(Frame { op: Op::Output(d), .. }) => client.process(&d),
+            _ => {}
+        };
+        for o in out { apply(o); }
+        loop {
+            let more = t.sent(1, sid, QUEUE);
+            if more.is_empty() { break; }
+            for o in more { apply(o); }
+        }
+        drop(apply);
+        assert!(snap);
+        assert_eq!(client.screen().contents_formatted(), truth.screen().contents_formatted());
+        assert_eq!(client.screen().cursor_position(), truth.screen().cursor_position());
+        pty.write(b"\x1b:q!\rexit\r").unwrap();
+    }
+
     /// A4 com snapshot: tela-base (bytes que saíram do ring) + replay = tela de quem viu tudo.
     #[test]
     fn snapshot_mais_replay_igual_a_tela_real() {

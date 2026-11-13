@@ -11,6 +11,7 @@ Base: `SPEC-C3-controle.md` (aprovada, answers 012; D1–D10 aprovados); `PLANO-
 - `auth::Error` já tem os códigos usados pela C3 (`NOT_FOUND`, `LIMIT_EXCEEDED`, `IO_ERROR`, `INVALID_MESSAGE`, `VERSION_UNSUPPORTED`); a C3 não cria códigos.
 - `mobile/`: não existe.
 - **Progresso (answers 016):** D3a feita e verificada (PASS, 2026-11-08): `desktop/src/proto.rs` + fixtures `desktop/tests/fixtures/c3-frames.json`/`c3-controls.json`. M3a feita e verificada (PASS): `mobile/src/pty.ts` + `pty.test.ts` no `npm test`. Pós-verificação: `attached()` renumera o nunca enviado em vez de descartar; fixtures ganharam label 64/65 emoji e mensagem com exatamente 65536 B. Para M3b: validar mensagens host→cliente (`*_ok`, `input_ack`, `replay_*`, `error` etc.), que M3a não lê. **D3b, D3c, D3d feitas e verificadas (PASS, 2026-11-13, commit `2565d12`)**: `session.rs`, `conpty.rs`, `screen.rs`, `pty-channel` ligado em `main.rs`; `pty.ts` valida controles host→cliente (fixture `c3-host-controls.json`).
+- **Lado PC (2026-11-13):** N7 (revogação com saída fluindo, ≤ 1,1 s) e N11 (heartbeat 30 s) com teste loopback; eco do ping do cliente corrigido (id 0 antes do primeiro ping do host era engolido); OSC 7 com bash real (Git bash) PASS; clippy sem avisos. Sem distro WSL nem `pwsh` nesta máquina: perfis `wsl`/`pwsh` reais pendentes. Ctrl+C no ConPTY coberto por `conpty::tests` (o Ctrl+C físico do Gate M1 é no aparelho).
 - Gate M1 **não** aprovado (Ctrl+C físico no Windows, E2E mobile/ICE). Gate M2 **não** aprovado (M2b, E1–E3 e aceite em aparelho pendentes).
 
 ## 2. Bloqueios
@@ -48,7 +49,7 @@ A1, A2, A5, A8 e N11 em Android **e** iOS, contra host Windows com ConPTY. A8 in
 |---|---|---|
 | E5 | `max-message-size` anunciado pelo `react-native-webrtc 155.0.1` (C3 §9 item 10) | ≥ 65536 no Android e no iOS; senão volta à spec |
 | E6 | `bufferedamountlow` com limiar 256 KiB e leitura de `bufferedAmount` após `send` (item 10) | evento dispara e a pausa/retomada funciona nos dois SOs |
-| E7 | `vim`/`htop` com o snapshot escolhido (D3d) após gap forçado | tela legível e utilizável após o replay |
+| E7 | `vim`/`htop` com o snapshot escolhido (D3d) após gap forçado | tela legível e utilizável após o replay. **PC: PASS (2026-11-13)** com `vim` do Git no ConPTY, 11 000 linhas forçando gap; snapshot + replay = tela real, cursor incluído (`session::snapshot_tests::e7_vim_apos_gap`, `LIVE_CMD_VIM`). `htop` não existe no Windows; falta conferir no aparelho |
 
 E5/E6 rodam no mesmo build descartável de E1–E3 (PLANO-M2 §5), antes de M3b.
 
