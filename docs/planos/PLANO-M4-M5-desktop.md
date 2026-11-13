@@ -80,7 +80,7 @@
 | D5c | desktop/app | cliente local (terminal desta máquina) e remoto (offerer + C2 + C3) | alto | D5b | `feat/d5c-client` | rodando (sobre o stub) |
 | S2 | signaling/ + desktop/ + SPEC-C1-presenca | presença simultânea: vários clientes negociando ao mesmo tempo na sala do host (P14) | alto | D5a | `feat/s2-presence-multi` | na fila (entra após D4c, que mexe em `lib.rs`) |
 | D5d | desktop/app | trocar stub `host.rs` por `live_cmd_echo::Service`; fechar janela sem `cancel_pair` (P13); instalador final | alto | D5c | `feat/d5d-host-wire` | na fila |
-| D-int | desktop/scripts | `d1-integration.cjs`: `wrangler_echo` e `wrangler_second_channel` falam C2/C3 em vez do eco M1 | alto | D5a | `feat/dint-wrangler` | rodando |
+| D-int | desktop/scripts | `d1-integration.cjs`: `wrangler_echo` e `wrangler_second_channel` falam C2/C3 em vez do eco M1 | alto | D5a | `feat/dint-wrangler` | em `main` (8/8 d1-integration, 87 ok; teste usa `cmd.exe`, disponível em todo Windows) |
 
 ## 7. Impacto em Dados e Contratos
 
