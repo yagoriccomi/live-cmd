@@ -8,39 +8,48 @@ type Socket = { send(data: string): void; close(code: number, reason: string): v
 type Peer = { socket: Socket; role?: 'mobile' | 'host'; ended: boolean; window: number; count: number };
 type Reason = 'done' | 'timeout' | 'peer_left' | 'protocol_error';
 
-// ponytail: one local attempt in memory; authenticated reconnect/hibernation belongs to M2.
+// Reusable host room (SPEC-C1-presenca): one attempt at a time, connection_id chosen by the client hello.
+// ponytail: state in memory only; DO eviction drops the attempt and peers reconnect. Hibernation API when exposed publicly.
 export class Room {
   peers: Peer[] = [];
   started = 0;
-  private finished = false;
   phase: 'waiting' | 'ready' | 'offered' | 'answered' = 'waiting';
   candidates = 0;
-  readonly connectionId: string;
+  connectionId: string | null = null;
   readonly now: () => number;
-  constructor(connectionId: string, now = () => Date.now()) { this.connectionId = connectionId; this.now = now; }
+  constructor(now = () => Date.now()) { this.now = now; }
   send(peer: Peer, type: string, payload: unknown, request_id = crypto.randomUUID() as string) {
     peer.socket.send(JSON.stringify({ v: 1, type, connection_id: this.connectionId, request_id, payload }));
   }
   add(socket: Socket): boolean {
     this.expire();
-    if (this.finished || this.peers.length >= 2) return false;
-    if (!this.peers.length) this.started = this.now();
+    if (this.peers.length >= 2) return false;
+    // Attempt clock restarts when the counterpart arrives; an idle host may wait indefinitely.
+    this.started = this.now();
     this.peers.push({ socket, ended: false, window: this.now(), count: 0 });
     return true;
   }
   expire() {
-    if (this.peers.length && (this.now() - this.started >= 300_000 ||
+    const idleHost = this.peers.length === 1 && this.peers[0].role === 'host';
+    if (this.peers.length && !idleHost && (this.now() - this.started >= 300_000 ||
       (this.phase !== 'answered' && this.now() - this.started >= 30_000))) this.finish('timeout');
   }
   finish(reason: Reason) {
-    this.finished = true;
     const peers = this.peers.splice(0);
+    this.connectionId = null;
     this.phase = 'waiting';
     this.candidates = 0;
     for (const peer of peers) {
       try { this.send(peer, 'close', { reason }); } catch { /* Disconnected peer. */ }
       try { peer.socket.close(reason === 'protocol_error' ? 1008 : 1000, reason); } catch { /* Already closed. */ }
     }
+  }
+  // Role already taken: drop only the newcomer, current attempt continues.
+  busy(peer: Peer, requestId?: string) {
+    this.peers.splice(this.peers.indexOf(peer), 1);
+    const reply = (type: string, payload: unknown) => peer.socket.send(JSON.stringify({ v: 1, type, connection_id: null, request_id: requestId ?? crypto.randomUUID(), payload }));
+    try { reply('error', { code: 'LIMIT_EXCEEDED', message: 'Room busy' }); reply('close', { reason: 'busy' }); } catch { /* Disconnected peer. */ }
+    try { peer.socket.close(1013, 'busy'); } catch { /* Already closed. */ }
   }
   left(socket: Socket) {
     if (this.peers.some(p => p.socket === socket)) this.finish('peer_left');
@@ -55,15 +64,19 @@ export class Room {
       if (++peer.count > MAX_MESSAGES_PER_SECOND) throw Error();
       if (typeof data !== 'string' || bytes(data) > MAX_MESSAGE_BYTES) throw Error();
       const m = JSON.parse(data);
-      if (!object(m) || m.v !== 1 || m.connection_id !== this.connectionId ||
+      // hello: host sends null (learns the id from ready); client sends a fresh lowercase UUID v4.
+      const id = m?.type !== 'hello' ? this.connectionId : m?.payload?.role === 'mobile' && ROOM_UUID.test(m.connection_id) ? m.connection_id : null;
+      if (!object(m) || m.v !== 1 || m.connection_id !== id ||
         typeof m.request_id !== 'string' || !m.request_id.length || m.request_id.length > 128 ||
         !/^[\w.-]+$/.test(m.request_id) || !object(m.payload)) throw Error();
       requestId = m.request_id;
       const p = m.payload;
       const other = this.peers.find(p => p !== peer);
       if (m.type === 'hello') {
-        if (peer.role || (p.role !== 'mobile' && p.role !== 'host') || this.peers.some(x => x.role === p.role)) throw Error();
+        if (peer.role || (p.role !== 'mobile' && p.role !== 'host') || (p.role === 'mobile' && id === null)) throw Error();
+        if (other?.role === p.role) { this.busy(peer, requestId); return; }
         peer.role = p.role;
+        if (p.role === 'mobile') this.connectionId = id;
         if (other?.role) {
           this.phase = 'ready';
           for (const target of this.peers) this.send(target, 'hello', { status: 'ready' }, requestId);

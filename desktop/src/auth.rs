@@ -267,6 +267,16 @@ impl Host {
         t.entry(client_pk).or_insert_with(|| Entry { label: String::new(), paired_at: now_ms(), revoked_at: None }).revoked_at.get_or_insert_with(now_ms);
         self.save(&t).map_err(|_| IoError)
     }
+    /// Aparelhos pareados não revogados: `(client_pk, label, paired_at_ms)`.
+    pub fn clients(&self) -> Vec<([u8; 32], String, u64)> {
+        self.trust.lock().unwrap().iter().filter(|(_, e)| e.revoked_at.is_none()).map(|(pk, e)| (*pk, e.label.clone(), e.paired_at)).collect()
+    }
+    /// Tempo restante da OTK ativa (não consumida e não expirada).
+    pub fn otk_remaining(&self, now: Instant) -> Option<Duration> {
+        self.otk.lock().unwrap().as_ref().filter(|o| !o.consumed).and_then(|o| OTK_TTL.checked_sub(now.duration_since(o.issued))).filter(|d| !d.is_zero())
+    }
+    /// Descarta a OTK pendente (janela do QR fechada, P13).
+    pub fn cancel_otk(&self) { *self.otk.lock().unwrap() = None; }
     pub fn check_trusted(&self, client_pk: &[u8; 32]) -> R<()> {
         match self.trust.lock().unwrap().get(client_pk) { Some(e) if e.revoked_at.is_some() => Err(Revoked), Some(_) => Ok(()), None => Err(Unauthorized) }
     }
