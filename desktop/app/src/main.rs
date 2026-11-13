@@ -127,13 +127,13 @@ fn set_server(app: State<App>, server: String) -> Result<(), String> {
     let server = server.trim().to_string();
     if !settings::valid_server(&server) { return Err("INVALID_SERVER".into()); }
     let mut s = app.settings.lock().unwrap();
-    let new = settings::Settings { server, ..s.clone() };
+    let new = settings::Settings { server };
     settings::save(&app.data_dir, &new)?;
     let mut svc = app.svc.lock().unwrap();
     svc.stop();
     *app.link.lock().unwrap() = None;
     clip::clear_if_ours();
-    *svc = Service::start(host::Config { data_dir: app.data_dir.clone(), server: new.server.clone(), room: new.room.clone() })?;
+    *svc = Service::start(host::Config { data_dir: app.data_dir.clone(), server: new.server.clone(), room: host::room_id(&app.data_dir)? })?;
     *s = new;
     Ok(())
 }
@@ -248,7 +248,7 @@ fn main() {
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
-            let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: s.room.clone() })?;
+            let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: host::room_id(&dir)? })?;
             a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });
             tray(a.handle())?;
             refresh_tray(a.handle(), true);

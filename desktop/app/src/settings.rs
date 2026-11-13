@@ -8,7 +8,7 @@ pub const DEFAULT_SERVER: &str = "ws://127.0.0.1:8787";
 const FILE: &str = "app.json";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Settings { pub server: String, pub room: String }
+pub struct Settings { pub server: String }
 
 /// Mesmo diretório do host: `LIVE_CMD_DATA_DIR`, senão `%APPDATA%/live-cmd`.
 pub fn data_dir() -> Result<PathBuf, String> {
@@ -17,20 +17,11 @@ pub fn data_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "DATA_DIR".into())
 }
 
-fn new_room() -> String {
-    let mut b = [0u8; 16];
-    getrandom::getrandom(&mut b).expect("random");
-    (b[6], b[8]) = ((b[6] & 0x0f) | 0x40, (b[8] & 0x3f) | 0x80);
-    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
-    format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
-}
-
-/// Lê `app.json`; sem arquivo (ou ilegível), cria um com servidor padrão e sala nova.
-// ponytail: a sala vive aqui até a D5a expor a sala fixa do host; então passar a usar a dela.
+/// Lê `app.json`; sem arquivo (ou ilegível), cria um com o servidor padrão. A sala é a do host (`room.txt`).
 pub fn load(dir: &Path) -> Result<Settings, String> {
     if let Some(s) = std::fs::read(dir.join(FILE)).ok().and_then(|t| serde_json::from_slice::<Settings>(&t).ok())
         && valid_server(&s.server) { return Ok(s); }
-    let s = Settings { server: DEFAULT_SERVER.into(), room: new_room() };
+    let s = Settings { server: DEFAULT_SERVER.into() };
     save(dir, &s)?;
     Ok(s)
 }
@@ -123,10 +114,8 @@ mod tests {
         let d = tmp("settings");
         let s = load(&d).unwrap();
         assert_eq!(s.server, DEFAULT_SERVER);
-        assert_eq!(s.room.len(), 36);
-        assert_eq!(&s.room[14..15], "4");
-        assert_eq!(load(&d).unwrap(), s, "mesma sala na segunda execução");
-        let s2 = Settings { server: "wss://x.dev".into(), ..s.clone() };
+        assert_eq!(load(&d).unwrap(), s, "relido na segunda execução");
+        let s2 = Settings { server: "wss://x.dev".into() };
         save(&d, &s2).unwrap();
         assert_eq!(load(&d).unwrap(), s2);
         std::fs::write(d.join(FILE), "{").unwrap();
