@@ -113,13 +113,12 @@ impl Session {
             a.next += n as u64;
             a.queued += n;
         }
-        if let (Some(code), None, false) = (exit, a.replay_to, a.exit_sent) {
-            if a.next == end {
+        if let (Some(code), None, false) = (exit, a.replay_to, a.exit_sent)
+            && a.next == end {
                 a.exit_sent = true;
                 out.push(Out::Ctl(json!({"type":"session_exited","session_id":s,"exit_code":code,"final_offset":u64s(end)})));
                 out.push(Out::Frame(Frame { session_id: sid, seq: end, op: Op::Exited(code) }));
             }
-        }
         out
     }
 }
@@ -278,7 +277,7 @@ impl Sessions {
     /// TTL: encerra sessões sem anexo e sem I/O há 24 h. Devolve as removidas.
     pub fn tick(&mut self, now: u64) -> Vec<Sid> {
         let dead: Vec<Sid> = self.s.iter().filter(|(_, x)| x.att.is_empty() && now.saturating_sub(x.activity) >= TTL_MS).map(|(k, _)| *k).collect();
-        for sid in &dead { if let Some(mut x) = self.s.remove(sid) { if x.exit.is_none() { let _ = x.pty.kill(); } } }
+        for sid in &dead { if let Some(mut x) = self.s.remove(sid) && x.exit.is_none() { let _ = x.pty.kill(); } }
         dead
     }
 }

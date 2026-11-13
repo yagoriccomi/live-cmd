@@ -235,6 +235,10 @@ mod tests {
         same(&s, &snap(&s));
         s
     }
+    fn pending_wrap_on_empty(v: &vt100::Screen) -> bool {
+        let (r, col) = v.cursor_position();
+        col == 12 && !v.cell(r, 11).is_some_and(|x| x.has_contents())
+    }
 
     #[test]
     fn grids_le_estado_interno() {
@@ -298,7 +302,7 @@ mod tests {
                 // ponytail conhecido: texto da principal se perde; o resto do grid ativo tem de bater
                 assert_eq!(grids(c.screen()).1, grids(s.vt.screen()).1, "{seq:?}");
                 assert_eq!(c.screen().cursor_position(), s.vt.screen().cursor_position(), "{seq:?}");
-            } else if { let v = s.vt.screen(); let (r, col) = v.cursor_position(); col == 12 && !v.cell(r, 11).is_some_and(|x| x.has_contents()) } {
+            } else if pending_wrap_on_empty(s.vt.screen()) {
                 // ponytail conhecido (`at`): quebra pendente sobre célula vazia; o resto tem de bater
                 assert_eq!(grids(c.screen()), grids(s.vt.screen()), "{seq:?}");
                 assert_eq!(c.screen().contents(), s.vt.screen().contents(), "{seq:?}");

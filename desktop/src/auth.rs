@@ -19,6 +19,7 @@ const MAX_URI: usize = 512;
 
 /// Lista única de erros (C2 §2.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // nomes vêm dos códigos da spec
 pub enum Error { InvalidMessage, VersionUnsupported, Unauthorized, Revoked, Expired, LimitExceeded, NotFound, AlreadyExists, HashMismatch, IoError, ServerNotAllowed }
 use Error::*;
 const CODES: [(Error, &str); 11] = [

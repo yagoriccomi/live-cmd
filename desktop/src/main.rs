@@ -39,10 +39,6 @@ fn envelope(text: &str, id: &str) -> Result<Value> {
     Ok(m)
 }
 fn message(kind: &str, payload: Value, id: &str) -> String { json!({"v":1,"type":kind,"connection_id":id,"request_id":"host","payload":payload}).to_string() }
-fn text(data: &[u8], is_string: bool) -> Result<&str> {
-    if !is_string || data.len()>16384 { return Err("message limit/type".into()); }
-    Ok(std::str::from_utf8(data)?)
-}
 fn hex32(s: &str) -> Option<[u8; 32]> {
     s.split(':').map(|h| u8::from_str_radix(h, 16).ok()).collect::<Option<Vec<u8>>>()?.try_into().ok()
 }
@@ -146,7 +142,7 @@ impl Hub {
 /// Remove a conexão do hub em qualquer saída do loop.
 struct Reg(ConnId);
 impl Drop for Reg { fn drop(&mut self) { let mut h = hub(); h.conns.remove(&self.0); h.s.disconnect(self.0, now_ms()); } }
-struct Live { conn: ConnId, pk: Pk, paused: bool, bg: bool, tokens: f64, refill: Instant, last_rx: Instant, ping: u64, _reg: Reg }
+struct Live { conn: ConnId, pk: Pk, paused: bool, bg: bool, tokens: f64, refill: Instant, last_rx: Instant, ping: u64, awaiting: bool, _reg: Reg }
 /// `a=max-message-size` do SDP remoto; ausente = 65536 (RFC 8841 §6.1).
 fn remote_max_message(sdp: &str) -> u64 {
     sdp.lines().find_map(|l| l.trim().strip_prefix("a=max-message-size:")).and_then(|v| v.trim().parse().ok()).unwrap_or(65536)
@@ -173,7 +169,8 @@ async fn c3_message(ch: &Arc<dyn DataChannel>, id: &str, host: &Host, l: &mut Li
             let mut h = hub();
             let r = match &f.op {
                 // Eco do ping do cliente; o eco do nosso ping só renova `last_rx`.
-                Op::Heartbeat => Ok((f.seq != l.ping).then(|| Out::Frame(f.clone()))),
+                Op::Heartbeat if l.awaiting && f.seq == l.ping => { l.awaiting = false; Ok(None) }
+                Op::Heartbeat => Ok(Some(Out::Frame(f.clone()))),
                 Op::Input(d) => h.s.input(l.conn, f.session_id, f.seq, d, now).map(|a| a.map(Out::Ctl)),
                 Op::Resize { cols, rows } => h.s.resize(l.conn, f.session_id, *cols, *rows).map(|_| None),
                 _ => Err(InvalidMessage),
@@ -295,6 +292,7 @@ async fn run(room: &str, id: &str, port: u16, host: Arc<Host>) -> Result<()> {
                     let l = live.as_mut().unwrap();
                     if l.last_rx.elapsed() >= Duration::from_secs(30) { return Err("heartbeat timeout".into()); }
                     l.ping += 1;
+                    l.awaiting = true;
                     let f = proto::Frame { session_id: [0; 16], seq: l.ping, op: Op::Heartbeat };
                     tokio::time::timeout(Duration::from_secs(2), channel.as_ref().unwrap().send(proto::encode_frame(&f)[..].into())).await??;
                     continue
@@ -345,7 +343,7 @@ async fn run(room: &str, id: &str, port: u16, host: Arc<Host>) -> Result<()> {
                                             let (tx, rx) = mpsc::unbounded_channel();
                                             hub().conns.insert(conn, tx);
                                             out_rx = Some(rx);
-                                            live = Some(Live { conn, pk, paused: false, bg: false, tokens: 100.0, refill: Instant::now(), last_rx: Instant::now(), ping: 0, _reg: Reg(conn) });
+                                            live = Some(Live { conn, pk, paused: false, bg: false, tokens: 100.0, refill: Instant::now(), last_rx: Instant::now(), ping: 0, awaiting: false, _reg: Reg(conn) });
                                             heartbeat.reset();
                                         }
                                         continue;
@@ -468,6 +466,10 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn text(data: &[u8], is_string: bool) -> Result<&str> {
+        if !is_string || data.len()>16384 { return Err("message limit/type".into()); }
+        Ok(std::str::from_utf8(data)?)
+    }
     #[tokio::test]
     async fn handler_overflow() {
         let (tx, mut rx) = mpsc::channel(260);
@@ -943,7 +945,7 @@ mod tests {
         assert!(types.contains(&"cwd_changed".into()), "cmd anuncia cwd null");
         l.dc.send_text(&ctl(json!({"type":"session_close","session_id":sid_s}))).await.unwrap();
         loop {
-            if let (false, b) = next_msg(&l.dc).await.unwrap() { if let Op::Exited(_) = proto::parse_frame(&b).unwrap().op { break; } }
+            if let (false, b) = next_msg(&l.dc).await.unwrap() && let Op::Exited(_) = proto::parse_frame(&b).unwrap().op { break; }
         }
         { let h = hub(); assert!(h.s.size(&sid).is_none() && !h.screens.contains_key(&sid) && !h.plain.contains(&sid), "close libera a vaga e a tela"); }
         finish(pc, l).await;
@@ -1029,7 +1031,7 @@ a=max-message-size:1024
         l.dc.send(input[..].into()).await.unwrap();
         let mut out = Vec::new();
         while String::from_utf8_lossy(&out).matches("n7-flow").count() < 20 {
-            if let (false, b) = next_msg(&l.dc).await.unwrap() { if let Op::Output(d) = proto::parse_frame(&b).unwrap().op { out.extend(d); } }
+            if let (false, b) = next_msg(&l.dc).await.unwrap() && let Op::Output(d) = proto::parse_frame(&b).unwrap().op { out.extend(d); }
         }
         let started = Instant::now();
         Host::with_store(SigningKey::from_bytes(&[0x60; 32]), path).unwrap().revoke(c_sk.verifying_key().to_bytes()).unwrap();
@@ -1048,6 +1050,10 @@ a=max-message-size:1024
         let (pc, l) = loopback(host.clone(), false).await.unwrap();
         authenticate(&l, l.b.clone(), Some(otk), SigningKey::from_bytes(&[12; 32]), host.pk()).await.unwrap();
         let started = Instant::now();
+        // Ping do cliente com id 0, antes de qualquer ping do host, volta igual.
+        let ping = proto::encode_frame(&proto::Frame { session_id: [0; 16], seq: 0, op: Op::Heartbeat });
+        l.dc.send(ping[..].into()).await.unwrap();
+        assert_eq!(next_msg(&l.dc).await.unwrap(), (false, ping.to_vec()));
         let Loopback { host: h, keep, .. } = l;
         assert_eq!(host_error(h, 45).await, "heartbeat timeout");
         assert!(started.elapsed() >= Duration::from_secs(29), "fechou cedo: {:?}", started.elapsed());
