@@ -114,7 +114,11 @@ th { color:var(--text-muted); font-weight:600; }
 .dot-warn { color:var(--warn); }
 .dot-err { color:var(--danger); }
 .term-main { display:flex; flex-direction:column; min-width:0; min-height:0; }
-.term-tabs { min-height:41px; overflow-x:auto; }
+.term-tabs { min-height:41px; overflow-x:auto; flex:1; min-width:0; }
+.term-bar { display:flex; align-items:center; }
+.term-tools { display:flex; gap:2px; padding:0 6px; flex-shrink:0; }
+.term-tools button { padding:4px 8px; }
+.menu { max-height:calc(100vh - 8px); overflow-y:auto; }
 .term-tabs [role=tab] { display:flex; gap:6px; align-items:center; white-space:nowrap; }
 .term-tabs [role=tab] .x { color:var(--text-muted); font-size:.75rem; padding:0 4px; border-radius:4px; }
 .term-tabs [role=tab] .x:hover { background:var(--surface-2); color:var(--text); }
@@ -175,6 +179,7 @@ select { font:inherit; padding:6px 10px; border-radius:var(--radius); border:1px
 /* F2 */
 .terminal { font-size:13.6px; }
 .terminal.ctrl { cursor:pointer; }
+.terminal[contenteditable] { caret-color:transparent; outline:0; }
 ::highlight(find) { background:#6b5a00; color:#fff; }
 ::highlight(find-cur) { background:#f0c000; color:#000; }
 .find-bar { position:absolute; top:6px; right:16px; z-index:1; display:flex; gap:4px; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:4px 6px; }

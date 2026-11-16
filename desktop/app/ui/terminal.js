@@ -398,9 +398,9 @@ function menu(anchor, items) {
     return b;
   }));
   const r = anchor.getBoundingClientRect();
-  m.style.left = Math.min(r.left, innerWidth - 200) + "px";
-  m.style.top = Math.min(r.bottom, innerHeight - 40 * items.length - 8) + "px";
   m.hidden = false;
+  m.style.left = Math.max(0, Math.min(r.left, innerWidth - m.offsetWidth - 4)) + "px";
+  m.style.top = Math.max(0, Math.min(r.bottom, innerHeight - m.offsetHeight - 4)) + "px";
   menuOpener = anchor;
   (m.querySelector("button") || m).focus();
 }
@@ -625,6 +625,16 @@ const termKey = (e) => {
 };
 $("screen").addEventListener("keydown", termKey);
 $("screen2").addEventListener("keydown", termKey);
+// Campo editável para o Windows achar caixa de texto (ditado Win+H, teclado de toque). DOM nunca muda: texto vira input do PTY.
+for (const s of [$("screen"), $("screen2")]) {
+  s.contentEditable = "true";
+  s.spellcheck = false;
+  s.addEventListener("beforeinput", (e) => {
+    e.preventDefault();
+    if (e.inputType.startsWith("insert") && e.data) send(e.data);
+    else if (e.inputType === "deleteContentBackward") send("\x7f");
+  });
+}
 
 document.addEventListener("keydown", (e) => {
   const k = e.key.length === 1 ? e.key.toUpperCase() : e.key;
@@ -722,14 +732,20 @@ function ctxMenu(x, y) {
   const at = { getBoundingClientRect: () => ({ left: x, bottom: y }), focus: () => $("screen").focus() };
   menu(at, [
     ["Copiar   Ctrl+C", hasSel() ? copySel : null], ["Colar   Ctrl+V", paste], ["Selecionar tudo", selectAll], ["Buscar   Ctrl+F", openFind],
-    ["Nova sessão   Ctrl+Shift+T", action("new")], ["Renomear aba", action("rename")], ["Fechar aba   Ctrl+Shift+W", action("close")],
+    ["Nova sessão   Ctrl+Shift+T", action("new")], ["Nova sessão nesta pasta", action("new-here")], ["Reabrir aba fechada   Ctrl+Alt+T", reopen],["Renomear aba", action("rename")], ["Fechar aba   Ctrl+Shift+W", action("close")],
     ["Exportar saída", action("export")], ["Dividir painel", action("split")], ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
     ["Aumentar fonte   Ctrl+=", () => zoom(1)], ["Diminuir fonte   Ctrl+-", () => zoom(-1)], ["Redefinir fonte   Ctrl+0", () => zoom(0)],
     // ponytail: Ctrl+L limpa em pwsh/bash; cmd ignora. Trocar por comando no Rust (limpar buffer vt100) se precisar.
-    ["Limpar", () => { send("\x0c"); $("screen").focus(); }],
+    ["Limpar", () => { send("\x0c"); $("screen").focus(); }], ["Atalhos e ajuda   F1", () => help()],
   ].filter(([, fn]) => fn));
 }
 $("screen").oncontextmenu = (e) => { e.preventDefault(); ctxMenu(e.clientX, e.clientY); };
+$("tb-menu").onclick = () => { const r = $("tb-menu").getBoundingClientRect(); ctxMenu(r.right - 220, r.bottom); };
+$("tb-new").onclick = action("new");
+$("tb-find").onclick = () => openFind();
+$("tb-split").onclick = action("split");
+$("tb-pal").onclick = action("palette");
+$("tb-help").onclick = () => help();
 
 // Fonte: Ctrl+roda, Ctrl+=/-/0; salva no localStorage e recalcula cols/rows.
 const FONT0 = 13.6;

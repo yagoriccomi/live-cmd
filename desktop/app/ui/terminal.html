@@ -19,7 +19,17 @@
     <button type="button" class="add" id="remote-add">+ Adicionar PC</button>
   </nav>
   <main class="term-main">
-    <div class="term-tabs" role="tablist" aria-label="Terminais abertos" id="tabs"></div>
+    <div class="term-bar">
+      <div class="term-tabs" role="tablist" aria-label="Terminais abertos" id="tabs"></div>
+      <div class="term-tools" role="toolbar" aria-label="Ações do terminal">
+        <button type="button" id="tb-new" title="Nova sessão (Ctrl+Shift+T)" aria-label="Nova sessão">+</button>
+        <button type="button" id="tb-find" title="Buscar (Ctrl+F)" aria-label="Buscar">Buscar</button>
+        <button type="button" id="tb-split" title="Dividir painel" aria-label="Dividir painel">Dividir</button>
+        <button type="button" id="tb-pal" title="Paleta de comandos" aria-label="Paleta de comandos">Paleta</button>
+        <button type="button" id="tb-help" title="Ajuda (F1)" aria-label="Ajuda">?</button>
+        <button type="button" id="tb-menu" title="Todas as ações" aria-label="Menu" aria-haspopup="menu">☰ Menu</button>
+      </div>
+    </div>
     <div class="status-banner" role="status" id="upd-banner" hidden><span id="upd-t"></span><span class="inline"><button type="button" id="upd-go">Atualizar agora</button><button type="button" id="upd-x" aria-label="Dispensar">×</button></span></div>
     <div class="status-banner" role="status" id="banner" hidden><span id="banner-t"></span><span class="inline" id="banner-a"></span></div>
     <div class="term-area">
