@@ -70,8 +70,10 @@ async fn remote_fingerprint(pc: &impl PeerConnection) -> Result<[u8; 32]> {
 fn peer(cert: RTCCertificate) -> PeerConnectionBuilder<&'static str> {
     // Acima de PAUSE o envio de saída já para (C3 §6); o limite só evita `send` bloqueante no loop.
     PeerConnectionBuilder::new()
-        .with_configuration(RTCConfigurationBuilder::new().with_certificates(vec![cert]).build())
-        .with_udp_addrs(vec!["127.0.0.1:0"]).with_data_channel_send_buffer_limit(PAUSE + (1 << 20))
+        // ponytail: só STUN; NAT simétrico precisa de TURN (relay), adicionar quando aparecer.
+        .with_configuration(RTCConfigurationBuilder::new().with_certificates(vec![cert])
+            .with_ice_servers(vec![RTCIceServer { urls: vec!["stun:stun.cloudflare.com:3478".to_owned(), "stun:stun.l.google.com:19302".to_owned()], ..Default::default() }]).build())
+        .with_udp_addrs(vec!["0.0.0.0:0", "127.0.0.1:0"]).with_data_channel_send_buffer_limit(PAUSE + (1 << 20))
 }
 
 // ---- D3c: pty-channel após AUTHENTICATED (C3) ----
