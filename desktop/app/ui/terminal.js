@@ -252,6 +252,7 @@ function activate(key, focus = true) {
   draw(key);
   if (t?.split) draw(t.split.key, $("screen2"));
   updateBanner();
+  applyFont();
   resizeActive();
   if (focus) $("screen").focus();
 }
@@ -322,6 +323,19 @@ async function refreshRemotes() {
   renderSidebar();
 }
 
+// Item 14: latência e tipo de rota de cada PC conectado, a cada 5 s.
+setInterval(async () => {
+  let changed = false;
+  for (const id of remoteOrder) {
+    const c = conns[id];
+    if (c?.status.state !== "ready") continue;
+    const s = await invoke("term_conn_stats", { conn: id }).catch(() => null);
+    const q = s?.rtt_ms == null ? null : `${s.rtt_ms} ms` + (s.relay == null ? "" : s.relay ? " · relay" : " · direta");
+    if (q !== c.q) { c.q = q; changed = true; }
+  }
+  if (changed) renderSidebar();
+}, 5000);
+
 function sessionItem(conn, s) {
   const li = el("li"), b = el("button");
   b.type = "button";
@@ -356,8 +370,8 @@ function renderSidebar() {
     d.setAttribute("aria-label", label);
     const name = el("span", null, c.name);
     name.ondblclick = (e) => { e.stopPropagation(); renamePc(id, name); };
-    // Item 14: estado por extenso. ponytail: sem latência (C3 não expõe ping); mostrar quando o backend medir RTT.
-    const q = el("span", "muted small conn-q", st === "connecting" ? (c.status.attempt ? `reconectando (tentativa ${c.status.attempt + 1})` : "conectando…") : label);
+    // Item 14: estado por extenso; conectado mostra latência medida (pollStats).
+    const q = el("span", "muted small conn-q", st === "connecting" ? (c.status.attempt ? `reconectando (tentativa ${c.status.attempt + 1})` : "conectando…") : st === "ready" && c.q ? c.q : label);
     b.append(pcMark(id), d, name, q);
     b.setAttribute("aria-expanded", String(st === "ready"));
     b.onclick = () => st === "ready" ? refresh(id) : connectRemote(id);
@@ -713,13 +727,10 @@ const action = (name) => () => document.dispatchEvent(new CustomEvent("term-acti
 function screenKey(e) {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key, plain = e.ctrlKey && !e.shiftKey && !e.altKey;
   let done = true;
+  const hit = Object.keys(SHORTCUTS).find((a) => keyName(e) === binds[a]);
   if (plain && k === "c" && hasSel()) copySel();
-  else if (plain && k === "v") paste();
-  else if (plain && k === "f") openFind();
-  else if (plain && (k === "=" || k === "+")) zoom(1);
-  else if (plain && k === "-") zoom(-1);
-  else if (plain && k === "0") zoom(0);
-  else if (!e.ctrlKey && !e.altKey && !e.shiftKey && k === "F1") help();
+  else if (plain && k === "+") zoom(1);
+  else if (hit) SHORTCUTS[hit][1]();
   else if (k === "ContextMenu" || (e.shiftKey && k === "F10")) { const r = $("screen").getBoundingClientRect(); ctxMenu(r.left + 20, r.top + 20); }
   else done = false;
   if (done) { e.preventDefault(); e.stopPropagation(); }
@@ -734,11 +745,22 @@ function ctxMenu(x, y) {
     ["Nova sessão   Ctrl+Shift+T", action("new")], ["Nova sessão nesta pasta", action("new-here")], ["Reabrir aba fechada   Ctrl+Alt+T", reopen],["Renomear aba", action("rename")], ["Fechar aba   Ctrl+Shift+W", action("close")],
     ["Exportar saída", action("export")], ["Dividir painel", action("split")], ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
     ["Aumentar fonte   Ctrl+=", () => zoom(1)], ["Diminuir fonte   Ctrl+-", () => zoom(-1)], ["Redefinir fonte   Ctrl+0", () => zoom(0)],
-    // ponytail: Ctrl+L limpa em pwsh/bash; cmd ignora. Trocar por comando no Rust (limpar buffer vt100) se precisar.
-    ["Limpar", () => { send("\x0c"); $("screen").focus(); }], ["Atalhos e ajuda   F1", () => help()],
+    ["Limpar", clearTab], ["Atalhos e ajuda   F1", () => help()],
   ].filter(([, fn]) => fn));
 }
-$("screen").oncontextmenu = (e) => { e.preventDefault(); ctxMenu(e.clientX, e.clientY); };
+// Limpa o buffer vt100 no app (vale em cmd) e manda Ctrl+L para o shell redesenhar o prompt.
+function clearTab() {
+  const t = curTab();
+  if (t) invoke("term_clear", { conn: t.conn, sessionId: t.sid }).then(() => { send("\x0c"); draw(t.key); }).catch((err) => banner(msg(err), "err"));
+  $("screen").focus();
+}
+// Botão direito: copia se há seleção, senão cola (como no Windows Terminal). Shift+botão direito abre o menu.
+$("screen").oncontextmenu = (e) => {
+  e.preventDefault();
+  if (e.shiftKey) ctxMenu(e.clientX, e.clientY);
+  else if (hasSel()) copySel();
+  else paste();
+};
 $("tb-menu").onclick = () => { const r = $("tb-menu").getBoundingClientRect(); ctxMenu(r.right - 220, r.bottom); };
 $("tb-new").onclick = action("new");
 $("tb-find").onclick = () => openFind();
@@ -746,16 +768,22 @@ $("tb-split").onclick = action("split");
 $("tb-pal").onclick = action("palette");
 $("tb-help").onclick = () => help();
 
-// Fonte: Ctrl+roda, Ctrl+=/-/0; salva no localStorage e recalcula cols/rows.
+// Fonte: Ctrl+roda, Ctrl+=/-/0; salva por PC no localStorage e recalcula cols/rows.
 const FONT0 = 13.6;
-let font = +localStorage.getItem("term-font") || FONT0;
-function zoom(d) {
-  font = d ? Math.max(8, Math.min(32, font + d)) : FONT0;
-  localStorage.setItem("term-font", font);
-  $("screen").style.fontSize = font + "px";
+const fontKey = () => "term-font:" + (curTab()?.conn ?? LOCAL);
+let font = FONT0;
+function applyFont() {
+  const f = +localStorage.getItem(fontKey()) || +localStorage.getItem("term-font") || FONT0;
+  if (f === font && $("screen").style.fontSize) return;
+  font = f;
+  $("screen").style.fontSize = $("screen2").style.fontSize = font + "px";
   fit();
 }
-$("screen").style.fontSize = font + "px";
+function zoom(d) {
+  localStorage.setItem(fontKey(), d ? Math.max(8, Math.min(32, font + d)) : FONT0);
+  applyFont();
+}
+$("screen").style.fontSize = $("screen2").style.fontSize = font + "px";
 
 // Busca (Ctrl+F) nas linhas desenhadas, com CSS Highlight; no fim da tela rola o histórico (term_scroll).
 let findQ = "", findI = 0, findDir = 0, findHits = [];
@@ -821,6 +849,7 @@ $("screen").addEventListener("click", (e) => {
 $("screen").addEventListener("mousemove", (e) => $("screen").classList.toggle("ctrl", e.ctrlKey));
 
 // Arrastar arquivo(s) para a janela: cola o(s) caminho(s) entre aspas.
+// ponytail: em sessão remota o caminho é deste PC; o app não tem canal de arquivos (C4 só no cliente). Enviar o arquivo quando o app expuser a transferência.
 window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(({ payload }) => {
   if (payload.type !== "drop" || !payload.paths?.length) return;
   send(payload.paths.map((p) => `"${p}"`).join(" "));
@@ -832,10 +861,33 @@ const KEYS = [["Ctrl+C", "Copiar seleção (sem seleção: interrompe, ^C)"], ["
   ["Ctrl+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba"],
   ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
   ["Ctrl+= / Ctrl+- / Ctrl+0", "Aumentar / diminuir / redefinir fonte"], ["Ctrl+roda do mouse", "Zoom da fonte"], ["Roda do mouse", "Rolar histórico"],
-  ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito / Shift+F10", "Menu do terminal"], ["Arrastar arquivo", "Cola o caminho"], ["F1", "Esta ajuda"]];
+  ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito", "Colar (com seleção: copiar)"], ["Shift+botão direito / Shift+F10 / ☰", "Menu do terminal"], ["Arrastar arquivo", "Cola o caminho"]];
+// Atalhos remapeáveis: ação fixa, tecla editável no F1 (clique na tecla e pressione a nova). Salvos no localStorage.
+const SHORTCUTS = {
+  paste: ["Colar", () => paste(), "Ctrl+V"], find: ["Buscar", () => openFind(), "Ctrl+F"], clear: ["Limpar", () => clearTab(), "Ctrl+Shift+K"],
+  zin: ["Aumentar fonte", () => zoom(1), "Ctrl+="], zout: ["Diminuir fonte", () => zoom(-1), "Ctrl+-"], z0: ["Redefinir fonte", () => zoom(0), "Ctrl+0"],
+  help: ["Esta ajuda", () => help(), "F1"],
+};
+const binds = { ...Object.fromEntries(Object.entries(SHORTCUTS).map(([a, s]) => [a, s[2]])), ...JSON.parse(localStorage.getItem("term-keys") || "{}") };
+function keyName(e) {
+  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
+  return [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
+}
 function help() {
   const opener = document.activeElement;
-  $("help-list").replaceChildren(...KEYS.flatMap(([k, d]) => [el("dt", "mono", k), el("dd", null, d)]));
+  const rows = Object.entries(SHORTCUTS).flatMap(([a, [d]]) => {
+    const b = el("button", "mono", binds[a]);
+    b.type = "button"; b.title = "Clique e pressione a nova tecla";
+    b.onclick = () => { b.textContent = "…"; b.onkeydown = (e) => {
+      const n = keyName(e);
+      if (!n) return;
+      e.preventDefault(); e.stopPropagation();
+      if (n !== "Escape") { binds[a] = n; localStorage.setItem("term-keys", JSON.stringify(binds)); }
+      b.textContent = binds[a]; b.onkeydown = null;
+    }; };
+    return [el("dt", null, b), el("dd", null, d)];
+  });
+  $("help-list").replaceChildren(...rows, ...KEYS.flatMap(([k, d]) => [el("dt", "mono", k), el("dd", null, d)]));
   $("help-scrim").hidden = false;
   const end = () => { $("help-scrim").hidden = true; opener?.focus(); };
   $("help-ok").onclick = end;
