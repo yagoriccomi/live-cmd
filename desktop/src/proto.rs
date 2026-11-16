@@ -71,6 +71,7 @@ pub enum Req {
     Detach([u8; 16]),
     Close([u8; 16]),
     Focus(Focus),
+    Rename { session_id: [u8; 16], label: String },
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Control {
@@ -118,6 +119,12 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
         "session_close" => { fields(&["session_id"], &[])?; Req::Close(sid("session_id")?) }
         "client_focus" => {
             fields(&["state"], &[])?;
+        "session_rename" => {
+            fields(&["session_id", "label"], &[])?;
+            let label = s("label")?;
+            if label.chars().count() > 64 { return Err(InvalidMessage); }
+            Req::Rename { session_id: sid("session_id")?, label: label.into() }
+        }
             Req::Focus(match s("state")? { "foreground" => Focus::Foreground, "background" => Focus::Background, _ => return Err(InvalidMessage) })
         }
         _ => return Err(InvalidMessage),
@@ -355,6 +362,9 @@ mod tests {
         assert_eq!(uuid_str(&sid()), SID);
         let m: Value = serde_json::from_str(&encode_control(CID, Some(RID), json!({"type":"replay_end","session_id":SID,"offset":u64s(u64::MAX)}))).unwrap();
         assert_eq!(m, json!({"v":1,"connection_id":CID,"request_id":RID,"type":"replay_end","session_id":SID,"offset":"18446744073709551615"}));
+        let rn = |l: &str| parse_control(&json!({"v":1,"type":"session_rename","connection_id":CID,"request_id":RID,"session_id":SID,"label":l}).to_string(), CID);
+        assert!(matches!(rn(&"é".repeat(64)), Ok(Control::Request { req: Req::Rename { .. }, .. })));
+        assert!(matches!(rn(&"é".repeat(65)), Err(InvalidMessage)));
         assert_eq!(error(NotFound), json!({"type":"error","code":"NOT_FOUND"}));
     }
 }

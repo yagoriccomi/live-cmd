@@ -155,6 +155,7 @@ impl Hub {
             Req::Detach(sid) => self.s.detach(conn, sid, now)?,
             Req::Close(sid) => { let ok = self.s.close(sid)?; self.forget(&[sid]); ok }
             Req::Focus(_) => unreachable!("tratado na conexão"),
+            Req::Rename { session_id, label } => self.s.rename(session_id, label)?,
         })
     }
 }

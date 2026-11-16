@@ -185,6 +185,12 @@ impl Sessions {
         Ok(json!({"type":"session_detach_ok"}))
     }
 
+    /// `session_rename`: rótulo só em memória, como o do `session_create`.
+    pub fn rename(&mut self, sid: Sid, label: String) -> R<Value> {
+        self.s.get_mut(&sid).ok_or(NotFound)?.label = Some(label);
+        Ok(json!({"type":"session_rename_ok"}))
+    }
+
     /// `session_close`: encerra o processo; `session_exited`/`05` seguem por `on_exit`.
     pub fn close(&mut self, sid: Sid) -> R<Value> {
         let x = self.s.get_mut(&sid).ok_or(NotFound)?;
@@ -492,6 +498,14 @@ mod tests {
         assert!(t.on_output(sid, b"o", 0).iter().all(|(c, _)| *c == 2));
         assert_eq!(t.list()[0]["attached_count"], 1);
         assert!(!log.lock().unwrap().killed, "sessão continua viva");
+    }
+
+    #[test]
+    fn rename_aparece_na_lista() {
+        let (mut t, sid, _) = new();
+        assert_eq!(t.rename(sid, "x".into()).unwrap()["type"], "session_rename_ok");
+        assert_eq!(t.list()[0]["label"], "x");
+        assert!(t.rename([9; 16], "y".into()).is_err());
     }
 
     #[test]
