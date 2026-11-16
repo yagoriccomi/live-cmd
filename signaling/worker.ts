@@ -9,20 +9,24 @@ export function admitIp(ip: string, now = Date.now()): boolean {
   return ++entry.count <= MAX_CONNECTIONS_PER_IP;
 }
 // ROOM_ID: the one local host room (SPEC-C1-presenca); each client hello brings its own connection_id.
-type Env = { ROOM: DurableObjectNamespace; ROOM_ID: string };
+// PUBLIC=1 (deployed): any v4 room; the room id comes from the QR/code and is not authorization (C2 authenticates end to end).
+type Env = { ROOM: DurableObjectNamespace; ROOM_ID: string; PUBLIC?: string };
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return new Response('Local only', { status: 403 });
-    if (!env.ROOM_ID || !UUID.test(env.ROOM_ID)) return new Response('Local configuration required', { status: 503 });
+    const open = env.PUBLIC === '1';
+    if (!open && !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return new Response('Local only', { status: 403 });
+    // ROOM_ID: one host room, or a comma-separated list (several local hosts, e.g. PC-to-PC test).
+    const rooms = (env.ROOM_ID ?? '').split(',').map((r) => r.trim());
+    if (!open && !rooms.every((r) => UUID.test(r))) return new Response('Local configuration required', { status: 503 });
     // Never log request URLs or bodies: only room_id (session) and C1 envelopes may reach the Worker (C2 §1).
     const roomId = url.pathname.startsWith('/v1/ws/') ? url.pathname.slice(7) : '';
-    if (!ROOM_UUID.test(roomId) || roomId !== env.ROOM_ID || url.search) return new Response('Not found', { status: 404 });
+    if (!ROOM_UUID.test(roomId) || (!open && !rooms.includes(roomId)) || url.search) return new Response('Not found', { status: 404 });
     if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('WebSocket required', { status: 426 });
     // No browser access: local CLI peers only, not authentication.
     if (request.headers.has('Origin')) return new Response('Origin denied', { status: 403 });
     if (!admitIp(request.headers.get('CF-Connecting-IP') ?? 'local')) return new Response('Too many connections', { status: 429 });
-    return env.ROOM.get(env.ROOM.idFromName(env.ROOM_ID)).fetch(request);
+    return env.ROOM.get(env.ROOM.idFromName(roomId)).fetch(request);
   }
 };
 // Reusable: no consumed marker. Room id is not authorization; C2 authenticates end to end (SPEC-C1-presenca §5).

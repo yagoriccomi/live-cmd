@@ -236,6 +236,10 @@ test('worker keeps local-only checks before the Durable Object', async () => {
   connectionsByIp.clear();
   assert.notEqual((await worker.fetch(new Request(`http://localhost/v1/ws/${id}`, ws), env(id))).status, 404);
   assert.equal(reached, 1);
+  const other = crypto.randomUUID();
+  assert.notEqual((await worker.fetch(new Request(`http://localhost/v1/ws/${other}`, ws), env(`${id}, ${other}`))).status, 404, 'room list');
+  assert.equal((await worker.fetch(new Request(`http://localhost/v1/ws/${id}`, ws), env(`${id},bad`))).status, 503);
+  connectionsByIp.clear();
 });
 test('per-IP connection limit with window reset', () => {
   connectionsByIp.clear();

@@ -399,6 +399,6 @@ mod tests {
 
     #[test]
     fn allowlist_sem_esquema() {
-        assert_eq!(allowlist("wss://sig.example.com/x"), vec!["sig.example.com", "127.0.0.1:8787"]);
+        assert_eq!(allowlist("wss://sig.example.com/x"), vec!["sig.example.com", "live-cmd-signaling.yago-riccomi-s.workers.dev"]);
     }
 }

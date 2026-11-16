@@ -7,5 +7,13 @@
   "preview_urls": false,
   "dev": { "ip": "127.0.0.1", "port": 8787, "local_protocol": "http" },
   "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "SignalingRoom" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SignalingRoom"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SignalingRoom"] }],
+  "env": {
+    "public": {
+      "name": "live-cmd-signaling",
+      "workers_dev": true,
+      "vars": { "PUBLIC": "1" },
+      "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "SignalingRoom" }] }
+    }
+  }
 }

@@ -3,8 +3,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Sinalização local (`wrangler dev`) até haver deploy.
-pub const DEFAULT_SERVER: &str = "ws://127.0.0.1:8787";
+/// Worker publicado (`wrangler deploy --env public`).
+pub const DEFAULT_SERVER: &str = "wss://live-cmd-signaling.yago-riccomi-s.workers.dev";
+/// Padrão anterior (`wrangler dev`): instalações que só o herdaram migram para o novo.
+const OLD_DEFAULT: &str = "ws://127.0.0.1:8787";
 const FILE: &str = "app.json";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -20,7 +22,7 @@ pub fn data_dir() -> Result<PathBuf, String> {
 /// Lê `app.json`; sem arquivo (ou ilegível), cria um com o servidor padrão. A sala é a do host (`room.txt`).
 pub fn load(dir: &Path) -> Result<Settings, String> {
     if let Some(s) = std::fs::read(dir.join(FILE)).ok().and_then(|t| serde_json::from_slice::<Settings>(&t).ok())
-        && valid_server(&s.server) { return Ok(s); }
+        && valid_server(&s.server) && s.server != OLD_DEFAULT { return Ok(s); }
     let s = Settings { server: DEFAULT_SERVER.into() };
     save(dir, &s)?;
     Ok(s)
