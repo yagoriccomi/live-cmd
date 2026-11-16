@@ -10,7 +10,7 @@ Origem: auditoria de 2026-11-16 (10 feitos, 9 parciais, 1 falta, 2 decisões div
 | D4 | Nome da sessão persistido em disco no host | G1 | rodando |
 | 3 | Zoom de fonte salvo por PC | G3 | rodando |
 | 8/9/17/18 | cmd: OSC 133/7 via `PROMPT` ($E) → atividade, fim de comando, cwd, confirmar fechar | G1 | rodando |
-| 10 | Arrastar arquivo para sessão remota: envia o arquivo ao outro PC (local: cola caminho) | G3 | rodando |
+| 10 | Arrastar arquivo para sessão remota: envia o arquivo ao outro PC (local: cola caminho) | G3 | parcial: cola caminho. Cliente desktop (`desktop/src/client.rs`) só abre `pty-channel`; upload C4 exige `file-channel` + `file_upload_init` + frags com backpressure no cliente. Fica para v0.1.5 |
 | 11 | Histórico de rolagem configurável na tela | G2 | rodando |
 | 12 | Exportar para `.txt` (Salvar como) e linhas quebradas unidas | G2 | rodando |
 | 14 | Qualidade da conexão: latência + direta/relay na lateral | G2 (Rust) + G3 (UI) | rodando |
