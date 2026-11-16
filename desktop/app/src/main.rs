@@ -134,6 +134,7 @@ fn get_settings(app: State<App>) -> Value {
     json!({
         "autostart": autostart::is_enabled(autostart::RUN_KEY),
         "server": app.settings.lock().unwrap().server,
+        "scrollback": app.settings.lock().unwrap().scrollback(),
         "profiles": profiles, "profiles_error_line": profiles_error_line,
         "version": env!("CARGO_PKG_VERSION"),
     })
@@ -173,10 +174,26 @@ fn get_profiles(app: State<App>) -> Value {
     json!({ "profiles": list, "shells": shells })
 }
 
-/// Grava `profiles.json`; o host relê ao reiniciar o app.
+/// Grava `profiles.json` e reinicia o host para relê-lo; sessões abertas continuam (ficam no hub).
+/// ponytail: o reinício derruba por instantes os outros PCs (reconectam sozinhos); trocar por recarga só dos perfis no host.
 #[tauri::command]
 fn save_profiles(app: State<App>, profiles: Vec<settings::Profile>) -> Result<Vec<settings::Profile>, String> {
-    settings::save_profiles(&app.data_dir, profiles)
+    let saved = settings::save_profiles(&app.data_dir, profiles)?;
+    let server = app.settings.lock().unwrap().server.clone();
+    let mut svc = app.svc.lock().unwrap();
+    svc.stop();
+    *svc = Service::start(host::Config { data_dir: app.data_dir.clone(), server, room: host::room_id(&app.data_dir)? })?;
+    Ok(saved)
+}
+
+/// Linhas de histórico por aba (100–100000); vale para abas novas.
+#[tauri::command]
+fn set_scrollback(app: State<App>, lines: usize) -> Result<(), String> {
+    let mut s = app.settings.lock().unwrap();
+    let new = settings::Settings { server: s.server.clone(), scrollback: Some(lines.clamp(100, 100_000)) };
+    settings::save(&app.data_dir, &new)?;
+    *s = new;
+    Ok(())
 }
 
 /// Abre a pasta de dados (perfis, trust store e, no futuro, logs) no Explorer.
@@ -298,13 +315,14 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_window(app, "devices")))
-        .invoke_handler(tauri::generate_handler![status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, get_profiles, save_profiles, check_update, install_update,
+        .invoke_handler(tauri::generate_handler![status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, get_profiles, save_profiles, set_scrollback, check_update, install_update,
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove,
-            term::term_export, term::term_busy, term::term_rename, term::remote_rename])
+            term::term_export, term::term_export_file, term::term_clear, term::term_conn_stats, term::term_busy, term::term_rename, term::remote_rename])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;

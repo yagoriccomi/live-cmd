@@ -184,6 +184,7 @@ async function loadSettings() {
   const s = await invoke("get_settings");
   $("autostart").checked = s.autostart;
   $("srv").value = s.server;
+  $("sb").value = s.scrollback;
   srvCheck();
   $("ver").textContent = s.version;
   $("prof-err").hidden = s.profiles_error_line == null;
@@ -226,8 +227,17 @@ $("prof-save").onclick = async () => {
     const saved = await invoke("save_profiles", { profiles });
     $("prof-body").replaceChildren(...saved.map(profRow));
     $("prof-default").hidden = true; $("prof-err").hidden = true;
-    $("prof-msg").textContent = "Perfis salvos. Valem após reiniciar o app.";
+    $("prof-msg").textContent = "Perfis salvos. Valem para os próximos terminais.";
   } catch { $("prof-e").hidden = false; }
+};
+
+$("sb-save").onclick = async () => {
+  const n = Number($("sb").value);
+  const ok = Number.isInteger(n) && n >= 100 && n <= 100000;
+  $("sb").setAttribute("aria-invalid", !ok); $("sb-e").hidden = ok; $("sb-msg").textContent = "";
+  if (!ok) return $("sb").focus();
+  try { await invoke("set_scrollback", { lines: n }); $("sb-msg").textContent = "Salvo. Vale para as próximas abas."; }
+  catch { $("sb-e").hidden = false; }
 };
 
 $("autostart").onchange = async (e) => {

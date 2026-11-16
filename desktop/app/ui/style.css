@@ -46,7 +46,7 @@ button:disabled { opacity:.5; cursor:default; }
 .btn-link:hover { background:none; }
 .actions { display:flex; gap:var(--space); justify-content:flex-end; margin-top:calc(var(--space)*2); }
 .actions.center { justify-content:center; margin-bottom:var(--space); }
-input[type=url] { font:inherit; width:100%; padding:6px 10px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--text); user-select:text; }
+input[type=url], input[type=number] { font:inherit; width:100%; padding:6px 10px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--text); user-select:text; }
 input.mono { font-family:var(--font-mono); }
 input[aria-invalid=true] { border-color:var(--danger); }
 label { display:block; margin-bottom:4px; }
