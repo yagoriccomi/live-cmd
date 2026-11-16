@@ -180,6 +180,10 @@ fn on_event(app: &AppHandle, conn: &str, e: ClientEvent) {
             if let Some(v) = t.views.lock().unwrap().get_mut(&k) { v.osc = true; v.busy = false; }
             let _ = app.emit_to(WIN, "term-cmd-done", json!({ "key": k, "code": c["exit_code"] }));
         }
+        // F4: pasta atual (OSC 7 no host) para "Nova sessão aqui".
+        ClientEvent::Control(c) if c["type"] == "cwd_changed" => {
+            let _ = app.emit_to(WIN, "term-cwd", json!({ "key": key(conn, c["session_id"].as_str().unwrap_or_default()), "cwd": c["cwd"] }));
+        }
         ClientEvent::Control(_) => {}
         ClientEvent::Exited { session_id, code } => { let _ = app.emit_to(WIN, "term-exited", json!({ "key": key(conn, &session_id), "code": code })); }
         ClientEvent::Connecting { attempt } => set_state(app, conn, json!({ "state": "connecting", "attempt": attempt })),
@@ -257,9 +261,11 @@ pub fn term_list(app: AppHandle, conn: String) -> Result<Value, String> {
 }
 
 #[tauri::command(async)]
-pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: String, cols: u16, rows: u16) -> Result<String, String> {
+pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: String, cols: u16, rows: u16, cwd: Option<String>) -> Result<String, String> {
     let label: String = label.chars().take(64).collect();
-    let v = client(&app, &conn)?.request(json!({ "type": "session_create", "profile_id": profile_id, "label": label, "cols": cols, "rows": rows }))?;
+    let mut req = json!({ "type": "session_create", "profile_id": profile_id, "label": label, "cols": cols, "rows": rows });
+    if let Some(d) = cwd { req["cwd"] = d.into(); }
+    let v = client(&app, &conn)?.request(req)?;
     Ok(v["session_id"].as_str().unwrap_or_default().to_owned())
 }
 

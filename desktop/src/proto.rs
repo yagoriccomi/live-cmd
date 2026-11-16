@@ -65,7 +65,8 @@ pub fn parse_u64(v: &Value) -> R<u64> {
 pub enum Focus { Foreground, Background }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Req {
-    Create { profile_id: String, cols: u16, rows: u16, label: Option<String> },
+    /// `cwd`: pasta inicial opcional (precisa existir e ser diretório).
+    Create { profile_id: String, cols: u16, rows: u16, label: Option<String>, cwd: Option<String> },
     List,
     Attach { session_id: [u8; 16], from_offset: Option<u64>, size: Option<(u16, u16)> },
     Detach([u8; 16]),
@@ -102,10 +103,11 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
     }
     let req = match ty {
         "session_create" => {
-            fields(&["profile_id", "cols", "rows"], &["label"])?;
+            fields(&["profile_id", "cols", "rows"], &["label", "cwd"])?;
+            let cwd = o.get("cwd").map(|_| s("cwd").map(str::to_owned)).transpose()?;
             let label = o.get("label").map(|_| s("label").map(str::to_owned)).transpose()?;
             if label.as_ref().is_some_and(|l| l.chars().count() > 64) { return Err(InvalidMessage); }
-            Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label }
+            Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label, cwd }
         }
         "session_list" => { fields(&[], &[])?; Req::List }
         "session_attach" => {
@@ -360,6 +362,8 @@ mod tests {
         assert_eq!((from_offset, size, request_id.as_str()), (Some(u64::MAX), Some((120, 40)), RID));
         assert!(matches!(parse_control(&control_cases()[8].1, CID), Ok(Control::Error { request_id: None, code: LimitExceeded })));
         assert_eq!(uuid_str(&sid()), SID);
+        let t = json!({"v":1,"connection_id":CID,"request_id":RID,"type":"session_create","profile_id":"p","cols":80,"rows":24,"cwd":"C:/x"}).to_string();
+        assert!(matches!(parse_control(&t, CID), Ok(Control::Request { req: Req::Create { cwd: Some(c), .. }, .. }) if c == "C:/x"));
         let m: Value = serde_json::from_str(&encode_control(CID, Some(RID), json!({"type":"replay_end","session_id":SID,"offset":u64s(u64::MAX)}))).unwrap();
         assert_eq!(m, json!({"v":1,"connection_id":CID,"request_id":RID,"type":"replay_end","session_id":SID,"offset":"18446744073709551615"}));
         let rn = |l: &str| parse_control(&json!({"v":1,"type":"session_rename","connection_id":CID,"request_id":RID,"session_id":SID,"label":l}).to_string(), CID);
