@@ -18,9 +18,11 @@
   </nav>
   <main class="term-main">
     <div class="term-tabs" role="tablist" aria-label="Terminais abertos" id="tabs"></div>
+    <div class="status-banner" role="status" id="upd-banner" hidden><span id="upd-t"></span><span class="inline"><button type="button" id="upd-go">Atualizar agora</button><button type="button" id="upd-x" aria-label="Dispensar">×</button></span></div>
     <div class="status-banner" role="status" id="banner" hidden><span id="banner-t"></span><span class="inline" id="banner-a"></span></div>
     <div class="term-area">
       <div class="terminal" id="screen" tabindex="0" aria-label="Terminal" aria-roledescription="terminal"><span class="measure" id="measure" aria-hidden="true">WWWWWWWWWW</span></div>
+      <div class="terminal" id="screen2" tabindex="0" aria-label="Terminal dividido" aria-roledescription="terminal" hidden></div>
       <div class="term-empty" id="empty">
         <div><p>Nenhum terminal aberto. Escolha uma sessão à esquerda ou crie uma nova.</p>
         <div class="actions center"><button type="button" class="btn-primary" id="empty-new">Nova sessão</button></div></div>

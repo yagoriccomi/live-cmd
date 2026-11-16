@@ -137,3 +137,13 @@ th { color:var(--text-muted); font-weight:600; }
 .menu .muted { padding:6px 10px; margin:0; }
 input[type=text], input[type=password] { font:inherit; width:100%; padding:6px 10px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--text); user-select:text; }
 .gap { margin-top:calc(var(--space)*1.5); }
+
+/* F3 */
+.term-area.split #screen { right:50%; border-right:1px solid var(--border); }
+.term-area.split #screen2 { left:50%; }
+.terminal[hidden] { display:none; }
+.pc-mark { display:inline-block; width:8px; height:8px; border-radius:2px; flex:none; }
+.act { color:var(--warn); font-weight:700; }
+.conn-q { margin-left:auto; }
+input.rename { font:inherit; padding:0 4px; width:12em; }
+.term-tabs [role=tab][draggable=true] { cursor:grab; }
