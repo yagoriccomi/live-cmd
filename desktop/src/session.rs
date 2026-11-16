@@ -186,6 +186,8 @@ impl Sessions {
     }
 
     /// `session_rename`: rótulo só em memória, como o do `session_create`.
+    /// ponytail: sem disco de propósito; a sessão (ConPTY) morre com o host, então o rótulo não tem para quem voltar.
+    /// Persistir junto quando sessões sobreviverem ao reinício do host.
     pub fn rename(&mut self, sid: Sid, label: String) -> R<Value> {
         self.s.get_mut(&sid).ok_or(NotFound)?.label = Some(label);
         Ok(json!({"type":"session_rename_ok"}))

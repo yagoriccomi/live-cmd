@@ -10,6 +10,9 @@ use std::num::NonZeroU16;
 pub const PWSH_PROMPT: &str = r#"function prompt { $c = if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }; $e = [char]27; $a = [char]7; $o = ''; if ($global:__lc) { $o = "$e]133;D;$c$a" }; $global:__lc = 1; "$o$e]7;$(([uri]$PWD.ProviderPath).AbsoluteUri)$($a)PS $($PWD.ProviderPath)> " }"#;
 /// `PROMPT_COMMAND` do perfil WSL (bash). `$PWD` vai percent-encoded byte a byte (subshell com `LC_ALL=C`).
 pub const BASH_PROMPT_COMMAND: &str = r#"__lc=$?; [ -n "$__lc_s" ] && printf '\e]133;D;%s\a' "$__lc"; __lc_s=1; (LC_ALL=C; s=$PWD o=; for ((i=0;i<${#s};i++)); do c=${s:i:1}; case $c in [a-zA-Z0-9/._~-]) o+=$c;; *) printf -v c '%%%02X' "'$c"; o+=$c;; esac; done; printf '\e]7;file://%s%s\a' "$HOSTNAME" "$o")"#;
+/// Prompt do cmd (`prompt` aceita `$E` = ESC): fim do comando sem código de saída, pasta atual e o `C:\>` normal.
+/// ponytail: cmd não expõe %ERRORLEVEL% no prompt; `%` no caminho seria lido como percent-encoding.
+pub const CMD_PROMPT: &str = r"$E]133;D$E\$E]7;file://localhost/$P$E\$P$G";
 /// OSC maior que isto é descartado sem chegar ao parser (o `vte` com `std` acumula sem limite).
 pub const OSC_MAX: usize = 4096;
 /// Teto dos bytes do snapshot: base64 (×4/3) + envelope cabe em 65536 B (C3 §2).
@@ -423,6 +426,13 @@ mod tests {
             let ev = s.feed(m);
             if m == b"\x1b]7;file:///a%2\x07" { assert_eq!(ev, vec![Event::Cwd("/a%2".into())]); } else { assert!(ev.is_empty(), "{m:?}"); }
         }
+    }
+
+    #[test]
+    fn cmd_prompt_gera_eventos() {
+        let mut s = Screen::new(80, 24, true);
+        let out = CMD_PROMPT.replace("$E", "\x1b").replace("$P", r"C:\a b").replace("$G", ">");
+        assert_eq!(s.feed(out.as_bytes()), vec![Event::CommandCompleted(None), Event::Cwd(r"C:\a b".into())]);
     }
 
     #[test]

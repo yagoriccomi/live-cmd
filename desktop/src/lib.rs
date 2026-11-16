@@ -332,9 +332,14 @@ fn profiles(path: &std::path::Path) -> Result<Vec<(String, Profile)>> {
         ]);
     };
     let v: Value = serde_json::from_str(&t)?;
-    v.as_array().ok_or("profiles")?.iter().map(|p| Ok((p["profile_id"].as_str().ok_or("profile_id")?.into(), Profile {
+    v.as_array().ok_or("profiles")?.iter().map(|p| Ok((p["profile_id"].as_str().ok_or("profile_id")?.into(), with_cmd_prompt(Profile {
         label: p["label"].as_str().ok_or("label")?.into(), command: p["command"].as_str().ok_or("command")?.into(), osc: p["osc"].as_bool().unwrap_or(false),
-    }))).collect()
+    })))).collect()
+}
+/// Perfil `cmd.exe` puro (sem argumentos): ganha o prompt com OSC 133/7, como pwsh e WSL.
+fn with_cmd_prompt(p: Profile) -> Profile {
+    if p.osc || !matches!(p.command.trim().to_ascii_lowercase().as_str(), "cmd" | "cmd.exe") { return p; }
+    Profile { command: format!("{} /k prompt {}", p.command.trim(), screen::CMD_PROMPT), osc: true, ..p }
 }
 /// Fase da tentativa atual, lida por [`Service::status`] e pelo backoff do laço de presença.
 #[derive(Default)]
