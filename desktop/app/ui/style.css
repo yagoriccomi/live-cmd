@@ -182,3 +182,12 @@ select { font:inherit; padding:6px 10px; border-radius:var(--radius); border:1px
 .find-bar button { padding:2px 8px; }
 .keys { display:grid; grid-template-columns:auto 1fr; gap:4px 16px; margin:0; max-height:60vh; overflow:auto; }
 .keys dd { margin:0; }
+/* F3 */
+.term-area.split #screen { right:50%; border-right:1px solid var(--border); }
+.term-area.split #screen2 { left:50%; }
+.terminal[hidden] { display:none; }
+.pc-mark { display:inline-block; width:8px; height:8px; border-radius:2px; flex:none; }
+.act { color:var(--warn); font-weight:700; }
+.conn-q { margin-left:auto; }
+input.rename { font:inherit; padding:0 4px; width:12em; }
+.term-tabs [role=tab][draggable=true] { cursor:grab; }

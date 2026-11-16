@@ -121,13 +121,13 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
         "session_close" => { fields(&["session_id"], &[])?; Req::Close(sid("session_id")?) }
         "client_focus" => {
             fields(&["state"], &[])?;
+            Req::Focus(match s("state")? { "foreground" => Focus::Foreground, "background" => Focus::Background, _ => return Err(InvalidMessage) })
+        }
         "session_rename" => {
             fields(&["session_id", "label"], &[])?;
             let label = s("label")?;
             if label.chars().count() > 64 { return Err(InvalidMessage); }
             Req::Rename { session_id: sid("session_id")?, label: label.into() }
-        }
-            Req::Focus(match s("state")? { "foreground" => Focus::Foreground, "background" => Focus::Background, _ => return Err(InvalidMessage) })
         }
         _ => return Err(InvalidMessage),
     };

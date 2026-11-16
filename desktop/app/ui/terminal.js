@@ -23,11 +23,14 @@ const msg = (code) => MSG[code] || "Algo deu errado. Tente de novo.";
 
 const conns = { [LOCAL]: { name: "Este PC", status: { state: "ready" }, sessions: [], profiles: [] } };
 let remoteOrder = [];
-const tabs = [];       // { key, conn, sid, title, exited }
+const tabs = [];       // { key, conn, sid, label, title, exited, split? }  split = { key, conn, sid } do painel direito
 let active = null;     // key
 let appCursor = false;
 const screens = {};    // key → última tela recebida
 let adding = null;     // id do PC sendo adicionado
+const busy = new Set();   // chaves com saída nova fora de vista (item 8)
+const closed = [];        // abas fechadas com sessão viva, para reabrir (item 7)
+const lastEnter = {};     // chave → hora do último Enter (item 9)
 
 // ---------- Medida da célula e tamanho ----------
 function size() {
@@ -39,11 +42,11 @@ function size() {
 }
 
 // ---------- Desenho ----------
-function draw(key) {
-  const s = $("screen"), scr = screens[key];
+function draw(key, s = $("screen")) {
+  const scr = screens[key];
   for (const n of [...s.children]) if (n.id !== "measure") n.remove();
   if (!scr) return;
-  appCursor = scr.app_cursor;
+  if (s === pane()) appCursor = scr.app_cursor;
   for (const row of scr.rows) {
     const line = el("div");
     for (const [text, fg, bg, fl] of row) {
@@ -93,7 +96,17 @@ function renderTabs() {
     b.setAttribute("role", "tab");
     b.setAttribute("aria-selected", String(t.key === active));
     b.tabIndex = t.key === active ? 0 : -1;
-    b.append(el("span", null, t.title));
+    b.dataset.key = t.key;
+    if (t.conn !== LOCAL) b.append(pcMark(t.conn));
+    const name = el("span", "tab-name", t.title + (t.split ? " | dividido" : ""));
+    name.ondblclick = (e) => { e.stopPropagation(); renameSession(t.conn, t.sid, name, t.label); };
+    b.append(name);
+    if (busy.has(t.key)) b.append(actDot());
+    b.draggable = true;
+    b.ondragstart = (e) => e.dataTransfer.setData("text/x-tab", t.key);
+    b.ondragover = (e) => e.preventDefault();
+    b.ondrop = (e) => { e.preventDefault(); moveTab(e.dataTransfer.getData("text/x-tab"), t.key); };
+    b.oncontextmenu = (e) => { e.preventDefault(); menu(b, tabMenu(t, name)); };
     const x = el("span", "x", "×");
     x.setAttribute("aria-hidden", "true");
     x.title = "Fechar aba (Ctrl+Shift+W)";
@@ -109,6 +122,117 @@ function renderTabs() {
   renderSidebar();
 }
 
+function moveTab(from, to) {
+  const i = tabs.findIndex((t) => t.key === from), j = tabs.findIndex((t) => t.key === to);
+  if (i < 0 || j < 0 || i === j) return;
+  tabs.splice(j, 0, ...tabs.splice(i, 1));
+  renderTabs();
+}
+
+function tabMenu(t, name) {
+  return [["Renomear", () => renameSession(t.conn, t.sid, name, t.label)],
+    t.split ? ["Desfazer divisão", () => unsplit(t)] : ["Dividir", () => splitMenu(name)],
+    ["Reabrir aba fechada (Ctrl+Alt+T)", reopen],
+    ["Fechar aba", () => closeTab(t.key)]];
+}
+
+const actDot = () => { const d = el("span", "act", "•"); d.setAttribute("aria-label", "saída nova"); return d; };
+
+// ---------- Item 13: cor por PC (só neste app) ----------
+const PALETTE = [["Azul", "#4f8cff"], ["Verde", "#2fbf71"], ["Laranja", "#f5a524"], ["Vermelho", "#e5484d"], ["Roxo", "#a970ff"], ["Ciano", "#12a5b0"]];
+const pcColor = (id) => localStorage.getItem("pc-color:" + id) || PALETTE[0][1];
+function pcMark(id) { const m = el("span", "pc-mark"); m.style.background = pcColor(id); m.setAttribute("aria-hidden", "true"); return m; }
+function colorMenu(anchor, id) {
+  menu(anchor, PALETTE.map(([n, c]) => [n, () => { localStorage.setItem("pc-color:" + id, c); renderTabs(); }]));
+}
+
+// ---------- Item 1/3: renomear inline (Enter salva, Esc cancela) ----------
+function editInline(span, value, save) {
+  const inp = el("input", "rename");
+  inp.value = value;
+  inp.maxLength = 64;
+  inp.setAttribute("aria-label", "Novo nome");
+  let done = false;
+  const end = async (ok) => {
+    if (done) return;
+    done = true;
+    const v = inp.value.trim();
+    inp.replaceWith(span);
+    if (ok && v && v !== value) { try { await save(v); } catch (e) { banner(msg(e), "err"); } }
+  };
+  inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") end(true); else if (e.key === "Escape") end(false); };
+  inp.onclick = inp.ondblclick = inp.onmousedown = (e) => e.stopPropagation();
+  inp.onblur = () => end(false);
+  span.replaceWith(inp);
+  inp.focus();
+  inp.select();
+}
+
+function renameSession(conn, sid, span, label) {
+  const cur = conns[conn]?.sessions.find((s) => s.session_id === sid)?.label || label || "Terminal";
+  editInline(span, cur, async (v) => {
+    await invoke("term_rename", { conn, sessionId: sid, label: v });
+    for (const t of tabs) if (t.conn === conn && t.sid === sid) { t.label = v; t.title = titleOf(conn, { label: v }); }
+    await refresh(conn);
+    renderTabs();
+  });
+}
+
+function renamePc(id, span) {
+  editInline(span, conns[id].name, async (v) => {
+    await invoke("remote_rename", { id, name: v });
+    await refreshRemotes();
+    for (const t of tabs) if (t.conn === id) t.title = titleOf(id, { label: t.label });
+    renderTabs();
+  });
+}
+
+// ---------- Item 5: divisão (uma por aba, dois painéis lado a lado) ----------
+const pane = () => document.activeElement === $("screen2") ? $("screen2") : $("screen");
+const activeTab = () => tabs.find((t) => t.key === active);
+/** Sessão que recebe o teclado: painel direito se ele tem o foco. */
+function target() {
+  const t = activeTab();
+  if (t?.split && pane() === $("screen2")) return { ...t.split, exited: null };
+  return t;
+}
+
+function splitMenu(anchor) {
+  const t = activeTab();
+  if (!t) return;
+  const opts = [];
+  for (const [conn, c] of Object.entries(conns)) for (const s of c.sessions || [])
+    if (s.state !== "exited" && conn + "/" + s.session_id !== t.key) opts.push([titleOf(conn, s), () => split(t, conn, s.session_id)]);
+  menu(anchor || $("tabs"), opts.length ? opts : [["Nenhuma outra sessão aberta."]]);
+}
+
+async function split(t, conn, sid) {
+  const key = conn + "/" + sid, { cols, rows } = size();
+  if (!tabs.some((x) => x.key === key)) {
+    try { await invoke("term_attach", { conn, sessionId: sid, cols, rows }); } catch (e) { return banner(msg(e), "err"); }
+  }
+  if (t.split) unsplit(t, false);
+  t.split = { key, conn, sid };
+  activate(t.key);
+}
+
+function unsplit(t, redraw = true) {
+  const sp = t.split;
+  t.split = null;
+  if (sp && !tabs.some((x) => x.key === sp.key)) { delete screens[sp.key]; invoke("term_detach", { conn: sp.conn, sessionId: sp.sid }).catch(() => {}); }
+  if (redraw) activate(t.key);
+}
+
+// ---------- Item 7: reabrir aba fechada ----------
+async function reopen() {
+  while (closed.length) {
+    const { conn, sid } = closed.pop();
+    const s = conns[conn]?.sessions.find((s) => s.session_id === sid && s.state !== "exited");
+    if (s) return openSession(conn, s);
+  }
+  banner("Nenhuma aba fechada para reabrir.", "warn");
+}
+
 $("tabs").onkeydown = (e) => {
   if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
   const i = tabs.findIndex((t) => t.key === active);
@@ -119,11 +243,16 @@ $("tabs").onkeydown = (e) => {
 
 function activate(key, focus = true) {
   active = key;
+  const t = tabs.find((t) => t.key === key);
+  busy.delete(key);
+  if (t?.split) busy.delete(t.split.key);
+  $("screen2").hidden = !t?.split;
+  document.querySelector(".term-area").classList.toggle("split", !!t?.split);
   renderTabs();
   draw(key);
+  if (t?.split) draw(t.split.key, $("screen2"));
   updateBanner();
-  const t = tabs.find((t) => t.key === key);
-  if (t && t.exited == null) { const { cols, rows } = size(); invoke("term_resize", { conn: t.conn, sessionId: t.sid, cols, rows }).catch(() => {}); }
+  resizeActive();
   if (focus) $("screen").focus();
 }
 
@@ -139,7 +268,7 @@ async function openSession(conn, s) {
     let ok;
     try { ok = await invoke("term_attach", { conn, sessionId: s.session_id, cols, rows }); }
     catch (e) { return banner(msg(e), "err"); }
-    tabs.push({ key, conn, sid: s.session_id, title: titleOf(conn, s), exited: ok.state === "exited" ? ok.exit_code ?? 0 : null });
+    tabs.push({ key, conn, sid: s.session_id, label: s.label, title: titleOf(conn, s), exited: ok.state === "exited" ? ok.exit_code ?? 0 : null });
   }
   activate(key);
 }
@@ -148,8 +277,12 @@ async function closeTab(key) {
   const i = tabs.findIndex((t) => t.key === key);
   if (i < 0) return;
   const [t] = tabs.splice(i, 1);
-  delete screens[key];
-  invoke("term_detach", { conn: t.conn, sessionId: t.sid }).catch(() => {});
+  if (t.split) unsplit(t, false);
+  if (t.exited == null) closed.push({ conn: t.conn, sid: t.sid });
+  if (closed.length > 20) closed.shift();
+  busy.delete(key);
+  // Painel direito de outra aba ainda mostra esta sessão: não desanexa.
+  if (!tabs.some((x) => x.split?.key === key)) { delete screens[key]; invoke("term_detach", { conn: t.conn, sessionId: t.sid }).catch(() => {}); }
   if (active === key) {
     active = tabs[Math.min(i, tabs.length - 1)]?.key ?? null;
     if (active) return activate(active);
@@ -194,9 +327,12 @@ function sessionItem(conn, s) {
   b.type = "button";
   const key = conn + "/" + s.session_id;
   if (key === active) b.setAttribute("aria-current", "true");
-  b.append(el("span", s.state === "exited" ? "muted" : "dot-ok", s.state === "exited" ? "○" : "●"), el("span", null, s.label || "Terminal"));
+  const name = el("span", null, s.label || "Terminal");
+  name.ondblclick = (e) => { e.stopPropagation(); renameSession(conn, s.session_id, name); };
+  b.append(el("span", s.state === "exited" ? "muted" : "dot-ok", s.state === "exited" ? "○" : "●"), name);
+  if (busy.has(key)) b.append(actDot());
   b.onclick = () => openSession(conn, s);
-  b.oncontextmenu = (e) => { e.preventDefault(); menu(b, [["Encerrar sessão", () => endSession(conn, s)]]); };
+  b.oncontextmenu = (e) => { e.preventDefault(); menu(b, [["Renomear", () => renameSession(conn, s.session_id, name)], ["Encerrar sessão", () => endSession(conn, s)]]); };
   b.onkeydown = (e) => { if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); b.oncontextmenu(e); } };
   li.append(b);
   return li;
@@ -218,13 +354,17 @@ function renderSidebar() {
     const [cls, dot, label] = st === "ready" ? ["dot-ok", "●", "conectado"] : st === "closed" && c.status.code ? ["dot-err", "⚠", "erro"] : st === "connecting" ? ["dot-warn", "◌", "conectando"] : ["muted", "○", "desconectado"];
     const d = el("span", cls, dot);
     d.setAttribute("aria-label", label);
-    b.append(d, el("span", null, c.name));
+    const name = el("span", null, c.name);
+    name.ondblclick = (e) => { e.stopPropagation(); renamePc(id, name); };
+    // Item 14: estado por extenso. ponytail: sem latência (C3 não expõe ping); mostrar quando o backend medir RTT.
+    const q = el("span", "muted small conn-q", st === "connecting" ? (c.status.attempt ? `reconectando (tentativa ${c.status.attempt + 1})` : "conectando…") : label);
+    b.append(pcMark(id), d, name, q);
     b.setAttribute("aria-expanded", String(st === "ready"));
     b.onclick = () => st === "ready" ? refresh(id) : connectRemote(id);
     b.oncontextmenu = (e) => {
       e.preventDefault();
       menu(b, [st === "ready" || st === "connecting" ? ["Desconectar", () => invoke("remote_disconnect", { id })] : ["Conectar", () => connectRemote(id)],
-        ["Remover este PC", () => removeRemote(id)]]);
+        ["Renomear", () => renamePc(id, name)], ["Cor…", () => colorMenu(b, id)], ["Remover este PC", () => removeRemote(id)]]);
     };
     b.onkeydown = (e) => { if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); b.oncontextmenu(e); } };
     li.append(b);
@@ -374,8 +514,34 @@ $("add-ok").onclick = async () => {
 $("remote-add").onclick = openAdd;
 
 // ---------- Eventos do Rust ----------
-// Seleção some se o DOM for refeito (a cada ~33 ms): não redesenha enquanto há seleção ou arrasto na tela.
-listen("term-screen", ({ payload }) => { screens[payload.key] = payload; if (payload.key === active && !holdDraw()) draw(active); });
+listen("term-screen", ({ payload }) => {
+  const k = payload.key, t = activeTab();
+  screens[k] = payload;
+  if (k === active) { if (!holdDraw()) draw(k); }
+  else if (t?.split?.key === k) draw(k, $("screen2"));
+  else if (!busy.has(k)) { busy.add(k); renderTabs(); }
+});
+// Item 9 (evento do F1): avisa no Windows se o comando levou mais de 10 s e não estava à vista.
+listen("term-cmd-done", ({ payload }) => {
+  const t = activeTab(), seen = document.hasFocus() && (payload.key === active || t?.split?.key === payload.key);
+  const start = lastEnter[payload.key];
+  delete lastEnter[payload.key];
+  if (seen || !start || Date.now() - start < 10000) return;
+  const tab = tabs.find((x) => x.key === payload.key);
+  invoke("plugin:notification|notify", { options: { title: "Comando terminou", body: `${tab?.title || "Terminal"}: código ${payload.code ?? 0}` } }).catch(() => {});
+});
+// Ações do menu do terminal (F2).
+document.addEventListener("term-action", (e) => {
+  const a = e.detail?.action ?? e.detail, t = activeTab();
+  if (a === "rename" && t) { const n = $("tabs").querySelector(`[data-key="${CSS.escape(t.key)}"] .tab-name`); if (n) renameSession(t.conn, t.sid, n, t.label); }
+  else if (a === "split") splitMenu();
+  else if (a === "new") newSession(t ? t.conn : LOCAL);
+  else if (a === "close" && t) closeTab(t.key);
+  // ponytail: exporta para a área de transferência; trocar por "Salvar como" (plugin dialog) se pedirem arquivo.
+  else if (a === "export" && t) invoke("term_export", { conn: t.conn, sessionId: t.sid })
+    .then((text) => invoke("clip_copy", { text })).then(() => banner("Saída copiada para a área de transferência.", "ok"))
+    .catch((err) => banner(msg(err), "err"));
+});
 listen("term-exited", ({ payload }) => {
   const t = tabs.find((t) => t.key === payload.key);
   if (t) { t.exited = payload.code; if (t.key === active) updateBanner(); }
@@ -441,11 +607,12 @@ function keyBytes(e) {
 }
 
 function send(data) {
-  const t = tabs.find((t) => t.key === active);
+  const t = target();
+  if (t && data.includes("\r")) lastEnter[t.key] = Date.now();
   if (t && t.exited == null) invoke("term_input", { conn: t.conn, sessionId: t.sid, data }).catch(() => {});
 }
 
-$("screen").addEventListener("keydown", (e) => {
+const termKey = (e) => {
   if (e.isComposing || e.key === "Process" || e.key === "Dead") return;
   if (screenKey(e)) return;
   if (e.ctrlKey && e.shiftKey && ["C", "V", "T", "W", "F6"].includes(e.key.length === 1 ? e.key.toUpperCase() : e.key)) return;
@@ -455,12 +622,15 @@ $("screen").addEventListener("keydown", (e) => {
   e.preventDefault();
   e.stopPropagation();
   send(b);
-});
+};
+$("screen").addEventListener("keydown", termKey);
+$("screen2").addEventListener("keydown", termKey);
 
 document.addEventListener("keydown", (e) => {
   const k = e.key.length === 1 ? e.key.toUpperCase() : e.key;
   const t = tabs.find((t) => t.key === active);
-  if (e.ctrlKey && e.shiftKey && k === "T") { e.preventDefault(); newSession(t ? t.conn : LOCAL); }
+  if (e.ctrlKey && e.altKey && !e.shiftKey && k === "T") { e.preventDefault(); reopen(); }
+  else if (e.ctrlKey && e.shiftKey && k === "T") { e.preventDefault(); newSession(t ? t.conn : LOCAL); }
   else if (e.ctrlKey && e.shiftKey && k === "W") { e.preventDefault(); if (active) closeTab(active); }
   else if (e.ctrlKey && k === "Tab") {
     e.preventDefault();
@@ -484,13 +654,17 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-$("screen").addEventListener("wheel", (e) => {
-  const t = tabs.find((t) => t.key === active);
+$("screen2").oncontextmenu = (e) => e.preventDefault();
+
+const wheel = (e) => {
   if (e.ctrlKey && e.deltaY) { e.preventDefault(); return zoom(e.deltaY < 0 ? 1 : -1); }
+  const t = e.currentTarget.id === "screen2" ? activeTab()?.split : activeTab();
   if (!t || !e.deltaY) return;
   e.preventDefault();
   invoke("term_scroll", { conn: t.conn, sessionId: t.sid, lines: e.deltaY < 0 ? 3 : -3 });
-}, { passive: false });
+};
+$("screen").addEventListener("wheel", wheel, { passive: false });
+$("screen2").addEventListener("wheel", wheel, { passive: false });
 
 // ---------- F2: tela (copiar/colar, menu, busca, links, fonte, arrastar, ajuda) ----------
 const curTab = () => tabs.find((t) => t.key === active);
@@ -655,15 +829,18 @@ function help() {
 }
 
 // ---------- Tamanho ----------
+// Os dois painéis têm a mesma largura: o tamanho medido em #screen vale para ambos.
+function resizeActive() {
+  const t = activeTab();
+  if (!t) return;
+  const { cols, rows } = size();
+  if (t.exited == null) invoke("term_resize", { conn: t.conn, sessionId: t.sid, cols, rows }).catch(() => {});
+  if (t.split) invoke("term_resize", { conn: t.split.conn, sessionId: t.split.sid, cols, rows }).catch(() => {});
+}
 let resizeTimer = 0;
 function fit() {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    const t = tabs.find((t) => t.key === active);
-    if (!t || t.exited != null) return;
-    const { cols, rows } = size();
-    invoke("term_resize", { conn: t.conn, sessionId: t.sid, cols, rows }).catch(() => {});
-  }, 100);
+  resizeTimer = setTimeout(resizeActive, 100);
 }
 new ResizeObserver(fit).observe($("screen"));
 
@@ -677,3 +854,16 @@ refreshRemotes();
 setInterval(() => { if (!document.hidden && !$("sidebar").contains(document.activeElement)) refresh(LOCAL); }, 5000);
 renderTabs();
 updateBanner();
+
+// Item 20: aviso de atualização (mesmos comandos da janela principal).
+invoke("check_update").then((v) => {
+  if (!v) return;
+  $("upd-t").textContent = `Versão ${v} disponível.`;
+  $("upd-banner").hidden = false;
+}).catch(() => {});
+$("upd-x").onclick = () => { $("upd-banner").hidden = true; };
+$("upd-go").onclick = async () => {
+  $("upd-go").disabled = true;
+  $("upd-t").textContent = "Baixando e instalando…";
+  try { await invoke("install_update"); } catch { $("upd-go").disabled = false; $("upd-t").textContent = "Não foi possível atualizar. Tente de novo."; }
+};
