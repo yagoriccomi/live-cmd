@@ -642,11 +642,25 @@ $("screen2").addEventListener("keydown", termKey);
 for (const s of [$("screen"), $("screen2")]) {
   s.contentEditable = "true";
   s.spellcheck = false;
+  // Ditado (Win+H) reenvia a frase inteira a cada parcial: manda só a diferença.
+  let draft = "";
   s.addEventListener("beforeinput", (e) => {
     e.preventDefault();
-    if (e.inputType.startsWith("insert") && e.data) send(e.data);
-    else if (e.inputType === "deleteContentBackward") send("\x7f");
+    const d = e.data || e.dataTransfer?.getData("text/plain") || "";
+    // Teclado físico já vai por termKey; aqui chega ditado/IME, que manda a frase acumulada.
+    if (e.inputType === "insertText" || e.inputType === "insertCompositionText" || e.inputType === "insertReplacementText") {
+      let i = 0;
+      while (i < draft.length && i < d.length && draft[i] === d[i]) i++;
+      if (i === 0) draft = ""; // frase nova, não apaga a anterior
+      send("\x7f".repeat(draft.length - i) + d.slice(i));
+      draft = d;
+    } else {
+      draft = "";
+      if (e.inputType.startsWith("insert") && d) send(d);
+      else if (e.inputType === "deleteContentBackward") send("\x7f");
+    }
   });
+  for (const ev of ["keydown", "blur", "mousedown"]) s.addEventListener(ev, () => { draft = ""; });
 }
 
 document.addEventListener("keydown", (e) => {
@@ -848,12 +862,20 @@ $("screen").addEventListener("click", (e) => {
 });
 $("screen").addEventListener("mousemove", (e) => $("screen").classList.toggle("ctrl", e.ctrlKey));
 
-// Arrastar arquivo(s) para a janela: cola o(s) caminho(s) entre aspas.
-// ponytail: em sessão remota o caminho é deste PC; o app não tem canal de arquivos (C4 só no cliente). Enviar o arquivo quando o app expuser a transferência.
-window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(({ payload }) => {
+// Arrastar arquivo(s): sessão local cola o(s) caminho(s) entre aspas; remota envia ao outro PC (pasta atual da sessão, senão a padrão do host).
+const dropCwds = {};
+window.__TAURI__.event.listen("term-cwd", (e) => { dropCwds[e.payload.key] = e.payload.cwd || undefined; });
+window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload }) => {
   if (payload.type !== "drop" || !payload.paths?.length) return;
-  send(payload.paths.map((p) => `"${p}"`).join(" "));
-  $("screen").focus();
+  const t = target();
+  if (!t || t.conn === LOCAL) { send(payload.paths.map((p) => `"${p}"`).join(" ")); $("screen").focus(); return; }
+  for (const [i, path] of payload.paths.entries()) {
+    const name = path.split(/[\/]/).pop();
+    banner(`Enviando ${name} (${i + 1}/${payload.paths.length})…`);
+    try { await invoke("term_upload", { conn: t.conn, path, targetDir: dropCwds[t.key] ?? null }); }
+    catch (e) { return banner(`Falha ao enviar ${name}: ${msg(e)}`, "err"); }
+  }
+  banner(`${payload.paths.length} arquivo(s) enviado(s) para ${dropCwds[t.key] ?? "a pasta padrão do outro PC"}.`);
 });
 
 // Ajuda (F1).
@@ -861,7 +883,7 @@ const KEYS = [["Ctrl+C", "Copiar seleção (sem seleção: interrompe, ^C)"], ["
   ["Ctrl+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba"],
   ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
   ["Ctrl+= / Ctrl+- / Ctrl+0", "Aumentar / diminuir / redefinir fonte"], ["Ctrl+roda do mouse", "Zoom da fonte"], ["Roda do mouse", "Rolar histórico"],
-  ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito", "Colar (com seleção: copiar)"], ["Shift+botão direito / Shift+F10 / ☰", "Menu do terminal"], ["Arrastar arquivo", "Cola o caminho"]];
+  ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito", "Colar (com seleção: copiar)"], ["Shift+botão direito / Shift+F10 / ☰", "Menu do terminal"], ["Arrastar arquivo", "Local: cola o caminho · Remoto: envia ao outro PC"]];
 // Atalhos remapeáveis: ação fixa, tecla editável no F1 (clique na tecla e pressione a nova). Salvos no localStorage.
 const SHORTCUTS = {
   paste: ["Colar", () => paste(), "Ctrl+V"], find: ["Buscar", () => openFind(), "Ctrl+F"], clear: ["Limpar", () => clearTab(), "Ctrl+Shift+K"],

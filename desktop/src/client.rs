@@ -25,12 +25,15 @@ pub struct RemotePin { pub host_pk: [u8; 32], pub room: String, pub server: Stri
 /// Lê o link de pareamento (mesmo URI do QR, C2 §1) e confere o servidor na allowlist.
 /// Devolve o pin e a OTK; a OTK só vai para [`Client::remote`]. Nunca logar.
 pub fn parse_pair_link(uri: &str, allowlist: &[&str]) -> std::result::Result<(RemotePin, [u8; 32]), String> {
-    let p = auth::parse_qr(uri.trim()).map_err(|e| e.code().to_owned())?;
+    let uri = uri.trim();
+    let p = auth::parse_qr(uri.find("remoteterm://").map_or(uri, |i| &uri[i..])).map_err(|e| e.code().to_owned())?;
     auth::check_server(&p.server, allowlist).map_err(|e| e.code().to_owned())?;
     Ok((RemotePin { host_pk: p.host_pk, room: p.session, server: p.server }, p.otk))
 }
 
-enum Outbound { Ctl(Value), Frame(proto::Frame) }
+enum Outbound { Ctl(Value), Frame(proto::Frame), Upload(Upload) }
+/// Envio de arquivo (C4 §4) pelo `file-channel`: `init` pronto, bytes em memória, resposta final em `done`.
+struct Upload { fid: [u8; 16], init: Value, data: Vec<u8>, done: smpsc::Sender<std::result::Result<(), String>> }
 enum Wire { Local { conn: ConnId, pk: Pk, _reg: Reg }, Remote(mpsc::UnboundedSender<Outbound>) }
 struct Shared {
     on: OnEvent,
@@ -159,6 +162,20 @@ impl Client {
         self.send(proto::Frame { session_id: sid, seq: 0, op: Op::Resize { cols, rows } })
     }
 
+    /// Envia `path` deste PC para `target_dir` do host (`None` = pasta padrão do host). Bloqueia até `file_complete`.
+    /// ponytail: arquivo inteiro em memória e sem `file_resume`; queda no meio = erro. Ler em blocos e retomar se arquivos grandes virarem uso comum.
+    pub fn upload(&self, path: &Path, target_dir: Option<&str>) -> std::result::Result<(), String> {
+        let Wire::Remote(tx) = &self.wire else { return Err("INVALID_MESSAGE".into()) };
+        let filename = path.file_name().and_then(|n| n.to_str()).ok_or("INVALID_MESSAGE")?.to_owned();
+        let data = std::fs::read(path).map_err(|_| "IO_ERROR")?;
+        let fid = auth::uuid_bytes(&uuid_v4()?).ok_or("IO_ERROR")?;
+        let init = json!({"type":"file_upload_init","file_id":proto::uuid_str(&fid),"session_id":null,"filename":filename,"target_dir":target_dir,
+            "size_bytes":data.len().to_string(),"chunk_size":files::CHUNK,"total_chunks":files::total_chunks(data.len() as u64),"sha256":files::hex(&files::sha(&data)),"overwrite":false});
+        let (done, wait) = smpsc::channel();
+        tx.send(Outbound::Upload(Upload { fid, init, data, done })).map_err(|_| "NOT_CONNECTED")?;
+        wait.recv().map_err(|_| "NOT_CONNECTED")?
+    }
+
     fn send(&self, f: proto::Frame) -> std::result::Result<(), String> {
         match &self.wire {
             Wire::Local { conn, .. } => {
@@ -236,10 +253,11 @@ async fn attempt_once(pin: &RemotePin, otk: Option<[u8; 32]>, sk: &SigningKey, s
     let pc = peer(cert).with_handler(handler.clone()).build().await?;
     let r = async {
         let dc = pc.create_data_channel("pty-channel", None).await?;
+        let fc = pc.create_data_channel("file-channel", None).await?;
         let offer = pc.create_offer(None).await?;
         pc.set_local_description(offer.clone()).await?;
         ws.send(message("offer", json!({"sdp":offer.sdp}), &id).into()).await?;
-        let mut sent = 0;
+        let (mut sent, mut open, mut fopen) = (0, false, false);
         tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 tokio::select! {
@@ -262,12 +280,18 @@ async fn attempt_once(pin: &RemotePin, otk: Option<[u8; 32]>, sk: &SigningKey, s
                         Some(Event::Failed) | None => return Err(Stop::Net),
                         _ => {}
                     },
-                    e = dc.poll() => match e {
-                        Some(DataChannelEvent::OnOpen) => return Ok(()),
+                    e = dc.poll(), if !open => match e {
+                        Some(DataChannelEvent::OnOpen) => open = true,
+                        Some(DataChannelEvent::OnClose) | None => return Err(Stop::Net),
+                        _ => {}
+                    },
+                    e = fc.poll(), if !fopen => match e {
+                        Some(DataChannelEvent::OnOpen) => fopen = true,
                         Some(DataChannelEvent::OnClose) | None => return Err(Stop::Net),
                         _ => {}
                     },
                 }
+                if open && fopen { return Ok(()) }
             }
         }).await.map_err(|_| Stop::Net)??;
         // C2: binding com os fingerprints reais do DTLS; o pin do host decide (pair ou reconnect).
@@ -292,11 +316,14 @@ async fn attempt_once(pin: &RemotePin, otk: Option<[u8; 32]>, sk: &SigningKey, s
         // antes do reattach) seria erro fatal no host (C3 §2.2), então é descartado.
         // ponytail: detach/close não tiram a sessão do conjunto; o host responde com erro não fatal.
         let mut attached = std::collections::HashSet::new();
-        loop {
+        let (utx, urx) = mpsc::unbounded_channel();
+        let pump = tokio::spawn(file_pump(fc.clone(), id.clone(), urx));
+        let r: std::result::Result<(), Stop> = async { loop {
             tokio::select! {
                 o = rx.recv() => match o {
                     None => return Ok(()),
                     Some(Outbound::Ctl(mut v)) => { v["v"] = 1.into(); v["connection_id"] = id.as_str().into(); dc.send_text(&v.to_string()).await?; }
+                    Some(Outbound::Upload(u)) => { let _ = utx.send(u); }
                     Some(Outbound::Frame(mut f)) => if attached.contains(&f.session_id) {
                         if matches!(f.op, Op::Input(_)) { f.seq = s.next_seq(f.session_id); }
                         dc.send(proto::encode_frame(&f)[..].into()).await?;
@@ -321,10 +348,57 @@ async fn attempt_once(pin: &RemotePin, otk: Option<[u8; 32]>, sk: &SigningKey, s
                 e = erx.recv() => if matches!(e, Some(Event::Failed) | None) { return Err(Stop::Net) },
                 f = ws.next() => if !matches!(f, Some(Ok(tokio_tungstenite::tungstenite::Message::Text(_)))) { return Err(Stop::Net) },
             }
-        }
+        } }.await;
+        pump.abort();
+        r
     }.await;
     let _ = tokio::time::timeout(Duration::from_secs(2), pc.close()).await;
     r
+}
+/// Uploads em fila, um por vez, no `file-channel` (C4 §4/§7): init, fragmentos com pausa no `bufferedAmount`, espera `file_complete`.
+/// Upload que falha não derruba a conexão do terminal: o erro volta para quem pediu.
+async fn file_pump(fc: Arc<dyn DataChannel>, id: String, mut rx: mpsc::UnboundedReceiver<Upload>) {
+    while let Some(u) = rx.recv().await {
+        let r = upload_one(&fc, &id, &u).await;
+        let _ = u.done.send(r);
+    }
+}
+async fn upload_one(fc: &Arc<dyn DataChannel>, id: &str, u: &Upload) -> std::result::Result<(), String> {
+    let e = |_: webrtc::error::Error| "NOT_CONNECTED".to_string();
+    let mut init = u.init.clone();
+    let rid = uuid_v4()?;
+    (init["v"], init["connection_id"], init["request_id"]) = (1.into(), id.into(), rid.as_str().into());
+    fc.send_text(&init.to_string()).await.map_err(e)?;
+    let fid = proto::uuid_str(&u.fid);
+    // Lê controles deste arquivo; `file_ack` é ignorado. ponytail: 60 s sem resposta = falha; ajustar se o host demorar em disco lento.
+    let next = || async {
+        tokio::time::timeout(Duration::from_secs(60), async { loop {
+            match fc.poll().await {
+                Some(DataChannelEvent::OnMessage(m)) if m.is_string => {
+                    let v: Value = serde_json::from_slice(&m.data).map_err(|_| "INVALID_MESSAGE".to_string())?;
+                    if v["file_id"] != fid.as_str() && v["request_id"] != rid.as_str() { continue }
+                    if v["type"] == "error" { return Err(v["code"].as_str().unwrap_or("INVALID_MESSAGE").to_owned()) }
+                    if v["type"] != "file_ack" { return Ok(v) }
+                }
+                Some(DataChannelEvent::OnClose) | None => return Err("NOT_CONNECTED".into()),
+                _ => {}
+            }
+        } }).await.map_err(|_| "EXPIRED".to_string())?
+    };
+    let ok = next().await?;
+    if ok["type"] == "file_complete" { return Ok(()) }
+    for r in ok["missing"]["ranges"].as_array().ok_or("INVALID_MESSAGE")? {
+        let (a, b) = (r[0].as_u64().ok_or("INVALID_MESSAGE")? as usize, r[1].as_u64().ok_or("INVALID_MESSAGE")? as usize);
+        for i in a..b {
+            let c = &u.data[i * files::CHUNK as usize..((i + 1) * files::CHUNK as usize).min(u.data.len())];
+            for f in files::frags(u.fid, i as u32, c) {
+                // §7: pausa enquanto o buffer passa de 128 KiB (mesmo limite do teste de vazão no loopback).
+                while fc.outstanding_bytes().await.map_err(e)? > (128 << 10) { tokio::time::sleep(Duration::from_millis(2)).await; }
+                fc.send(f[..].into()).await.map_err(e)?;
+            }
+        }
+    }
+    loop { let v = next().await?; if v["type"] == "file_complete" { return Ok(()) } }
 }
 impl From<webrtc::error::Error> for Stop { fn from(_: webrtc::error::Error) -> Self { Stop::Net } }
 impl From<tokio_tungstenite::tungstenite::Error> for Stop { fn from(_: tokio_tungstenite::tungstenite::Error) -> Self { Stop::Net } }
@@ -372,6 +446,8 @@ mod tests {
         let (pin, otk) = parse_pair_link(&format!("  {uri}\n"), &["127.0.0.1:8787"]).unwrap();
         assert_eq!((pin.host_pk, pin.room.as_str(), pin.server.as_str(), otk), ([8; 32], ROOM, "127.0.0.1:8787", [7; 32]));
         assert_eq!(parse_pair_link(&uri, &["sig.example.com"]).unwrap_err(), "SERVER_NOT_ALLOWED");
+        let wrapped = format!("https://github.com/yagoriccomi/live-cmd/releases/latest#{uri}");
+        assert_eq!(parse_pair_link(&wrapped, &["127.0.0.1:8787"]).unwrap().1, [7; 32]);
         assert_eq!(parse_pair_link("remoteterm://pair?v=2", &[]).unwrap_err(), "VERSION_UNSUPPORTED");
         assert_eq!(parse_pair_link("lixo", &[]).unwrap_err(), "INVALID_MESSAGE");
         assert_eq!(signal_url("127.0.0.1:8787"), "ws://127.0.0.1:8787");
@@ -450,6 +526,30 @@ mod tests {
         c.input(&sid, b"echo d5c-remote-ok\r").unwrap();
         wait_output(&rx, &sid, "d5c-remote-ok");
         c.request(json!({"type":"session_close","session_id":sid})).unwrap();
+        drop(c);
+        drop(rt);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Upload pelo `file-channel` do cliente remoto: arquivo de 3 chunks chega inteiro no `target_dir`.
+    #[test]
+    fn remote_upload_file() {
+        let _heavy = crate::tests::HEAVY.blocking_lock();
+        crate::tests::fdir();
+        let (h, dir) = host("upload");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let server = host_on_loopback(&rt, &h);
+        let otk = h.issue_otk(Instant::now()).unwrap();
+        let (on, rx) = events();
+        let c = Client::remote_with(SigningKey::from_bytes(&[34; 32]), RemotePin { host_pk: h.pk(), room: ROOM.into(), server }, Some(otk), on).unwrap();
+        while rx.recv_timeout(Duration::from_secs(20)).unwrap() != ClientEvent::Ready {}
+        let (src, dst) = (dir.join("src.bin"), dir.join("dst"));
+        std::fs::create_dir_all(&dst).unwrap();
+        let data: Vec<u8> = (0..150_000u32).map(|i| (i * 7) as u8).collect();
+        std::fs::write(&src, &data).unwrap();
+        c.upload(&src, dst.to_str()).unwrap();
+        assert!(std::fs::read(dst.join("src.bin")).unwrap() == data);
+        assert_eq!(c.upload(&src, dst.to_str()).unwrap_err(), "ALREADY_EXISTS");
         drop(c);
         drop(rt);
         let _ = std::fs::remove_dir_all(dir);

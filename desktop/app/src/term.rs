@@ -398,6 +398,13 @@ pub fn term_export_file(app: AppHandle, conn: String, session_id: String, path: 
     std::fs::write(path, term_export(app, conn, session_id)).map_err(|_| "IO_ERROR".into())
 }
 
+/// Envia arquivo deste PC ao host remoto `conn`, em `target_dir` (pasta atual da sessão) ou na pasta padrão do host.
+#[tauri::command(async)]
+pub fn term_upload(app: AppHandle, conn: String, path: String, target_dir: Option<String>) -> Result<(), String> {
+    if conn == LOCAL { return Err("INVALID_MESSAGE".into()); }
+    client(&app, &conn)?.upload(std::path::Path::new(&path), target_dir.as_deref())
+}
+
 /// "Limpar": apaga tela e histórico da aba (vale também em cmd, que ignora Ctrl+L).
 #[tauri::command]
 pub fn term_clear(app: AppHandle, conn: String, session_id: String) {

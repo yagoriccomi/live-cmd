@@ -10,7 +10,7 @@ Origem: auditoria de 2026-11-16 (10 feitos, 9 parciais, 1 falta, 2 decisões div
 | D4 | Nome da sessão persistido em disco no host | G1 | não feito por decisão: nome fica em memória, sincronizado entre PCs; a sessão morre com o host |
 | 3 | Zoom de fonte salvo por PC | G3 | feito |
 | 8/9/17/18 | cmd: OSC 133/7 via `PROMPT` ($E) → atividade, fim de comando, cwd, confirmar fechar | G1 | feito |
-| 10 | Arrastar arquivo para sessão remota: envia o arquivo ao outro PC (local: cola caminho) | G3 | parcial: cola caminho. Cliente desktop (`desktop/src/client.rs`) só abre `pty-channel`; upload C4 exige `file-channel` + `file_upload_init` + frags com backpressure no cliente. Fica para v0.1.5 |
+| 10 | Arrastar arquivo para sessão remota: envia o arquivo ao outro PC (local: cola caminho) | G3 | feito (v0.1.5): remoto envia pelo `file-channel` do cliente (`Client::upload`, `term_upload`) para a pasta atual da sessão ou a padrão do host; local cola caminho. Sem retomada nem leitura em blocos (ponytail) |
 | 11 | Histórico de rolagem configurável na tela | G2 | feito |
 | 12 | Exportar para `.txt` (Salvar como) e linhas quebradas unidas | G2 | feito |
 | 14 | Qualidade da conexão: latência + direta/relay na lateral | G2 (Rust) + G3 (UI) | feito |

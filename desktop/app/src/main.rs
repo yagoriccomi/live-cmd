@@ -41,7 +41,9 @@ fn devices_text(n: usize) -> String {
 
 /// QR do URI como SVG em data URL, para um `<img>`. O URI só existe nos módulos do desenho.
 fn qr_data_url(uri: &str) -> Result<String, String> {
-    let code = qrcode::QrCode::new(uri.as_bytes()).map_err(|_| "QR")?;
+    // Sem o app, a câmera abre o release do APK; o leitor do app usa o que vem depois do `#`.
+    let wrapped = format!("https://github.com/yagoriccomi/live-cmd/releases/latest#{uri}");
+    let code = qrcode::QrCode::new(wrapped.as_bytes()).map_err(|_| "QR")?;
     let w = code.width();
     let q = 4;
     let mut d = String::new();
@@ -322,7 +324,7 @@ fn main() {
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove,
-            term::term_export, term::term_export_file, term::term_clear, term::term_conn_stats, term::term_busy, term::term_rename, term::remote_rename])
+            term::term_export, term::term_export_file, term::term_clear, term::term_upload, term::term_conn_stats, term::term_busy, term::term_rename, term::remote_rename])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
