@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>Terminal Desktop — live-cmd</title>
 <link rel="stylesheet" href="style.css">
+<script src="links.js" defer></script>
 <script src="terminal.js" defer></script>
 </head>
 <body class="term-body">
@@ -21,6 +22,13 @@
     <div class="status-banner" role="status" id="banner" hidden><span id="banner-t"></span><span class="inline" id="banner-a"></span></div>
     <div class="term-area">
       <div class="terminal" id="screen" tabindex="0" aria-label="Terminal" aria-roledescription="terminal"><span class="measure" id="measure" aria-hidden="true">WWWWWWWWWW</span></div>
+      <div class="find-bar" id="find" role="search" hidden>
+        <input type="text" id="find-q" aria-label="Buscar no terminal" placeholder="Buscar" autocomplete="off" spellcheck="false">
+        <span class="muted small" id="find-n" role="status"></span>
+        <button type="button" id="find-prev" aria-label="Anterior (Shift+Enter)">↑</button>
+        <button type="button" id="find-next" aria-label="Próximo (Enter)">↓</button>
+        <button type="button" id="find-x" aria-label="Fechar busca (Esc)">×</button>
+      </div>
       <div class="term-empty" id="empty">
         <div><p>Nenhum terminal aberto. Escolha uma sessão à esquerda ou crie uma nova.</p>
         <div class="actions center"><button type="button" class="btn-primary" id="empty-new">Nova sessão</button></div></div>
@@ -52,6 +60,13 @@
     <h3 id="ask-t"></h3>
     <p id="ask-d"></p>
     <div class="actions"><button type="button" id="ask-cancel">Cancelar</button><button type="button" class="btn-danger" id="ask-ok"></button></div>
+  </dialog>
+</div>
+<div class="dialog-scrim" id="help-scrim" hidden>
+  <dialog open aria-modal="true" aria-labelledby="help-t" id="help">
+    <h3 id="help-t">Atalhos do terminal</h3>
+    <dl class="keys" id="help-list"></dl>
+    <div class="actions"><button type="button" class="btn-primary" id="help-ok">Fechar</button></div>
   </dialog>
 </div>
 </body>
