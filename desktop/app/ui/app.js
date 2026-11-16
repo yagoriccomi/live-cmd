@@ -189,15 +189,46 @@ async function loadSettings() {
   $("prof-err").hidden = s.profiles_error_line == null;
   if (s.profiles_error_line != null) $("prof-err").firstElementChild.textContent = `O arquivo profiles.json tem um erro na linha ${s.profiles_error_line}. Os perfis padrão estão em uso.`;
   $("prof-default").hidden = !!s.profiles;
-  $("prof-table").hidden = !s.profiles;
-  $("prof-body").replaceChildren(...(s.profiles || []).map((p) => {
-    const tr = document.createElement("tr");
-    const n = document.createElement("td"); n.textContent = p.name;
-    const c = document.createElement("td"); c.className = "mono"; c.textContent = p.command;
-    tr.append(n, c);
-    return tr;
-  }));
+  const ed = await invoke("get_profiles").catch(() => ({ profiles: null, shells: [] }));
+  $("prof-shells").replaceChildren(...ed.shells.map((sh) => { const o = document.createElement("option"); o.value = sh.command; o.label = sh.label; return o; }));
+  // Sem arquivo: começa com os shells detectados como sugestão (só grava ao salvar).
+  const list = ed.profiles || ed.shells.map((sh) => ({ label: sh.label, command: sh.command }));
+  $("prof-body").replaceChildren(...list.map(profRow));
+  $("prof-table").hidden = false;
+  $("prof-msg").textContent = "";
 }
+
+// ---------- Editor de perfis (F4) ----------
+// Cada linha guarda profile_id/osc no dataset: editar o rótulo não quebra o id nem a integração OSC.
+function profRow(p = { label: "", command: "" }) {
+  const tr = document.createElement("tr");
+  tr.dataset.id = p.profile_id || "";
+  tr.dataset.osc = p.osc ? "1" : "";
+  const cell = (cls, input) => { const td = document.createElement("td"); if (cls) td.className = cls; td.append(input); return td; };
+  const n = document.createElement("input"); n.type = "text"; n.maxLength = 40; n.value = p.label; n.setAttribute("aria-label", "Nome do perfil"); n.className = "p-label";
+  const c = document.createElement("input"); c.type = "text"; c.value = p.command; c.setAttribute("aria-label", "Comando"); c.className = "mono p-cmd"; c.spellcheck = false; c.setAttribute("list", "prof-shells");
+  const rm = document.createElement("button"); rm.type = "button"; rm.textContent = "Remover";
+  rm.onclick = () => { const next = tr.nextElementSibling || tr.previousElementSibling; tr.remove(); (next?.querySelector("input") || $("prof-add")).focus(); };
+  rm.setAttribute("aria-label", "Remover perfil " + (p.label || "novo"));
+  tr.append(cell(null, n), cell(null, c), cell(null, rm));
+  return tr;
+}
+$("prof-add").onclick = () => { const tr = profRow(); $("prof-body").append(tr); tr.querySelector("input").focus(); };
+$("prof-save").onclick = async () => {
+  const bad = /[\u0000-\u001f\u007f-\u009f]/;
+  const rows = [...$("prof-body").rows];
+  const profiles = rows.map((tr) => ({ profile_id: tr.dataset.id, osc: !!tr.dataset.osc, label: tr.querySelector(".p-label").value.trim(), command: tr.querySelector(".p-cmd").value.trim() }));
+  const wrong = profiles.findIndex((p) => !p.label || [...p.label].length > 40 || !p.command || bad.test(p.label + p.command));
+  $("prof-e").hidden = wrong < 0 && profiles.length > 0;
+  $("prof-msg").textContent = "";
+  if (!$("prof-e").hidden) { (rows[wrong]?.querySelector("input") || $("prof-add")).focus(); return; }
+  try {
+    const saved = await invoke("save_profiles", { profiles });
+    $("prof-body").replaceChildren(...saved.map(profRow));
+    $("prof-default").hidden = true; $("prof-err").hidden = true;
+    $("prof-msg").textContent = "Perfis salvos. Valem após reiniciar o app.";
+  } catch { $("prof-e").hidden = false; }
+};
 
 $("autostart").onchange = async (e) => {
   $("autostart-err").hidden = true;

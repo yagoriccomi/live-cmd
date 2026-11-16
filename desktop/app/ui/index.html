@@ -5,6 +5,7 @@
 <title>live-cmd</title>
 <link rel="stylesheet" href="style.css">
 <script src="app.js" defer></script>
+<script src="extras.js" defer></script>
 </head>
 <body>
 <div role="tablist" aria-label="Seções">
@@ -64,6 +65,8 @@
   <fieldset><legend>Geral</legend>
     <label class="check"><input type="checkbox" id="autostart"> <span>Iniciar com o Windows<br><span class="muted">Abre o live-cmd na bandeja quando você entra no Windows.</span></span></label>
     <div class="alert alert-danger" role="alert" id="autostart-err" hidden><p>Não foi possível ativar o início com o Windows.</p></div>
+    <label for="theme" class="gap">Tema</label>
+    <select id="theme"><option value="dark">Escuro</option><option value="light">Claro</option><option value="contrast">Alto contraste</option></select>
   </fieldset>
   <fieldset><legend>Servidor de sinalização</legend>
     <label for="srv">Endereço</label>
@@ -76,7 +79,11 @@
   <fieldset><legend>Perfis de terminal</legend>
     <div class="alert alert-warn" role="alert" id="prof-err" hidden><p></p></div>
     <p class="muted" id="prof-default" hidden>Usando perfis padrão (PowerShell e WSL).</p>
-    <table id="prof-table" hidden><thead><tr><th scope="col">Nome</th><th scope="col">Comando</th></tr></thead><tbody id="prof-body"></tbody></table>
+    <table id="prof-table" hidden><thead><tr><th scope="col">Nome</th><th scope="col">Comando</th><th scope="col"><span class="sr-only">Ações</span></th></tr></thead><tbody id="prof-body"></tbody></table>
+    <datalist id="prof-shells"></datalist>
+    <p class="inline"><button type="button" id="prof-add">Adicionar perfil</button><button type="button" class="btn-primary" id="prof-save">Salvar perfis</button></p>
+    <p class="field-error" role="alert" id="prof-e" hidden>Cada perfil precisa de nome (até 40 caracteres) e comando, sem caracteres de controle.</p>
+    <p class="ok-text" role="status" id="prof-msg"></p>
     <button type="button" id="open-dir">Abrir pasta de configuração</button>
     <p class="muted small">Mudanças valem para novos terminais após reiniciar o app.</p>
   </fieldset>

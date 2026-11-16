@@ -137,3 +137,38 @@ th { color:var(--text-muted); font-weight:600; }
 .menu .muted { padding:6px 10px; margin:0; }
 input[type=text], input[type=password] { font:inherit; width:100%; padding:6px 10px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--text); user-select:text; }
 .gap { margin-top:calc(var(--space)*1.5); }
+
+/* F4 */
+/* Temas: escolha explícita (localStorage) vence o prefers-color-scheme. O terminal segue o tema. */
+:root[data-theme=dark] {
+  --bg:#202020; --surface:#2b2b2b; --surface-2:#323232; --text:#f2f2f2; --text-muted:#b3b3b3;
+  --border:#3d3d3d; --accent:#60cdff; --on-accent:#003a5c;
+  --ok:#6ccb5f; --warn:#fce100; --danger:#ff99a4;
+  --scrim:rgb(0 0 0 / .55); --shadow:0 8px 24px rgb(0 0 0 / .5);
+  --term-bg:#0c0c0c; --term-fg:#cccccc; --term-sel:#264f78;
+  color-scheme: dark;
+}
+:root[data-theme=light] {
+  --bg:#f3f3f3; --surface:#fff; --surface-2:#f7f7f7; --text:#1a1a1a; --text-muted:#5c5c5c;
+  --border:#e0e0e0; --accent:#005fb8; --on-accent:#fff;
+  --ok:#0f7b0f; --warn:#9d5d00; --danger:#c42b1c;
+  --scrim:rgb(0 0 0 / .35); --shadow:0 8px 24px rgb(0 0 0 / .14);
+  --term-bg:#ffffff; --term-fg:#1e1e1e; --term-sel:#add6ff;
+  color-scheme: light;
+}
+:root[data-theme=contrast] {
+  --bg:#000; --surface:#000; --surface-2:#1a1a1a; --text:#fff; --text-muted:#fff;
+  --border:#fff; --accent:#ffff00; --on-accent:#000;
+  --ok:#3ff23f; --warn:#ffff00; --danger:#ff6b6b;
+  --scrim:rgb(0 0 0 / .8); --shadow:none;
+  --term-bg:#000; --term-fg:#fff; --term-sel:#1aebff;
+  color-scheme: dark;
+}
+:root[data-theme=contrast] :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+select { font:inherit; padding:6px 10px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--text); }
+#prof-table input { width:100%; }
+.palette { width:min(560px, 90vw); }
+.palette ul { list-style:none; margin:var(--space) 0; padding:0; max-height:50vh; overflow:auto; }
+.palette li { padding:6px 10px; border-radius:var(--radius); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.palette li[aria-selected=true] { background:var(--accent); color:var(--on-accent); }
