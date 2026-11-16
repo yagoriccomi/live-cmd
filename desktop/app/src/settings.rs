@@ -10,7 +10,16 @@ const OLD_DEFAULT: &str = "ws://127.0.0.1:8787";
 const FILE: &str = "app.json";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Settings { pub server: String }
+pub struct Settings {
+    pub server: String,
+    /// Linhas de histórico por aba; `None` = 1000. Use [`Settings::scrollback`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scrollback: Option<usize>,
+}
+
+impl Settings {
+    pub fn scrollback(&self) -> usize { self.scrollback.unwrap_or(1000).clamp(100, 100_000) }
+}
 
 /// Mesmo diretório do host: `LIVE_CMD_DATA_DIR`, senão `%APPDATA%/live-cmd`.
 pub fn data_dir() -> Result<PathBuf, String> {
@@ -23,7 +32,7 @@ pub fn data_dir() -> Result<PathBuf, String> {
 pub fn load(dir: &Path) -> Result<Settings, String> {
     if let Some(s) = std::fs::read(dir.join(FILE)).ok().and_then(|t| serde_json::from_slice::<Settings>(&t).ok())
         && valid_server(&s.server) && s.server != OLD_DEFAULT { return Ok(s); }
-    let s = Settings { server: DEFAULT_SERVER.into() };
+    let s = Settings { server: DEFAULT_SERVER.into(), scrollback: None };
     save(dir, &s)?;
     Ok(s)
 }
@@ -117,7 +126,8 @@ mod tests {
         let s = load(&d).unwrap();
         assert_eq!(s.server, DEFAULT_SERVER);
         assert_eq!(load(&d).unwrap(), s, "relido na segunda execução");
-        let s2 = Settings { server: "wss://x.dev".into() };
+        let s2 = Settings { server: "wss://x.dev".into(), scrollback: Some(5) };
+        assert_eq!((s.scrollback(), s2.scrollback(), Settings { scrollback: Some(1 << 30), ..s2.clone() }.scrollback()), (1000, 100, 100_000));
         save(&d, &s2).unwrap();
         assert_eq!(load(&d).unwrap(), s2);
         std::fs::write(d.join(FILE), "{").unwrap();
