@@ -165,6 +165,20 @@ fn set_server(app: State<App>, server: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Editor de perfis: lista atual (ou `null` sem arquivo) e shells detectados.
+#[tauri::command]
+fn get_profiles(app: State<App>) -> Value {
+    let list = settings::profiles_full(&app.data_dir).ok().flatten();
+    let shells: Vec<Value> = settings::detect_shells().into_iter().map(|(l, c)| json!({ "label": l, "command": c })).collect();
+    json!({ "profiles": list, "shells": shells })
+}
+
+/// Grava `profiles.json`; o host relê ao reiniciar o app.
+#[tauri::command]
+fn save_profiles(app: State<App>, profiles: Vec<settings::Profile>) -> Result<Vec<settings::Profile>, String> {
+    settings::save_profiles(&app.data_dir, profiles)
+}
+
 /// Abre a pasta de dados (perfis, trust store e, no futuro, logs) no Explorer.
 #[tauri::command]
 fn open_data_dir(app: State<App>) -> Result<(), String> {
@@ -284,7 +298,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_window(app, "devices")))
-        .invoke_handler(tauri::generate_handler![status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, check_update, install_update,
+        .invoke_handler(tauri::generate_handler![status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, get_profiles, save_profiles, check_update, install_update,
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove])
