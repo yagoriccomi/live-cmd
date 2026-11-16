@@ -868,7 +868,7 @@ const SHORTCUTS = {
   zin: ["Aumentar fonte", () => zoom(1), "Ctrl+="], zout: ["Diminuir fonte", () => zoom(-1), "Ctrl+-"], z0: ["Redefinir fonte", () => zoom(0), "Ctrl+0"],
   help: ["Esta ajuda", () => help(), "F1"],
 };
-const binds = { ...Object.fromEntries(Object.entries(SHORTCUTS).map(([a, s]) => [a, s[2]])), ...JSON.parse(localStorage.getItem("term-keys") || "{}") };
+const binds = { ...Object.fromEntries(Object.entries(SHORTCUTS).map(([a, s]) => [a, s[2]])), ...(() => { try { return JSON.parse(localStorage.getItem("term-keys") || "{}"); } catch { return {}; } })() };
 function keyName(e) {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
   return [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
