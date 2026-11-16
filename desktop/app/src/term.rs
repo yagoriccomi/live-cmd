@@ -19,13 +19,13 @@ use crate::{App, clip, settings};
 const LOCAL: &str = "local";
 const WIN: &str = "terminal";
 const FILE: &str = "remotes.json";
-const SCROLLBACK: usize = 1000;
 
 /// PC remoto pareado. `id` = `host_pk` em base64url.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Remote { pub id: String, pub name: String, pub pin: RemotePin }
 
-struct View { vt: vt100::Parser, next: u64 }
+/// `osc`: o host já mandou `command_completed` (perfil com OSC 133); `busy`: Enter enviado sem `command_completed` depois.
+struct View { vt: vt100::Parser, next: u64, osc: bool, busy: bool }
 
 #[derive(Default)]
 pub struct Term {
@@ -42,7 +42,24 @@ pub struct Term {
 
 fn nz(n: u16) -> NonZeroU16 { NonZeroU16::new(n).unwrap_or(NonZeroU16::MIN) }
 fn key(conn: &str, sid: &str) -> String { format!("{conn}/{sid}") }
-fn parser(rows: u16, cols: u16) -> vt100::Parser { vt100::Parser::new(nz(rows), nz(cols), SCROLLBACK) }
+fn parser(app: &AppHandle, rows: u16, cols: u16) -> vt100::Parser {
+    vt100::Parser::new(nz(rows), nz(cols), app.state::<App>().settings.lock().unwrap().scrollback())
+}
+fn view(vt: vt100::Parser) -> View { View { vt, next: 0, osc: false, busy: false } }
+
+/// Histórico + tela em texto puro. ponytail: linha quebrada pela largura sai como duas.
+fn export(vt: &mut vt100::Parser) -> String {
+    let (keep, cols) = (vt.screen().scrollback(), vt.screen().size().1.get());
+    vt.screen_mut().set_scrollback(usize::MAX);
+    let mut out: Vec<String> = (1..=vt.screen().scrollback()).rev()
+        .map(|n| { vt.screen_mut().set_scrollback(n); vt.screen().rows(0, cols).next().unwrap_or_default() }).collect();
+    vt.screen_mut().set_scrollback(0);
+    out.extend(vt.screen().rows(0, cols));
+    vt.screen_mut().set_scrollback(keep);
+    let mut s = out.iter().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
+    s.truncate(s.trim_end().len());
+    s
+}
 
 /// Saída a partir de `offset`; o que já foi desenhado (replay repetido) é pulado.
 fn feed(v: &mut View, offset: u64, data: &[u8]) {
@@ -151,11 +168,17 @@ fn on_event(app: &AppHandle, conn: &str, e: ClientEvent) {
             let offset = c["offset"].as_str().and_then(|o| o.parse().ok());
             if let (Some(v), Some(data), Some(offset)) = (t.views.lock().unwrap().get_mut(&k), data, offset) {
                 let (rows, cols) = v.vt.screen().size();
-                v.vt = parser(rows.get(), cols.get());
+                v.vt = parser(app, rows.get(), cols.get());
                 v.vt.process(&data);
                 v.next = offset;
                 t.dirty.lock().unwrap().insert(k);
             }
+        }
+        // OSC 133;D lido pelo host (screen.rs, já trata sequência partida entre pacotes).
+        ClientEvent::Control(c) if c["type"] == "command_completed" => {
+            let k = key(conn, c["session_id"].as_str().unwrap_or_default());
+            if let Some(v) = t.views.lock().unwrap().get_mut(&k) { v.osc = true; v.busy = false; }
+            let _ = app.emit_to(WIN, "term-cmd-done", json!({ "key": k, "code": c["exit_code"] }));
         }
         ClientEvent::Control(_) => {}
         ClientEvent::Exited { session_id, code } => { let _ = app.emit_to(WIN, "term-exited", json!({ "key": key(conn, &session_id), "code": code })); }
@@ -246,7 +269,7 @@ pub fn term_attach(app: AppHandle, conn: String, session_id: String, cols: u16, 
     let c = client(&app, &conn)?;
     let t = app.state::<Term>();
     let (k, views) = (key(&conn, &session_id), &t.views);
-    views.lock().unwrap().insert(k.clone(), View { vt: parser(rows, cols), next: 0 });
+    views.lock().unwrap().insert(k.clone(), view(parser(&app, rows, cols)));
     let r = c.request(json!({ "type": "session_attach", "session_id": session_id, "from_offset": null, "cols": cols, "rows": rows }));
     if r.is_err() { views.lock().unwrap().remove(&k); }
     r
@@ -265,7 +288,7 @@ pub fn term_close(app: AppHandle, conn: String, session_id: String) -> Result<()
 
 #[tauri::command(async)]
 pub fn term_input(app: AppHandle, conn: String, session_id: String, data: String) -> Result<(), String> {
-    with_view(&app, &conn, &session_id, |v| v.vt.screen_mut().set_scrollback(0));
+    with_view(&app, &conn, &session_id, |v| { v.vt.screen_mut().set_scrollback(0); v.busy |= data.contains('\r'); });
     client(&app, &conn)?.input(&session_id, data.as_bytes())
 }
 
@@ -352,9 +375,43 @@ pub fn remote_remove(app: AppHandle, id: String) -> Result<(), String> {
     store(dir, &l)
 }
 
+/// Texto do histórico + tela, para a UI salvar em arquivo.
+#[tauri::command]
+pub fn term_export(app: AppHandle, conn: String, session_id: String) -> String {
+    let mut s = String::new();
+    with_view(&app, &conn, &session_id, |v| s = export(&mut v.vt));
+    s
+}
+
+/// Fechar pede confirmação: comando rodando (só em perfil com OSC 133).
+#[tauri::command]
+pub fn term_busy(app: AppHandle, conn: String, session_id: String) -> bool {
+    let mut b = false;
+    with_view(&app, &conn, &session_id, |v| b = v.osc && v.busy);
+    b
+}
+
+/// Rótulo no host: aparece em `session_list` de todos os clientes.
+#[tauri::command(async)]
+pub fn term_rename(app: AppHandle, conn: String, session_id: String, label: String) -> Result<(), String> {
+    let label: String = label.chars().take(64).collect();
+    client(&app, &conn)?.request(json!({ "type": "session_rename", "session_id": session_id, "label": label })).map(drop)
+}
+
+#[tauri::command]
+pub fn remote_rename(app: AppHandle, id: String, name: String) -> Result<(), String> {
+    let name: String = name.trim().chars().take(40).collect();
+    if name.is_empty() { return Err("INVALID_NAME".into()); }
+    let dir = &app.state::<App>().data_dir;
+    let mut l = load(dir)?;
+    l.iter_mut().find(|r| r.id == id).ok_or("NOT_FOUND")?.name = name;
+    store(dir, &l)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn parser(rows: u16, cols: u16) -> vt100::Parser { vt100::Parser::new(nz(rows), nz(cols), 100) }
 
     #[test]
     fn tela_em_trechos_com_cor_e_cursor() {
@@ -373,11 +430,20 @@ mod tests {
 
     #[test]
     fn replay_repetido_nao_desenha_duas_vezes() {
-        let mut v = View { vt: parser(2, 20), next: 0 };
+        let mut v = view(parser(2, 20));
         feed(&mut v, 0, b"abc");
         feed(&mut v, 0, b"abc");
         feed(&mut v, 2, b"cde");
         assert_eq!(v.vt.screen().contents(), "abcde");
+    }
+
+    #[test]
+    fn exporta_historico_e_tela() {
+        let mut vt = parser(2, 10);
+        vt.process(b"a\r\nb\r\nc\r\nd");
+        vt.screen_mut().set_scrollback(1);
+        assert_eq!(export(&mut vt), "a\nb\nc\nd");
+        assert_eq!(vt.screen().scrollback(), 1, "rolagem da aba preservada");
     }
 
     #[test]

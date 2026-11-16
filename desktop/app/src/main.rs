@@ -154,7 +154,7 @@ fn set_server(app: State<App>, server: String) -> Result<(), String> {
     let server = server.trim().to_string();
     if !settings::valid_server(&server) { return Err("INVALID_SERVER".into()); }
     let mut s = app.settings.lock().unwrap();
-    let new = settings::Settings { server };
+    let new = settings::Settings { server, scrollback: s.scrollback };
     settings::save(&app.data_dir, &new)?;
     let mut svc = app.svc.lock().unwrap();
     svc.stop();
@@ -287,7 +287,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, check_update, install_update,
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
-            term::remote_disconnect, term::remote_remove])
+            term::remote_disconnect, term::remote_remove,
+            term::term_export, term::term_busy, term::term_rename, term::remote_rename])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
