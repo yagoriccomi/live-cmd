@@ -59,6 +59,7 @@ function draw(key) {
     }
     s.append(line);
   }
+  afterDraw();
 }
 
 // ---------- Banner ----------
@@ -373,7 +374,8 @@ $("add-ok").onclick = async () => {
 $("remote-add").onclick = openAdd;
 
 // ---------- Eventos do Rust ----------
-listen("term-screen", ({ payload }) => { screens[payload.key] = payload; if (payload.key === active) draw(active); });
+// Seleção some se o DOM for refeito (a cada ~33 ms): não redesenha enquanto há seleção ou arrasto na tela.
+listen("term-screen", ({ payload }) => { screens[payload.key] = payload; if (payload.key === active && !holdDraw()) draw(active); });
 listen("term-exited", ({ payload }) => {
   const t = tabs.find((t) => t.key === payload.key);
   if (t) { t.exited = payload.code; if (t.key === active) updateBanner(); }
@@ -445,6 +447,7 @@ function send(data) {
 
 $("screen").addEventListener("keydown", (e) => {
   if (e.isComposing || e.key === "Process" || e.key === "Dead") return;
+  if (screenKey(e)) return;
   if (e.ctrlKey && e.shiftKey && ["C", "V", "T", "W", "F6"].includes(e.key.length === 1 ? e.key.toUpperCase() : e.key)) return;
   if (e.ctrlKey && (e.key === "Tab" || (!e.shiftKey && !e.altKey && e.key.toLowerCase() === "b"))) return;
   const b = keyBytes(e);
@@ -471,13 +474,9 @@ document.addEventListener("keydown", (e) => {
   }
   else if (e.ctrlKey && e.shiftKey && k === "C") {
     e.preventDefault();
-    const s = getSelection().toString();
-    if (s) invoke("clip_copy", { text: s }).catch((err) => banner(msg(err), "err"));
+    copySel();
   }
-  else if (e.ctrlKey && e.shiftKey && k === "V") {
-    e.preventDefault();
-    if (t && t.exited == null) invoke("term_paste", { conn: t.conn, sessionId: t.sid }).catch((err) => banner(msg(err), "err"));
-  }
+  else if (e.ctrlKey && e.shiftKey && k === "V") { e.preventDefault(); paste(); }
   else if (e.ctrlKey && e.shiftKey && k === "F6") {
     e.preventDefault();
     $("layout").classList.remove("collapsed");
@@ -485,19 +484,179 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Bloqueia o menu de contexto nativo do WebView (Recarregar, Inspecionar…) na área do terminal.
-$("screen").oncontextmenu = (e) => e.preventDefault();
-
 $("screen").addEventListener("wheel", (e) => {
   const t = tabs.find((t) => t.key === active);
+  if (e.ctrlKey && e.deltaY) { e.preventDefault(); return zoom(e.deltaY < 0 ? 1 : -1); }
   if (!t || !e.deltaY) return;
   e.preventDefault();
   invoke("term_scroll", { conn: t.conn, sessionId: t.sid, lines: e.deltaY < 0 ? 3 : -3 });
 }, { passive: false });
 
+// ---------- F2: tela (copiar/colar, menu, busca, links, fonte, arrastar, ajuda) ----------
+const curTab = () => tabs.find((t) => t.key === active);
+const rowsEl = () => [...$("screen").children].filter((n) => n.id !== "measure");
+let selecting = false, pendingDraw = false;
+const hasSel = () => { const s = getSelection(); return !s.isCollapsed && $("screen").contains(s.anchorNode); };
+function holdDraw() { const h = selecting || hasSel(); pendingDraw ||= h; return h; }
+function flushDraw() { if (pendingDraw && !holdDraw()) { pendingDraw = false; draw(active); } }
+$("screen").addEventListener("mousedown", (e) => { if (e.button === 0) selecting = true; });
+document.addEventListener("mouseup", () => { selecting = false; setTimeout(flushDraw); });
+document.addEventListener("selectionchange", () => { if (!selecting) flushDraw(); });
+
+function copySel() {
+  const s = getSelection().toString();
+  if (!s) return;
+  invoke("clip_copy", { text: s }).catch((err) => banner(msg(err), "err"));
+  getSelection().removeAllRanges();
+  $("screen").focus();
+}
+function paste() {
+  const t = curTab();
+  if (t && t.exited == null) invoke("term_paste", { conn: t.conn, sessionId: t.sid }).catch((err) => banner(msg(err), "err"));
+  $("screen").focus();
+}
+function selectAll() {
+  const r = rowsEl();
+  if (!r.length) return;
+  const g = new Range();
+  g.setStartBefore(r[0]);
+  g.setEndAfter(r[r.length - 1]);
+  getSelection().removeAllRanges();
+  getSelection().addRange(g);
+}
+const action = (name) => () => document.dispatchEvent(new CustomEvent("term-action", { detail: name }));
+
+/** Teclas da tela tratadas aqui (não vão ao PTY). true = consumida. */
+function screenKey(e) {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key, plain = e.ctrlKey && !e.shiftKey && !e.altKey;
+  let done = true;
+  if (plain && k === "c" && hasSel()) copySel();
+  else if (plain && k === "v") paste();
+  else if (plain && k === "f") openFind();
+  else if (plain && (k === "=" || k === "+")) zoom(1);
+  else if (plain && k === "-") zoom(-1);
+  else if (plain && k === "0") zoom(0);
+  else if (!e.ctrlKey && !e.altKey && !e.shiftKey && k === "F1") help();
+  else if (k === "ContextMenu" || (e.shiftKey && k === "F10")) { const r = $("screen").getBoundingClientRect(); ctxMenu(r.left + 20, r.top + 20); }
+  else done = false;
+  if (done) { e.preventDefault(); e.stopPropagation(); }
+  return done;
+}
+
+// Menu de contexto da tela (substitui o nativo do WebView: Recarregar, Inspecionar…).
+function ctxMenu(x, y) {
+  const at = { getBoundingClientRect: () => ({ left: x, bottom: y }), focus: () => $("screen").focus() };
+  menu(at, [
+    ["Copiar   Ctrl+C", hasSel() ? copySel : null], ["Colar   Ctrl+V", paste], ["Selecionar tudo", selectAll], ["Buscar   Ctrl+F", openFind],
+    ["Nova sessão   Ctrl+Shift+T", action("new")], ["Renomear aba", action("rename")], ["Fechar aba   Ctrl+Shift+W", action("close")],
+    ["Exportar saída", action("export")], ["Dividir painel", action("split")], ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
+    ["Aumentar fonte   Ctrl+=", () => zoom(1)], ["Diminuir fonte   Ctrl+-", () => zoom(-1)], ["Redefinir fonte   Ctrl+0", () => zoom(0)],
+    // ponytail: Ctrl+L limpa em pwsh/bash; cmd ignora. Trocar por comando no Rust (limpar buffer vt100) se precisar.
+    ["Limpar", () => { send("\x0c"); $("screen").focus(); }],
+  ].filter(([, fn]) => fn));
+}
+$("screen").oncontextmenu = (e) => { e.preventDefault(); ctxMenu(e.clientX, e.clientY); };
+
+// Fonte: Ctrl+roda, Ctrl+=/-/0; salva no localStorage e recalcula cols/rows.
+const FONT0 = 13.6;
+let font = +localStorage.getItem("term-font") || FONT0;
+function zoom(d) {
+  font = d ? Math.max(8, Math.min(32, font + d)) : FONT0;
+  localStorage.setItem("term-font", font);
+  $("screen").style.fontSize = font + "px";
+  fit();
+}
+$("screen").style.fontSize = font + "px";
+
+// Busca (Ctrl+F) nas linhas desenhadas, com CSS Highlight; no fim da tela rola o histórico (term_scroll).
+let findQ = "", findI = 0, findDir = 0, findHits = [];
+function openFind() { $("find").hidden = false; $("find-q").select(); $("find-q").focus(); }
+function closeFind() { $("find").hidden = true; findQ = ""; afterDraw(); $("screen").focus(); }
+function afterDraw() {
+  CSS.highlights?.delete("find"); CSS.highlights?.delete("find-cur");
+  findHits = [];
+  if (!findQ) { $("find-n").textContent = ""; return; }
+  const q = findQ.toLowerCase();
+  for (const row of rowsEl()) {
+    const nodes = [], w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+    let text = "";
+    while (w.nextNode()) { nodes.push([w.currentNode, text.length]); text += w.currentNode.data; }
+    text = text.toLowerCase();
+    const at = (o) => { const [n, s] = nodes.findLast(([, s]) => s <= o) || nodes[0]; return [n, Math.min(o - s, n.data.length)]; };
+    for (let i = text.indexOf(q); i >= 0; i = text.indexOf(q, i + 1)) {
+      const r = new Range();
+      r.setStart(...at(i)); r.setEnd(...at(i + q.length));
+      findHits.push(r);
+    }
+  }
+  if (findDir) findI = findDir < 0 ? findHits.length - 1 : 0;
+  findDir = 0;
+  findI = Math.max(0, Math.min(findI, findHits.length - 1));
+  if (findHits.length && window.Highlight) {
+    CSS.highlights.set("find", new Highlight(...findHits));
+    CSS.highlights.set("find-cur", new Highlight(findHits[findI]));
+  }
+  $("find-n").textContent = findHits.length ? `${findI + 1} de ${findHits.length}` : "Nada nesta tela";
+}
+function findStep(d) {
+  if (findHits.length && findI + d >= 0 && findI + d < findHits.length) { findI += d; return afterDraw(); }
+  // Acabou na tela: rola uma tela no histórico (para cima = anteriores) e procura de novo no próximo desenho.
+  const t = curTab();
+  if (!t) return;
+  findDir = d;
+  const n = size().rows;
+  invoke("term_scroll", { conn: t.conn, sessionId: t.sid, lines: d < 0 ? n : -n }).catch(() => {});
+}
+$("find-q").oninput = () => { findQ = $("find-q").value; findI = 0; afterDraw(); };
+$("find-q").onkeydown = (e) => {
+  if (e.key === "Enter") { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
+  else if (e.key === "Escape") { e.preventDefault(); closeFind(); }
+};
+$("find-prev").onclick = () => findStep(-1);
+$("find-next").onclick = () => findStep(1);
+$("find-x").onclick = closeFind;
+
+// Links: Ctrl+clique abre URL no navegador; caminho Windows abre no Explorer (mostra o item, não executa).
+$("screen").addEventListener("click", (e) => {
+  if (!e.ctrlKey) return;
+  const c = document.caretRangeFromPoint(e.clientX, e.clientY), row = c && rowsEl().find((r) => r.contains(c.startContainer));
+  if (!row) return;
+  const pre = new Range();
+  pre.setStart(row, 0); pre.setEnd(c.startContainer, c.startOffset);
+  const link = linkAt(row.textContent, pre.toString().length);
+  if (!link) return;
+  e.preventDefault();
+  const op = window.__TAURI__.opener;
+  (/^https?:/.test(link) ? op.openUrl(link) : op.revealItemInDir(link)).catch(() => banner(msg("NOT_FOUND"), "err"));
+});
+$("screen").addEventListener("mousemove", (e) => $("screen").classList.toggle("ctrl", e.ctrlKey));
+
+// Arrastar arquivo(s) para a janela: cola o(s) caminho(s) entre aspas.
+window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(({ payload }) => {
+  if (payload.type !== "drop" || !payload.paths?.length) return;
+  send(payload.paths.map((p) => `"${p}"`).join(" "));
+  $("screen").focus();
+});
+
+// Ajuda (F1).
+const KEYS = [["Ctrl+C", "Copiar seleção (sem seleção: interrompe, ^C)"], ["Ctrl+V / Ctrl+Shift+V", "Colar"], ["Ctrl+Shift+C", "Copiar seleção"],
+  ["Ctrl+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba"],
+  ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
+  ["Ctrl+= / Ctrl+- / Ctrl+0", "Aumentar / diminuir / redefinir fonte"], ["Ctrl+roda do mouse", "Zoom da fonte"], ["Roda do mouse", "Rolar histórico"],
+  ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito / Shift+F10", "Menu do terminal"], ["Arrastar arquivo", "Cola o caminho"], ["F1", "Esta ajuda"]];
+function help() {
+  const opener = document.activeElement;
+  $("help-list").replaceChildren(...KEYS.flatMap(([k, d]) => [el("dt", "mono", k), el("dd", null, d)]));
+  $("help-scrim").hidden = false;
+  const end = () => { $("help-scrim").hidden = true; opener?.focus(); };
+  $("help-ok").onclick = end;
+  trap($("help"), end);
+  $("help-ok").focus();
+}
+
 // ---------- Tamanho ----------
 let resizeTimer = 0;
-new ResizeObserver(() => {
+function fit() {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     const t = tabs.find((t) => t.key === active);
@@ -505,7 +664,8 @@ new ResizeObserver(() => {
     const { cols, rows } = size();
     invoke("term_resize", { conn: t.conn, sessionId: t.sid, cols, rows }).catch(() => {});
   }, 100);
-}).observe($("screen"));
+}
+new ResizeObserver(fit).observe($("screen"));
 
 // ---------- Início ----------
 $("local-new").onclick = () => profileMenu($("local-new"), LOCAL);

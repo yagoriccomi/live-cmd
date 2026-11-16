@@ -172,3 +172,13 @@ select { font:inherit; padding:6px 10px; border-radius:var(--radius); border:1px
 .palette ul { list-style:none; margin:var(--space) 0; padding:0; max-height:50vh; overflow:auto; }
 .palette li { padding:6px 10px; border-radius:var(--radius); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .palette li[aria-selected=true] { background:var(--accent); color:var(--on-accent); }
+/* F2 */
+.terminal { font-size:13.6px; }
+.terminal.ctrl { cursor:pointer; }
+::highlight(find) { background:#6b5a00; color:#fff; }
+::highlight(find-cur) { background:#f0c000; color:#000; }
+.find-bar { position:absolute; top:6px; right:16px; z-index:1; display:flex; gap:4px; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:4px 6px; }
+.find-bar input { width:200px; padding:3px 8px; }
+.find-bar button { padding:2px 8px; }
+.keys { display:grid; grid-template-columns:auto 1fr; gap:4px 16px; margin:0; max-height:60vh; overflow:auto; }
+.keys dd { margin:0; }
