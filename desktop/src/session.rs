@@ -137,8 +137,13 @@ fn new_sid() -> R<Sid> {
 impl Sessions {
     /// `session_create`: o perfil já foi resolvido e o PTY aberto por quem chama.
     pub fn create(&mut self, pty: Box<dyn Pty + Send>, label: Option<String>, cols: u16, rows: u16, now: u64) -> R<Sid> {
+        self.create_as(new_sid()?, pty, label, cols, rows, now)
+    }
+
+    /// Como `create`, com o id escolhido (restauração do disco mantém o id que a UI conhece).
+    pub fn create_as(&mut self, sid: Sid, pty: Box<dyn Pty + Send>, label: Option<String>, cols: u16, rows: u16, now: u64) -> R<Sid> {
         if self.s.len() >= MAX_SESSIONS { return Err(LimitExceeded); }
-        let sid = new_sid()?;
+        if self.s.contains_key(&sid) { return Err(InvalidMessage); }
         let ring = Ring { buf: VecDeque::new(), start: 0, nl: VecDeque::new() };
         self.s.insert(sid, Session { pty, label, created: now, activity: now, cols, rows, exit: None, closed: false, ring, dropped: vec![], input_seq: HashMap::new(), att: HashMap::new() });
         Ok(sid)
@@ -185,9 +190,7 @@ impl Sessions {
         Ok(json!({"type":"session_detach_ok"}))
     }
 
-    /// `session_rename`: rótulo só em memória, como o do `session_create`.
-    /// ponytail: sem disco de propósito; a sessão (ConPTY) morre com o host, então o rótulo não tem para quem voltar.
-    /// Persistir junto quando sessões sobreviverem ao reinício do host.
+    /// `session_rename`: o rótulo vai para o disco junto com a sessão (`sessions.json`, ver `lib.rs`).
     pub fn rename(&mut self, sid: Sid, label: String) -> R<Value> {
         self.s.get_mut(&sid).ok_or(NotFound)?.label = Some(label);
         Ok(json!({"type":"session_rename_ok"}))
@@ -258,6 +261,15 @@ impl Sessions {
         let Some(a) = x.att.get_mut(&conn) else { return vec![] };
         a.queued = a.queued.saturating_sub(n);
         x.fill(sid, conn)
+    }
+
+    /// Sessões para o disco: (id, rótulo, cols, rows, últimos `tail` bytes de saída). Fica de fora só a fechada de propósito:
+    /// no desligamento o Windows mata os shells antes do app, e essas saídas não podem apagar o arquivo.
+    pub fn saved(&self, tail: usize) -> Vec<(Sid, String, u16, u16, Vec<u8>)> {
+        self.s.iter().filter(|(_, x)| !x.closed).map(|(sid, x)| {
+            let n = x.ring.buf.len().min(tail);
+            (*sid, x.label.clone().unwrap_or_default(), x.cols, x.rows, x.ring.read(x.ring.end() - n as u64, n))
+        }).collect()
     }
 
     /// Bytes descartados do ring pelo último `on_output` (a tela no `buffer_start` avança com eles).

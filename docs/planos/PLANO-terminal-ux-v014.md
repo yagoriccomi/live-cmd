@@ -7,7 +7,7 @@ Origem: auditoria de 2026-11-16 (10 feitos, 9 parciais, 1 falta, 2 decisões div
 | # | Item | Fatia | Estado |
 |---|---|---|---|
 | D2c | Botão direito cola; Shift+botão direito / ☰ / Shift+F10 abre menu | G3 | feito |
-| D4 | Nome da sessão persistido em disco no host | G1 | não feito por decisão: nome fica em memória, sincronizado entre PCs; a sessão morre com o host |
+| D4 | Nome da sessão persistido em disco no host | G1 | feito: `sessions.json` guarda id, perfil, nome, cwd, tamanho e fim da tela; host recria as sessões ao iniciar e a UI reabre as abas. O processo em execução não volta |
 | 3 | Zoom de fonte salvo por PC | G3 | feito |
 | 8/9/17/18 | cmd: OSC 133/7 via `PROMPT` ($E) → atividade, fim de comando, cwd, confirmar fechar | G1 | feito |
 | 10 | Arrastar arquivo para sessão remota: envia o arquivo ao outro PC (local: cola caminho) | G3 | feito (v0.1.5): remoto envia pelo `file-channel` do cliente (`Client::upload`, `term_upload`) para a pasta atual da sessão ou a padrão do host; local cola caminho. Sem retomada nem leitura em blocos (ponytail) |

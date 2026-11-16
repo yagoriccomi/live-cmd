@@ -87,13 +87,60 @@ struct Hub { s: session::Sessions, screens: HashMap<Sid, screen::Screen>, /// Te
     base: HashMap<Sid, screen::Screen>, plain: HashSet<Sid>, conns: HashMap<ConnId, mpsc::UnboundedSender<Out>>,
     /// Aparelho de cada conexão autenticada (`Status.connected`, `Device.connected`).
     peers: HashMap<ConnId, Pk>, profiles: Vec<(String, Profile)>,
-    /// Último cwd anunciado por OSC 7 (destino padrão do C4, §2.3).
-    cwds: HashMap<Sid, PathBuf> }
+    /// Último cwd anunciado por OSC 7 (destino padrão do C4, §2.3); na criação, o `cwd` pedido.
+    cwds: HashMap<Sid, PathBuf>,
+    /// Perfil de cada sessão, para recriar do disco.
+    prof: HashMap<Sid, String>,
+    /// `sessions.json` (só no serviço de verdade; testes ficam sem disco) e se mudou desde a última gravação.
+    store: Option<PathBuf>, dirty: bool }
 static HUB: LazyLock<Mutex<Hub>> = LazyLock::new(Default::default);
 static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
 fn hub() -> MutexGuard<'static, Hub> { HUB.lock().unwrap_or_else(|e| e.into_inner()) }
 fn now_ms() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64) }
 impl Hub {
+    /// Abre o PTY do perfil e registra a sessão (`sid` dado = restauração do disco).
+    fn open(&mut self, sid: Option<Sid>, profile_id: &str, cwd: Option<PathBuf>, label: Option<String>, cols: u16, rows: u16, now: u64) -> std::result::Result<Sid, auth::Error> {
+        let p = self.profiles.iter().find(|p| p.0 == profile_id).ok_or(auth::Error::NotFound)?.1.clone();
+        let cell = Arc::new(OnceLock::new());
+        let c = cell.clone();
+        // O lock do hub é tomado antes de ler `cell`: a saída que chegar antes do `create` espera, não se perde.
+        let pty = conpty::ConPty::spawn(&p.command, cwd.as_deref(), cols, rows, move |ev| { let mut h = hub(); if let Some(sid) = c.get() { h.pty(*sid, ev) } }).map_err(|_| auth::Error::IoError)?;
+        let pty = Box::new(pty);
+        let sid = match sid { Some(id) => self.s.create_as(id, pty, label, cols, rows, now)?, None => self.s.create(pty, label, cols, rows, now)? };
+        let _ = cell.set(sid);
+        self.screens.insert(sid, screen::Screen::new(cols, rows, p.osc));
+        self.base.insert(sid, screen::Screen::new(cols, rows, false));
+        if !p.osc { self.plain.insert(sid); }
+        if let Some(d) = cwd { self.cwds.insert(sid, d); }
+        self.prof.insert(sid, profile_id.into());
+        self.dirty = true;
+        Ok(sid)
+    }
+    #[cfg(test)]
+    fn handle_close_for_test(&mut self, sid: Sid) { let _ = self.s.close(sid); self.forget(&[sid]); self.dirty = true; }
+    /// Grava `sessions.json` (tmp + rename) se algo mudou.
+    fn save(&mut self) {
+        let Some(path) = self.store.clone().filter(|_| self.dirty) else { return };
+        self.dirty = false;
+        let list: Vec<Saved> = self.s.saved(SAVED_TAIL).into_iter().filter_map(|(sid, label, cols, rows, tail)| Some(Saved {
+            id: proto::uuid_str(&sid), profile: self.prof.get(&sid)?.clone(), label, cwd: self.cwds.get(&sid).cloned(), cols, rows, tail: B64.encode(tail),
+        })).collect();
+        // ponytail: falha ao gravar é silenciosa (sem console no app); tenta de novo no próximo save.
+        let _ = write_saved(&path, &list);
+    }
+    /// Recria as sessões do disco: mesmo id, perfil, rótulo e pasta; a saída salva volta como histórico.
+    fn restore(&mut self, list: Vec<Saved>) {
+        for x in list {
+            let Some(sid) = auth::uuid_bytes(&x.id) else { continue };
+            let cwd = x.cwd.filter(|d| d.is_dir());
+            let label = Some(x.label).filter(|l| !l.is_empty());
+            if self.open(Some(sid), &x.profile, cwd, label, x.cols.max(1), x.rows.max(1), now_ms()).is_err() { continue; }
+            let mut out = B64.decode(&x.tail).unwrap_or_default();
+            // Sai da tela alternativa e zera cores de um programa que estava aberto; depois, o separador.
+            out.extend_from_slice("\x1b[?1049l\x1b[0m\r\n\x1b[2m— sessão restaurada —\x1b[0m\r\n".as_bytes());
+            self.pty(sid, conpty::Ev::Output(out));
+        }
+    }
     fn deliver(&mut self, outs: impl IntoIterator<Item = (ConnId, Out)>) {
         for (c, o) in outs {
             let o = match o {
@@ -114,6 +161,7 @@ impl Hub {
             conpty::Ev::Output(d) => {
                 let events = self.screens.get_mut(&sid).map(|s| s.feed(&d)).unwrap_or_default();
                 for e in &events { if let screen::Event::Cwd(c) = e { self.cwds.insert(sid, c.into()); } }
+                self.dirty = true;
                 let mut outs = self.s.on_output(sid, &d, now_ms());
                 if let Some(b) = self.base.get_mut(&sid) { b.feed(self.s.dropped(&sid)); }
                 for c in self.s.attached(&sid) { outs.extend(events.iter().map(|e| (c, Out::Ctl(screen::event_body(&sid, e))))); }
@@ -133,16 +181,7 @@ impl Hub {
             Req::Create { profile_id, cols, rows, label, cwd } => {
                 let cwd = cwd.map(PathBuf::from);
                 if cwd.as_ref().is_some_and(|d| !d.is_absolute() || !d.is_dir()) { return Err(auth::Error::NotFound); }
-                let p = self.profiles.iter().find(|p| p.0 == profile_id).ok_or(auth::Error::NotFound)?.1.clone();
-                let cell = Arc::new(OnceLock::new());
-                let c = cell.clone();
-                // O lock do hub é tomado antes de ler `cell`: a saída que chegar antes do `create` espera, não se perde.
-                let pty = conpty::ConPty::spawn(&p.command, cwd.as_deref(), cols, rows, move |ev| { let mut h = hub(); if let Some(sid) = c.get() { h.pty(*sid, ev) } }).map_err(|_| auth::Error::IoError)?;
-                let sid = self.s.create(Box::new(pty), label, cols, rows, now)?;
-                let _ = cell.set(sid);
-                self.screens.insert(sid, screen::Screen::new(cols, rows, p.osc));
-                self.base.insert(sid, screen::Screen::new(cols, rows, false));
-                if !p.osc { self.plain.insert(sid); }
+                let sid = self.open(None, &profile_id, cwd, label, cols, rows, now)?;
                 json!({"type":"session_create_ok","session_id":proto::uuid_str(&sid)})
             }
             Req::List => json!({"type":"session_list_ok","sessions":self.s.list(),
@@ -155,11 +194,25 @@ impl Hub {
                 ok
             }
             Req::Detach(sid) => self.s.detach(conn, sid, now)?,
-            Req::Close(sid) => { let ok = self.s.close(sid)?; self.forget(&[sid]); ok }
+            Req::Close(sid) => { let ok = self.s.close(sid)?; self.forget(&[sid]); self.dirty = true; ok }
             Req::Focus(_) => unreachable!("tratado na conexão"),
-            Req::Rename { session_id, label } => self.s.rename(session_id, label)?,
+            Req::Rename { session_id, label } => { self.dirty = true; self.s.rename(session_id, label)? }
         })
     }
+}
+/// Últimos bytes de saída de cada sessão guardados no disco.
+const SAVED_TAIL: usize = 128 << 10;
+/// Uma sessão em `sessions.json`.
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+struct Saved { id: String, profile: String, label: String, cwd: Option<PathBuf>, cols: u16, rows: u16, tail: String }
+fn write_saved(path: &Path, list: &[Saved]) -> std::io::Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec(list)?)?;
+    std::fs::rename(&tmp, path)
+}
+/// Arquivo ausente ou ilegível = nada a restaurar.
+fn read_saved(path: &Path) -> Vec<Saved> {
+    std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 /// Remove a conexão do hub em qualquer saída do loop.
 struct Reg(ConnId);
@@ -710,8 +763,18 @@ impl Service {
         let key = host_key().map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&cfg.data_dir).map_err(|e| e.to_string())?;
         let host = Host::with_store(key, cfg.data_dir.join("trust.json")).map_err(|e| e.to_string())?;
-        hub().profiles = profiles(&cfg.data_dir.join("profiles.json")).map_err(|e| e.to_string())?;
-        Self::with_host(cfg, host)
+        let store = cfg.data_dir.join("sessions.json");
+        {
+            let mut h = hub();
+            h.profiles = profiles(&cfg.data_dir.join("profiles.json")).map_err(|e| e.to_string())?;
+            h.restore(read_saved(&store));
+            h.store = Some(store);
+            h.save();
+        }
+        let svc = Self::with_host(cfg, host)?;
+        // Debounce: grava no máximo a cada 2 s, só se algo mudou.
+        std::thread::spawn(|| loop { std::thread::sleep(Duration::from_secs(2)); hub().save(); });
+        Ok(svc)
     }
     fn with_host(cfg: Config, host: Arc<Host>) -> std::result::Result<Service, String> {
         auth::uuid_v4_lower(&cfg.room).ok_or("room UUID")?;
@@ -761,6 +824,7 @@ impl Service {
     }
     /// Encerra a tentativa atual e o laço; espera a thread (a PeerConnection fecha em até 2 s).
     pub fn stop(&self) {
+        hub().save();
         self.0.stop.send_replace(true);
         let t = self.0.thread.lock().unwrap().take();
         if let Some(t) = t { let _ = t.join(); }
@@ -792,6 +856,33 @@ async fn presence(i: &Inner) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Persistência: sessão salva em disco volta com mesmo id, rótulo, pasta e histórico; a fechada some do arquivo.
+    #[test]
+    fn sessions_persist_and_restore() {
+        let dir = std::env::temp_dir().join(format!("live-cmd-persist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("sessions.json");
+        let prof = || vec![("test-cmd".to_string(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false })];
+        let mut a = Hub { profiles: prof(), store: Some(store.clone()), ..Default::default() };
+        let keep = a.open(None, "test-cmd", Some(dir.clone()), Some("build".into()), 80, 24, now_ms()).unwrap();
+        let gone = a.open(None, "test-cmd", None, None, 80, 24, now_ms()).unwrap();
+        a.s.on_output(keep, b"marca-persist\r\n", now_ms());
+        a.handle_close_for_test(gone);
+        a.save();
+        let saved = read_saved(&store);
+        assert_eq!(saved.len(), 1, "fechada de propósito sai do arquivo");
+        assert_eq!((saved[0].id.as_str(), saved[0].label.as_str(), saved[0].cwd.as_deref()), (proto::uuid_str(&keep).as_str(), "build", Some(dir.as_path())));
+        for sid in [keep] { let _ = a.s.close(sid); }
+        let mut b = Hub { profiles: prof(), ..Default::default() };
+        b.restore(saved);
+        assert_eq!(b.s.size(&keep), Some((80, 24)), "mesmo id");
+        let tail = b.s.saved(1 << 20).remove(0).4;
+        let t = String::from_utf8_lossy(&tail);
+        assert!(t.contains("marca-persist") && t.contains("sessão restaurada"), "{t}");
+        let _ = b.s.close(keep);
+        let _ = std::fs::remove_dir_all(dir);
+    }
     fn text(data: &[u8], is_string: bool) -> Result<&str> {
         if !is_string || data.len()>16384 { return Err("message limit/type".into()); }
         Ok(std::str::from_utf8(data)?)

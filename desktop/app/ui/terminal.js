@@ -936,7 +936,10 @@ new ResizeObserver(fit).observe($("screen"));
 // ---------- Início ----------
 $("local-new").onclick = () => profileMenu($("local-new"), LOCAL);
 $("empty-new").onclick = () => newSession(LOCAL);
-refresh(LOCAL);
+// Retomar: abre em abas todas as sessões locais vivas (inclusive as restauradas do disco).
+refresh(LOCAL).then(async () => {
+  for (const s of conns[LOCAL].sessions || []) if (s.state !== "closed") await openSession(LOCAL, s).catch(() => {});
+});
 refreshRemotes();
 // Sessões criadas pelo celular aparecem sozinhas; não redesenha a lista sob o foco do teclado.
 // ponytail: polling de 5 s; trocar por evento do host quando C3 tiver aviso de sessão nova.

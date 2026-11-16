@@ -236,7 +236,7 @@ fn ask(text: &str, flags: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_ST
 fn quit(app: &AppHandle) {
     let n = app.state::<App>().svc.lock().unwrap().status().connected;
     // ponytail: MessageBox nativa tem botões OK/Cancelar, não "Sair"/"Cancelar"; usar tauri-plugin-dialog se o rótulo importar.
-    let msg = format!("Sair do live-cmd?\n\n{} serão desconectados e os terminais abertos serão encerrados.",
+    let msg = format!("Sair do live-cmd?\n\n{} serão desconectados. Os terminais abertos serão reabertos na próxima vez (programas em execução são encerrados).",
         if n == 1 { "1 aparelho".to_string() } else { format!("{n} aparelhos") });
     if n > 0 && !ask(&msg, MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2) { return; }
     let a = app.state::<App>();
