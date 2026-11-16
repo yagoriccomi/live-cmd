@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::num::NonZeroU16;
 
 /// Prompt do perfil pwsh: emite fim do comando anterior (a partir do 2º prompt) e a pasta atual.
-pub const PWSH_PROMPT: &str = r#"function prompt { $c = if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }; $o = ''; if ($global:__lc) { $o = "`e]133;D;$c`a" }; $global:__lc = 1; "$o`e]7;$(([uri]$PWD.ProviderPath).AbsoluteUri)`aPS $($PWD.ProviderPath)> " }"#;
+pub const PWSH_PROMPT: &str = r#"function prompt { $c = if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }; $e = [char]27; $a = [char]7; $o = ''; if ($global:__lc) { $o = "$e]133;D;$c$a" }; $global:__lc = 1; "$o$e]7;$(([uri]$PWD.ProviderPath).AbsoluteUri)$($a)PS $($PWD.ProviderPath)> " }"#;
 /// `PROMPT_COMMAND` do perfil WSL (bash). `$PWD` vai percent-encoded byte a byte (subshell com `LC_ALL=C`).
 pub const BASH_PROMPT_COMMAND: &str = r#"__lc=$?; [ -n "$__lc_s" ] && printf '\e]133;D;%s\a' "$__lc"; __lc_s=1; (LC_ALL=C; s=$PWD o=; for ((i=0;i<${#s};i++)); do c=${s:i:1}; case $c in [a-zA-Z0-9/._~-]) o+=$c;; *) printf -v c '%%%02X' "'$c"; o+=$c;; esac; done; printf '\e]7;file://%s%s\a' "$HOSTNAME" "$o")"#;
 /// OSC maior que isto é descartado sem chegar ao parser (o `vte` com `std` acumula sem limite).
@@ -345,6 +345,17 @@ mod tests {
         assert_eq!(s.feed(format!("\x1b]7;file://{p}\x1b\\").as_bytes()), vec![Event::Cwd(p.clone())]);
         assert!(s.feed(format!("\x1b]7;file://{p}c\x1b\\z").as_bytes()).is_empty());
         assert_eq!(s.vt.screen().contents(), "okz");
+    }
+
+    /// Windows PowerShell 5.1 não conhece `` `e ``/`` `a ``: o prompt imprimia `e]7;...` como texto.
+    #[test]
+    #[cfg(windows)]
+    fn pwsh_51_emite_osc_de_verdade() {
+        let o = std::process::Command::new("powershell.exe").args(["-NoProfile", "-Command", &format!("{PWSH_PROMPT}; prompt; prompt")]).output().unwrap();
+        let mut s = Screen::new(200, 24, true);
+        let ev = s.feed(&o.stdout);
+        assert!(!s.vt.screen().contents().contains("]7;"), "{:?}", s.vt.screen().contents());
+        assert!(ev.contains(&Event::CommandCompleted(Some(0))) && ev.iter().any(|e| matches!(e, Event::Cwd(_))), "{ev:?}");
     }
 
     #[test]
