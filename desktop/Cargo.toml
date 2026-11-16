@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 webrtc = "=0.21.1"
-tokio-tungstenite = "=0.30.0"
+tokio-tungstenite = { version = "=0.30.0", features = ["native-tls"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync", "net"] }
 async-trait = "0.1"
 futures-util = { version = "0.3", features = ["sink"] }
