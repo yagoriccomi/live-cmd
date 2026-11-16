@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Button, Linking, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { getRandomBytes } from 'expo-crypto';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { b64d, b64e, parseQr } from './src/auth.ts';
 import { Conn, type Pin } from './src/conn.ts';
 
@@ -29,14 +30,24 @@ export default function App() {
   const [line, setLine] = useState('');
   const conn = useRef<Conn | null>(null);
   const scroll = useRef<any>(null);
+  const [scan, setScan] = useState(false);
+  const [, askCam] = useCameraPermissions();
 
   useEffect(() => { SecureStore.getItemAsync('pin').then(p => p && setPin(JSON.parse(p))); }, []);
+  // QR lido pela câmera do sistema abre o app via scheme remoteterm://
+  useEffect(() => {
+    const go = (u?: string | null) => { if (u?.startsWith('remoteterm://pair?')) { setLink(u); connect(true, u); } };
+    Linking.getInitialURL().then(go);
+    const s = Linking.addEventListener('url', e => go(e.url));
+    return () => s.remove();
+  }, []);
 
-  async function connect(pair: boolean) {
+  async function connect(pair: boolean, text = link) {
     try {
       let p = pin, otk: Uint8Array | undefined;
       if (pair) {
-        const q = parseQr(link.trim(), ALLOW);
+        const t = text.trim();
+        const q = parseQr(t.slice(Math.max(0, t.indexOf('remoteterm://'))), ALLOW);
         p = { hostPk: b64e(q.hostPk), room: q.session, server: q.server };
         otk = q.otk;
       }
@@ -57,6 +68,14 @@ export default function App() {
   const send = (s: string) => conn.current?.input(enc.encode(s));
   const on = !!conn.current;
 
+  if (scan) return (
+    <SafeAreaView style={st.root}>
+      <CameraView style={{ flex: 1 }} barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+        onBarcodeScanned={({ data }) => { if (!data.includes('remoteterm://pair?')) return; setScan(false); setLink(data); connect(true, data); }} />
+      <Button title="Cancelar" onPress={() => setScan(false)} />
+    </SafeAreaView>
+  );
+
   return (
     <SafeAreaView style={st.root}>
       <Text style={st.status}>{status}</Text>
@@ -64,6 +83,7 @@ export default function App() {
         <View>
           <TextInput style={st.input} value={link} onChangeText={setLink} placeholder="Cole o link remoteterm://pair?..." autoCapitalize="none" autoCorrect={false} />
           <Button title="Parear" onPress={() => connect(true)} disabled={!link} />
+          <Button title="Ler QR code" onPress={async () => { if ((await askCam()).granted) setScan(true); }} />
           {pin && <Button title="Conectar ao PC pareado" onPress={() => connect(false)} />}
         </View>
       )}
