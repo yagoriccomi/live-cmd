@@ -540,7 +540,7 @@ mod snapshot_tests {
         use std::time::Duration;
         let (cols, rows) = (80u16, 24u16);
         let (tx, rx) = mpsc::channel();
-        let mut pty = crate::conpty::ConPty::spawn("cmd.exe", cols, rows, move |e| { if let crate::conpty::Ev::Output(d) = e { let _ = tx.send(d); } }).unwrap();
+        let mut pty = crate::conpty::ConPty::spawn("cmd.exe", None, cols, rows, move |e| { if let crate::conpty::Ev::Output(d) = e { let _ = tx.send(d); } }).unwrap();
         let mut t = Sessions::default();
         let sid = t.create(Box::new(P), None, cols, rows, 0).unwrap();
         let mut base = Screen::new(cols, rows, false);

@@ -2,6 +2,7 @@
 use crate::session::Pty;
 use std::io::{self, Read, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::os::windows::ffi::OsStrExt;
 use std::sync::{mpsc, Arc, Mutex};
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
@@ -23,7 +24,7 @@ fn raw(h: &OwnedHandle) -> HANDLE { HANDLE(h.as_raw_handle()) }
 
 impl ConPty {
     /// `on` roda na thread de leitura: toda a saída, na ordem, e por fim `Exit` (após o EOF).
-    pub fn spawn(cmd: &str, cols: u16, rows: u16, mut on: impl FnMut(Ev) + Send + 'static) -> io::Result<Self> {
+    pub fn spawn(cmd: &str, cwd: Option<&std::path::Path>, cols: u16, rows: u16, mut on: impl FnMut(Ev) + Send + 'static) -> io::Result<Self> {
         unsafe {
             // Se o host herdou "Ctrl+C ignorado" (ex.: criado com CREATE_NEW_PROCESS_GROUP), o filho herdaria e o 0x03 não interromperia nada.
             let _ = SetConsoleCtrlHandler(None, false);
@@ -44,10 +45,11 @@ impl ConPty {
             si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
             si.lpAttributeList = list;
             let mut cmd: Vec<u16> = cmd.encode_utf16().chain([0]).collect();
+            let dir: Option<Vec<u16>> = cwd.map(|d| d.as_os_str().encode_wide().chain([0]).collect());
             let mut pi = PROCESS_INFORMATION::default();
             let r = InitializeProcThreadAttributeList(Some(list), 1, None, &mut size)
                 .and_then(|_| UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize, Some(hpc.0 as *const _), size_of::<HPCON>(), None, None))
-                .and_then(|_| CreateProcessW(PCWSTR::null(), Some(PWSTR(cmd.as_mut_ptr())), None, None, false, FLAGS, None, PCWSTR::null(), &si.StartupInfo, &mut pi));
+                .and_then(|_| CreateProcessW(PCWSTR::null(), Some(PWSTR(cmd.as_mut_ptr())), None, None, false, FLAGS, None, dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())), &si.StartupInfo, &mut pi));
             DeleteProcThreadAttributeList(list);
             if let Err(e) = r { ClosePseudoConsole(hpc); return Err(io(e)); }
             let _ = CloseHandle(pi.hThread);
@@ -117,7 +119,7 @@ mod tests {
         assert_ne!(FLAGS.0 & EXTENDED_STARTUPINFO_PRESENT.0, 0);
         assert_eq!(FLAGS.0 & (CREATE_NEW_CONSOLE.0 | DETACHED_PROCESS.0 | CREATE_NO_WINDOW.0), 0, "janela própria ou desvinculado do pseudoconsole");
         let (tx, rx) = mpsc::channel();
-        let mut p = ConPty::spawn("cmd.exe", 80, 25, move |e| { let _ = tx.send(e); }).unwrap();
+        let mut p = ConPty::spawn("cmd.exe", None, 80, 25, move |e| { let _ = tx.send(e); }).unwrap();
         let mut acc = String::new();
         p.write(b"echo live-cmd-ok\r").unwrap();
         wait(&rx, &mut acc, "live-cmd-ok\r\n").unwrap();
@@ -135,5 +137,16 @@ mod tests {
         wait(&rx, &mut acc, "after-ctrl-c\r\n").unwrap();
         p.write(b"exit 7\r").unwrap();
         assert_eq!(wait(&rx, &mut acc, "\u{0}never"), Err(7));
+    }
+
+    #[test]
+    fn cwd_inicial() {
+        let (tx, rx) = mpsc::channel();
+        let dir = std::env::temp_dir().canonicalize().unwrap();
+        let _p = ConPty::spawn("cmd.exe /c cd", Some(&dir), 80, 25, move |e| { let _ = tx.send(e); }).unwrap();
+        let mut acc = String::new();
+        assert!(wait(&rx, &mut acc, "\u{0}never").is_err());
+        let want = dir.to_string_lossy().trim_start_matches(r"\\?\").to_lowercase();
+        assert!(acc.to_lowercase().contains(&want), "{acc:?}");
     }
 }

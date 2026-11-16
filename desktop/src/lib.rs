@@ -130,12 +130,14 @@ impl Hub {
     }
     fn request(&mut self, conn: ConnId, pk: Pk, req: Req, now: u64) -> std::result::Result<Value, auth::Error> {
         Ok(match req {
-            Req::Create { profile_id, cols, rows, label } => {
+            Req::Create { profile_id, cols, rows, label, cwd } => {
+                let cwd = cwd.map(PathBuf::from);
+                if cwd.as_ref().is_some_and(|d| !d.is_absolute() || !d.is_dir()) { return Err(auth::Error::NotFound); }
                 let p = self.profiles.iter().find(|p| p.0 == profile_id).ok_or(auth::Error::NotFound)?.1.clone();
                 let cell = Arc::new(OnceLock::new());
                 let c = cell.clone();
                 // O lock do hub é tomado antes de ler `cell`: a saída que chegar antes do `create` espera, não se perde.
-                let pty = conpty::ConPty::spawn(&p.command, cols, rows, move |ev| { let mut h = hub(); if let Some(sid) = c.get() { h.pty(*sid, ev) } }).map_err(|_| auth::Error::IoError)?;
+                let pty = conpty::ConPty::spawn(&p.command, cwd.as_deref(), cols, rows, move |ev| { let mut h = hub(); if let Some(sid) = c.get() { h.pty(*sid, ev) } }).map_err(|_| auth::Error::IoError)?;
                 let sid = self.s.create(Box::new(pty), label, cols, rows, now)?;
                 let _ = cell.set(sid);
                 self.screens.insert(sid, screen::Screen::new(cols, rows, p.osc));
