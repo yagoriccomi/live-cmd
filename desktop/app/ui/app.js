@@ -229,6 +229,24 @@ $("settings").onsubmit = async (e) => {
 $("open-dir").onclick = () => invoke("open_data_dir");
 $("logs").onclick = () => invoke("open_data_dir");
 
+async function checkUpdate(silent) {
+  if (!silent) $("upd-msg").textContent = "Verificando…";
+  try {
+    const v = await invoke("check_update");
+    $("upd-go").hidden = !v;
+    if (v) $("upd-msg").textContent = `Versão ${v} disponível.`;
+    else if (!silent) $("upd-msg").textContent = "Você já está na versão mais recente.";
+  } catch { if (!silent) $("upd-msg").textContent = "Não foi possível verificar atualizações. Tente de novo."; }
+}
+$("upd").onclick = () => checkUpdate(false);
+$("upd-go").onclick = async () => {
+  $("upd-go").disabled = true;
+  $("upd-msg").textContent = "Baixando e instalando…";
+  try { await invoke("install_update"); }
+  catch { $("upd-go").disabled = false; $("upd-msg").textContent = "Não foi possível atualizar. Tente de novo."; }
+};
+checkUpdate(true);
+
 // Bandeja pede uma aba com a janela já aberta.
 window.__TAURI__.event.listen("tab", (e) => tab(e.payload));
 // Minimizada: o QR sai da tela (P13); ao restaurar, volta o da OTK pendente.

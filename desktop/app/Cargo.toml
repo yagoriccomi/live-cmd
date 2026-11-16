@@ -17,6 +17,7 @@ base64 = "0.22"
 vt100 = "0.18.1"
 qrcode = { version = "0.14.1", default-features = false }
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_WindowsAndMessaging"] }
+tauri-plugin-updater = "2"
 
 # Mesmo patch do host (`desktop/Cargo.toml`): patch só vale na raiz do build.
 [patch.crates-io]

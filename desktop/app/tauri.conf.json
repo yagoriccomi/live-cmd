@@ -2,16 +2,41 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "live-cmd",
   "identifier": "dev.livecmd.app",
-  "build": { "frontendDist": "ui" },
+  "build": {
+    "frontendDist": "ui"
+  },
   "app": {
     "withGlobalTauri": true,
     "windows": [],
-    "security": { "csp": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'" }
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'"
+    }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico", "icons/icon.png"],
-    "windows": { "nsis": { "installMode": "currentUser" } }
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZCMEVDNDcxMDc2M0NCNTIKUldSU3kyTUhjY1FPYXlTUXVadkpXcjR5WVlmRjFWdmc0NWhyYTUrdlBuN1BQbnhxb0hxNjVPUy8K",
+      "endpoints": [
+        "https://github.com/yagoriccomi/live-cmd/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

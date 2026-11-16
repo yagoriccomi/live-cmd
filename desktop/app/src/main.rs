@@ -53,6 +53,22 @@ fn qr_data_url(uri: &str) -> Result<String, String> {
     Ok(format!("data:image/svg+xml;base64,{}", STANDARD.encode(svg)))
 }
 
+use tauri_plugin_updater::UpdaterExt;
+
+/// Versão nova disponível no GitHub Releases, se houver.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
+    let u = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    Ok(u.map(|u| u.version))
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    let u = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?.ok_or("sem atualização")?;
+    u.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    app.restart()
+}
+
 #[tauri::command]
 fn status(app: State<App>) -> Value {
     let s = app.svc.lock().unwrap().status();
@@ -266,8 +282,9 @@ fn tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_window(app, "devices")))
-        .invoke_handler(tauri::generate_handler![status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir,
+        .invoke_handler(tauri::generate_handler![status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, check_update, install_update,
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove])
