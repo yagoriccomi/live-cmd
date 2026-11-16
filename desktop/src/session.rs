@@ -265,6 +265,8 @@ impl Sessions {
 
     /// Sessões para o disco: (id, rótulo, cols, rows, últimos `tail` bytes de saída). Fica de fora só a fechada de propósito:
     /// no desligamento o Windows mata os shells antes do app, e essas saídas não podem apagar o arquivo.
+    /// Escreve direto no PTY (comando inicial do agente).
+    pub fn type_in(&mut self, sid: &Sid, data: &[u8]) { if let Some(x) = self.s.get_mut(sid) { let _ = x.pty.write(data); } }
     pub fn saved(&self, tail: usize) -> Vec<(Sid, String, u16, u16, Vec<u8>)> {
         self.s.iter().filter(|(_, x)| !x.closed).map(|(sid, x)| {
             let n = x.ring.buf.len().min(tail);

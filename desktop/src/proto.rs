@@ -63,10 +63,12 @@ pub fn parse_u64(v: &Value) -> R<u64> {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Focus { Foreground, Background }
+/// CLIs de IA que `session_create` pode iniciar.
+pub const AGENTS: [&str; 3] = ["claude", "openclaude", "codex"];
 #[derive(Debug, Clone, PartialEq)]
 pub enum Req {
     /// `cwd`: pasta inicial opcional (precisa existir e ser diretório).
-    Create { profile_id: String, cols: u16, rows: u16, label: Option<String>, cwd: Option<String> },
+    Create { profile_id: String, cols: u16, rows: u16, label: Option<String>, cwd: Option<String>, agent: Option<String>, args: Option<String> },
     List,
     Attach { session_id: [u8; 16], from_offset: Option<u64>, size: Option<(u16, u16)> },
     Detach([u8; 16]),
@@ -103,11 +105,15 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
     }
     let req = match ty {
         "session_create" => {
-            fields(&["profile_id", "cols", "rows"], &["label", "cwd"])?;
+            fields(&["profile_id", "cols", "rows"], &["label", "cwd", "agent", "args"])?;
+            let agent = o.get("agent").map(|_| s("agent").map(str::to_owned)).transpose()?;
+            if agent.as_deref().is_some_and(|a| !AGENTS.contains(&a)) { return Err(InvalidMessage); }
+            let args = o.get("args").map(|_| s("args").map(str::to_owned)).transpose()?;
+            if args.as_ref().is_some_and(|a| a.len() > 512 || !a.chars().all(|c| c.is_ascii_alphanumeric() || " ._=/:-,".contains(c))) { return Err(InvalidMessage); }
             let cwd = o.get("cwd").map(|_| s("cwd").map(str::to_owned)).transpose()?;
             let label = o.get("label").map(|_| s("label").map(str::to_owned)).transpose()?;
             if label.as_ref().is_some_and(|l| l.chars().count() > 64) { return Err(InvalidMessage); }
-            Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label, cwd }
+            Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label, cwd, agent, args }
         }
         "session_list" => { fields(&[], &[])?; Req::List }
         "session_attach" => {

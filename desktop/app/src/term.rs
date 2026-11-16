@@ -264,10 +264,11 @@ pub fn term_list(app: AppHandle, conn: String) -> Result<Value, String> {
 }
 
 #[tauri::command(async)]
-pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: String, cols: u16, rows: u16, cwd: Option<String>) -> Result<String, String> {
+pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: String, cols: u16, rows: u16, cwd: Option<String>, agent: Option<String>, args: Option<String>) -> Result<String, String> {
     let label: String = label.chars().take(64).collect();
     let mut req = json!({ "type": "session_create", "profile_id": profile_id, "label": label, "cols": cols, "rows": rows });
     if let Some(d) = cwd { req["cwd"] = d.into(); }
+    if let Some(a) = agent { req["agent"] = a.into(); req["args"] = args.unwrap_or_default().into(); }
     let v = client(&app, &conn)?.request(req)?;
     Ok(v["session_id"].as_str().unwrap_or_default().to_owned())
 }

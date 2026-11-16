@@ -429,7 +429,32 @@ document.addEventListener("mousedown", (e) => { if (!$("menu").hidden && !$("men
 
 function profileMenu(anchor, conn) {
   const p = conns[conn].profiles;
-  menu(anchor, p.length ? p.map((x) => [x.label, () => newSession(conn, x)]) : [["Nenhum perfil disponível."]]);
+  menu(anchor, p.length ? [...p.map((x) => [x.label, () => newSession(conn, x)]), ["Agente de IA…", () => newAi(conn)]] : [["Nenhum perfil disponível."]]);
+}
+
+// Agente de IA: pergunta agente, pasta e args; o host salva e retoma pelo id da sessão.
+async function newAi(conn) {
+  const d = JSON.parse(localStorage.getItem("ai-default") || "{}");
+  $("ai-agent").value = d.agent || "claude"; $("ai-cwd").value = d.cwd || ""; $("ai-args").value = d.args || ""; $("ai-def").checked = false;
+  $("ai-scrim").hidden = false; $("ai-cwd").focus();
+  const ok = await new Promise((done) => {
+    const end = (v) => { $("ai-scrim").hidden = true; done(v); };
+    $("ai-ok").onclick = () => end(true); $("ai-cancel").onclick = () => end(false);
+    trap($("ai"), () => end(false));
+  });
+  if (!ok) return;
+  const agent = $("ai-agent").value, cwd = $("ai-cwd").value.trim() || null, args = $("ai-args").value.trim();
+  if ($("ai-def").checked) localStorage.setItem("ai-default", JSON.stringify({ agent, cwd, args }));
+  const p = conns[conn].profiles[0];
+  if (!p) return banner(msg("NOT_FOUND"), "err");
+  // Grupo = nome da pasta raiz.
+  const label = `${(cwd || "").split(/[\/]/).filter(Boolean).pop() || "~"} · ${agent}`.slice(0, 64);
+  const { cols, rows } = size();
+  try {
+    const sid = await invoke("term_create", { conn, profileId: p.profile_id, label, cols, rows, cwd, agent, args });
+    await openSession(conn, { session_id: sid, label, state: "running" });
+    refresh(conn);
+  } catch (e) { banner(msg(e), "err"); }
 }
 
 // ---------- Diálogos ----------

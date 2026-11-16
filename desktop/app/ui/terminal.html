@@ -68,6 +68,16 @@
   </dialog>
 </div>
 
+<div class="dialog-scrim" id="ai-scrim" hidden>
+  <dialog open aria-modal="true" aria-labelledby="ai-t" id="ai">
+    <h3 id="ai-t">Agente de IA</h3>
+    <label>Agente <select id="ai-agent"><option>claude</option><option>openclaude</option><option>codex</option></select></label>
+    <label>Pasta <input id="ai-cwd" placeholder="C:\projetos\app"></label>
+    <label>Comandos extras <input id="ai-args" placeholder="--model opus"></label>
+    <label><input type="checkbox" id="ai-def"> Salvar como padrão</label>
+    <div class="actions"><button type="button" id="ai-cancel">Cancelar</button><button type="button" class="btn-primary" id="ai-ok">Iniciar</button></div>
+  </dialog>
+</div>
 <div class="dialog-scrim" id="ask-scrim" hidden>
   <dialog open aria-modal="true" aria-labelledby="ask-t" aria-describedby="ask-d" id="ask">
     <h3 id="ask-t"></h3>

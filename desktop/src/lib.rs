@@ -91,6 +91,8 @@ struct Hub { s: session::Sessions, screens: HashMap<Sid, screen::Screen>, /// Te
     cwds: HashMap<Sid, PathBuf>,
     /// Perfil de cada sessão, para recriar do disco.
     prof: HashMap<Sid, String>,
+    /// Agente de IA da sessão: (cli, args extras).
+    ai: HashMap<Sid, (String, String)>,
     /// `sessions.json` (só no serviço de verdade; testes ficam sem disco) e se mudou desde a última gravação.
     store: Option<PathBuf>, dirty: bool }
 static HUB: LazyLock<Mutex<Hub>> = LazyLock::new(Default::default);
@@ -116,6 +118,13 @@ impl Hub {
         self.dirty = true;
         Ok(sid)
     }
+    /// Inicia (ou retoma) o CLI de IA dentro do shell da sessão; o id da conversa é o id da sessão.
+    fn start_ai(&mut self, sid: Sid, agent: String, args: String, resume: bool) {
+        let id = proto::uuid_str(&sid);
+        self.s.type_in(&sid, format!("{}\r", ai_cmd(&agent, &args, &id, resume)).as_bytes());
+        self.ai.insert(sid, (agent, args));
+        self.dirty = true;
+    }
     #[cfg(test)]
     fn handle_close_for_test(&mut self, sid: Sid) { let _ = self.s.close(sid); self.forget(&[sid]); self.dirty = true; }
     /// Grava `sessions.json` (tmp + rename) se algo mudou.
@@ -124,6 +133,7 @@ impl Hub {
         self.dirty = false;
         let list: Vec<Saved> = self.s.saved(SAVED_TAIL).into_iter().filter_map(|(sid, label, cols, rows, tail)| Some(Saved {
             id: proto::uuid_str(&sid), profile: self.prof.get(&sid)?.clone(), label, cwd: self.cwds.get(&sid).cloned(), cols, rows, tail: B64.encode(tail),
+            agent: self.ai.get(&sid).map(|a| a.0.clone()), args: self.ai.get(&sid).map(|a| a.1.clone()).unwrap_or_default(),
         })).collect();
         // ponytail: falha ao gravar é silenciosa (sem console no app); tenta de novo no próximo save.
         let _ = write_saved(&path, &list);
@@ -139,6 +149,7 @@ impl Hub {
             // Sai da tela alternativa e zera cores de um programa que estava aberto; depois, o separador.
             out.extend_from_slice("\x1b[?1049l\x1b[0m\r\n\x1b[2m— sessão restaurada —\x1b[0m\r\n".as_bytes());
             self.pty(sid, conpty::Ev::Output(out));
+            if let Some(a) = x.agent.filter(|a| proto::AGENTS.contains(&a.as_str())) { self.start_ai(sid, a, x.args, true); }
         }
     }
     fn deliver(&mut self, outs: impl IntoIterator<Item = (ConnId, Out)>) {
@@ -174,14 +185,15 @@ impl Hub {
     }
     /// Solta a tela das sessões que saíram da tabela (close após o `05`, TTL).
     fn forget(&mut self, sids: &[Sid]) {
-        for sid in sids { if self.s.size(sid).is_none() { self.screens.remove(sid); self.base.remove(sid); self.plain.remove(sid); self.cwds.remove(sid); } }
+        for sid in sids { if self.s.size(sid).is_none() { self.screens.remove(sid); self.base.remove(sid); self.plain.remove(sid); self.cwds.remove(sid); self.ai.remove(sid); } }
     }
     fn request(&mut self, conn: ConnId, pk: Pk, req: Req, now: u64) -> std::result::Result<Value, auth::Error> {
         Ok(match req {
-            Req::Create { profile_id, cols, rows, label, cwd } => {
+            Req::Create { profile_id, cols, rows, label, cwd, agent, args } => {
                 let cwd = cwd.map(PathBuf::from);
                 if cwd.as_ref().is_some_and(|d| !d.is_absolute() || !d.is_dir()) { return Err(auth::Error::NotFound); }
                 let sid = self.open(None, &profile_id, cwd, label, cols, rows, now)?;
+                if let Some(a) = agent { self.start_ai(sid, a, args.unwrap_or_default(), false); self.save(); }
                 json!({"type":"session_create_ok","session_id":proto::uuid_str(&sid)})
             }
             Req::List => json!({"type":"session_list_ok","sessions":self.s.list(),
@@ -204,7 +216,27 @@ impl Hub {
 const SAVED_TAIL: usize = 128 << 10;
 /// Uma sessão em `sessions.json`.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
-struct Saved { id: String, profile: String, label: String, cwd: Option<PathBuf>, cols: u16, rows: u16, tail: String }
+struct Saved { id: String, profile: String, label: String, cwd: Option<PathBuf>, cols: u16, rows: u16, tail: String,
+    #[serde(default)] agent: Option<String>, #[serde(default)] args: String }
+/// Linha digitada no shell para iniciar/retomar o agente. `args` já validado no proto (sem metacaracteres de shell).
+// ponytail: codex não aceita id na criação; retoma a última conversa da pasta (`resume --last`).
+fn ai_cmd(agent: &str, args: &str, id: &str, resume: bool) -> String {
+    let base = match (agent, resume) {
+        ("codex", false) => "codex".to_owned(),
+        ("codex", true) => "codex resume --last".to_owned(),
+        (a, false) => format!("{a} --session-id {id}"),
+        (a, true) => format!("{a} --resume {id}"),
+    };
+    if args.trim().is_empty() { base } else { format!("{base} {}", args.trim()) }
+}
+#[test]
+fn ai_cmd_resume() {
+    assert_eq!(ai_cmd("claude", " --model x ", "u1", false), "claude --session-id u1 --model x");
+    assert_eq!(ai_cmd("openclaude", "", "u1", true), "openclaude --resume u1");
+    assert_eq!(ai_cmd("codex", "", "u1", true), "codex resume --last");
+    let s: Saved = serde_json::from_str(r#"{"id":"a","profile":"p","label":"","cwd":null,"cols":1,"rows":1,"tail":""}"#).unwrap();
+    assert_eq!((s.agent, s.args), (None, String::new()));
+}
 fn write_saved(path: &Path, list: &[Saved]) -> std::io::Result<()> {
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_vec(list)?)?;
