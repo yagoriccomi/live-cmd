@@ -3,10 +3,26 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --require ../desktop/scripts/hidden-processes.cjs --experimental-strip-types --test src/auth.test.ts src/pty.test.ts"
+    "test": "node --require ../desktop/scripts/hidden-processes.cjs --experimental-strip-types --test src/auth.test.ts src/pty.test.ts",
+    "typecheck": "tsc --noEmit",
+    "android": "expo run:android"
   },
   "dependencies": {
+    "@config-plugins/react-native-webrtc": "^15.0.2",
     "@noble/curves": "2.4.0",
-    "@noble/hashes": "2.4.0"
-  }
+    "@noble/hashes": "2.4.0",
+    "expo": "^58.0.25",
+    "expo-crypto": "~58.0.8",
+    "expo-dev-client": "~58.0.20",
+    "expo-secure-store": "~58.0.3",
+    "expo-status-bar": "~58.0.5",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-webrtc": "^155.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "^7.0.2"
+  },
+  "main": "expo/AppEntry"
 }

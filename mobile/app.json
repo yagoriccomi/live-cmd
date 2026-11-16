@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "Live CMD",
+    "slug": "live-cmd",
+    "version": "0.1.0",
+    "android": { "package": "dev.livecmd.mobile" },
+    "plugins": ["expo-secure-store", "expo-status-bar", "@config-plugins/react-native-webrtc"]
+  }
+}
