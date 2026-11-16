@@ -20,6 +20,7 @@ windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Re
 tauri-plugin-updater = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"
 
 # Mesmo patch do host (`desktop/Cargo.toml`): patch só vale na raiz do build.
 [patch.crates-io]

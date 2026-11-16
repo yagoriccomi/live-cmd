@@ -47,16 +47,19 @@ fn parser(app: &AppHandle, rows: u16, cols: u16) -> vt100::Parser {
 }
 fn view(vt: vt100::Parser) -> View { View { vt, next: 0, osc: false, busy: false } }
 
-/// Histórico + tela em texto puro. ponytail: linha quebrada pela largura sai como duas.
+/// Histórico + tela em texto puro; linha quebrada pela largura (wrap) volta a ser uma só.
 fn export(vt: &mut vt100::Parser) -> String {
     let (keep, cols) = (vt.screen().scrollback(), vt.screen().size().1.get());
     vt.screen_mut().set_scrollback(usize::MAX);
-    let mut out: Vec<String> = (1..=vt.screen().scrollback()).rev()
-        .map(|n| { vt.screen_mut().set_scrollback(n); vt.screen().rows(0, cols).next().unwrap_or_default() }).collect();
+    // (texto, continua na linha seguinte)
+    let mut out: Vec<(String, bool)> = (1..=vt.screen().scrollback()).rev()
+        .map(|n| { vt.screen_mut().set_scrollback(n); (vt.screen().rows(0, cols).next().unwrap_or_default(), vt.screen().row_wrapped(0)) }).collect();
     vt.screen_mut().set_scrollback(0);
-    out.extend(vt.screen().rows(0, cols));
+    let rows: Vec<String> = vt.screen().rows(0, cols).collect();
+    out.extend(rows.into_iter().enumerate().map(|(i, l)| { let w = vt.screen().row_wrapped(i as u16); (l, w) }));
     vt.screen_mut().set_scrollback(keep);
-    let mut s = out.iter().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
+    let mut s = String::new();
+    for (l, wrap) in out { if wrap { s.push_str(&l) } else { s.push_str(l.trim_end()); s.push('\n') } }
     s.truncate(s.trim_end().len());
     s
 }
@@ -389,6 +392,28 @@ pub fn term_export(app: AppHandle, conn: String, session_id: String) -> String {
     s
 }
 
+/// "Salvar como": grava a exportação no caminho escolhido no diálogo do sistema.
+#[tauri::command(async)]
+pub fn term_export_file(app: AppHandle, conn: String, session_id: String, path: String) -> Result<(), String> {
+    std::fs::write(path, term_export(app, conn, session_id)).map_err(|_| "IO_ERROR".into())
+}
+
+/// "Limpar": apaga tela e histórico da aba (vale também em cmd, que ignora Ctrl+L).
+#[tauri::command]
+pub fn term_clear(app: AppHandle, conn: String, session_id: String) {
+    with_view(&app, &conn, &session_id, |v| { v.vt.process(b"\x1b[H\x1b[2J"); v.vt.screen_mut().clear_scrollback(); });
+}
+
+/// Qualidade da conexão: tempo de ida e volta de um pedido leve ao host; `relay` só se sabe no local (false).
+/// ponytail: rtt inclui o processamento do host e relay remoto é null; expor stats ICE no `Client` se precisar.
+#[tauri::command(async)]
+pub fn term_conn_stats(app: AppHandle, conn: String) -> Value {
+    let Ok(c) = client(&app, &conn) else { return json!({ "rtt_ms": null, "relay": null }) };
+    let t = std::time::Instant::now();
+    let ok = c.request(json!({ "type": "session_list" })).is_ok();
+    json!({ "rtt_ms": ok.then(|| t.elapsed().as_millis() as u64), "relay": if conn == LOCAL { json!(false) } else { Value::Null } })
+}
+
 /// Fechar pede confirmação: comando rodando (só em perfil com OSC 133).
 #[tauri::command]
 pub fn term_busy(app: AppHandle, conn: String, session_id: String) -> bool {
@@ -432,6 +457,16 @@ mod tests {
         assert!(s["app_cursor"] == true);
         assert_eq!(color(vt100::Color::Idx(196)), "#ff0000");
         assert_eq!(color(vt100::Color::Idx(232)), "#080808");
+    }
+
+    #[test]
+    fn export_une_linha_quebrada_e_limpar_apaga() {
+        let mut vt = parser(3, 5);
+        vt.process(b"abcdefgh\r\nxy\r\n1\r\n2\r\n3");
+        assert_eq!(export(&mut vt), "abcdefgh\nxy\n1\n2\n3");
+        vt.process(b"\x1b[H\x1b[2J");
+        vt.screen_mut().clear_scrollback();
+        assert_eq!(export(&mut vt), "");
     }
 
     #[test]

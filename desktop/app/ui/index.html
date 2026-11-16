@@ -76,6 +76,12 @@
     <div class="alert alert-danger" role="alert" id="srv-err" hidden><p>Não foi possível salvar o endereço. Tente de novo.</p></div>
     <p class="muted small">O celular só aceita servidores conhecidos pelo app. Mudar aqui pode exigir atualizar o celular.</p>
   </fieldset>
+  <fieldset><legend>Histórico de rolagem</legend>
+    <label for="sb">Linhas por aba (100 a 100000)</label>
+    <div class="inline"><input id="sb" type="number" min="100" max="100000" step="100" aria-describedby="sb-e"><button type="button" id="sb-save">Salvar</button></div>
+    <p id="sb-e" class="field-error" hidden>Use um número inteiro de 100 a 100000.</p>
+    <p id="sb-msg" class="ok-text" role="status"></p>
+  </fieldset>
   <fieldset><legend>Perfis de terminal</legend>
     <div class="alert alert-warn" role="alert" id="prof-err" hidden><p></p></div>
     <p class="muted" id="prof-default" hidden>Usando perfis padrão (PowerShell e WSL).</p>
@@ -85,7 +91,7 @@
     <p class="field-error" role="alert" id="prof-e" hidden>Cada perfil precisa de nome (até 40 caracteres) e comando, sem caracteres de controle.</p>
     <p class="ok-text" role="status" id="prof-msg"></p>
     <button type="button" id="open-dir">Abrir pasta de configuração</button>
-    <p class="muted small">Mudanças valem para novos terminais após reiniciar o app.</p>
+    <p class="muted small">Mudanças valem para os próximos terminais. Outros PCs conectados reconectam em segundos.</p>
   </fieldset>
   <fieldset><legend>Sobre</legend>
     <!-- ponytail: o app ainda não grava log próprio; "Ver logs" abre a pasta de dados até existir uma pasta de logs. -->

@@ -537,9 +537,8 @@ document.addEventListener("term-action", (e) => {
   else if (a === "split") splitMenu();
   else if (a === "new") newSession(t ? t.conn : LOCAL);
   else if (a === "close" && t) closeTab(t.key);
-  // ponytail: exporta para a área de transferência; trocar por "Salvar como" (plugin dialog) se pedirem arquivo.
-  else if (a === "export" && t) invoke("term_export", { conn: t.conn, sessionId: t.sid })
-    .then((text) => invoke("clip_copy", { text })).then(() => banner("Saída copiada para a área de transferência.", "ok"))
+  else if (a === "export" && t) window.__TAURI__.dialog.save({ defaultPath: `${(t.label || "terminal").replace(/[\\/:*?"<>|]/g, "_")}.txt`, filters: [{ name: "Texto", extensions: ["txt"] }] })
+    .then((path) => path && invoke("term_export_file", { conn: t.conn, sessionId: t.sid, path }).then(() => banner("Saída salva em " + path, "ok")))
     .catch((err) => banner(msg(err), "err"));
 });
 listen("term-exited", ({ payload }) => {
