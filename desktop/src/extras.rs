@@ -2,8 +2,11 @@
 //! Cada pedido e resposta leva `api` (hoje 1). `api` numérico diferente vira `VERSION_UNSUPPORTED`
 //! com `request_id` (não fatal), para o app poder evoluir sem derrubar a conexão.
 //!
-//! O host anuncia as telas que entende em `auth_ok.caps` ([`CAPS`]); host antigo não manda `caps`
-//! e o celular mostra "atualize o live-cmd no PC" em vez de mandar pedidos que ele não conhece.
+//! Capacidades: o cliente pergunta com `session_attach` para a sessão reservada [`CAPS_PROBE`]
+//! (`from_offset: null`). Este host responde `caps_ok` com [`CAPS`]; host antigo responde
+//! `error NOT_FOUND` com `request_id` (não fatal) e o celular mostra "atualize o live-cmd no PC".
+//! Assim nenhum dos dois lados vê campo ou tipo novo sem ter pedido: o `auth_ok` continua igual,
+//! porque os validadores antigos (host e clientes) recusam campo desconhecido e derrubam a conexão.
 //!
 //! Os dados vêm de um [`Provider`]. Sem provedor registrado ([`set_provider`]), SSH e Histórico
 //! respondem listas vazias e Agentes mostra só as sessões vivas com agente (lidas do hub em `lib.rs`).
@@ -14,8 +17,13 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 type R<T> = Result<T, Error>;
 pub const API: u64 = 1;
-/// Telas anunciadas em `auth_ok.caps`: cada uma cobre todos os pedidos `api: 1` dela.
+/// Telas que este host entende, respondidas em `caps_ok`: cada uma cobre todos os pedidos `api: 1` dela.
 pub const CAPS: [&str; 3] = ["agents", "ssh", "history"];
+/// Sessão reservada da pergunta de capacidades (UUID v4 válido que o host nunca gera).
+pub const CAPS_PROBE: &str = "00000000-0000-4000-8000-000000000001";
+/// `session_attach` para [`CAPS_PROBE`]? (Antes de ir ao hub: nunca anexa nada.)
+pub fn is_caps_probe(sid: &[u8; 16]) -> bool { crate::auth::uuid_bytes(CAPS_PROBE).as_ref() == Some(sid) }
+pub fn caps_ok() -> Value { json!({"type": "caps_ok", "api": API, "caps": CAPS}) }
 /// Teto de itens por resposta e de bytes do corpo (a mensagem inteira não passa de 65536).
 pub const MAX_ITEMS: usize = 200;
 const MAX_BODY: usize = 60_000;
@@ -319,7 +327,13 @@ mod tests {
         assert_eq!(get("history_run"), Req::HistoryRun { entry_id: "h_42".into(), session_id: sid() });
         assert_eq!(get("agent_create_minimo"), Req::AgentCreate { agent: "codex".into(), args: String::new(), cwd: None, label: None, cols: 80, rows: 24 });
         assert_eq!(get("ssh_save"), Req::SshSave { server_id: None, label: "Produção".into(), target: crate::ssh::Ssh { user: "deploy".into(), host: "10.0.0.5".into(), port: 22, key: None } });
-        fixture(json!({"connection_id": CID, "caps": CAPS, "requests": cases, "replies": replies()}));
+        // Pergunta de capacidades: um `session_attach` que o host 0.1.8 já entende (responde NOT_FOUND, não fatal).
+        let probe = json!({"type": "session_attach", "session_id": CAPS_PROBE, "from_offset": null});
+        let Ok(Control::Request { req: P::Attach { session_id, from_offset: None, size: None }, .. }) = parse_control(&wrap(probe.clone()), CID) else { panic!("probe") };
+        assert!(is_caps_probe(&session_id) && !is_caps_probe(&sid()));
+        let caps = json!({"request": probe, "reply": encode_control(CID, Some(RID), caps_ok()), "reply_host_antigo": encode_control(CID, Some(RID), crate::proto::error(NotFound)),
+            "auth_ok_host_antigo": format!(r#"{{"type":"auth_ok","v":1,"connection_id":"{CID}"}}"#)});
+        fixture(json!({"connection_id": CID, "caps": CAPS, "caps_probe": caps, "requests": cases, "replies": replies()}));
     }
 
     /// Respostas do host (construtores reais) e mutações; resultado esperado conferido no app.

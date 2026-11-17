@@ -55,7 +55,7 @@ export function useRemote<T>(load: (() => Promise<T>) | null) {
 }
 
 export const OFFLINE = 'Conecte ao PC na aba Sessões para ver esta lista.';
-/** Host conectado mas sem a tela (`auth_ok.caps` sem ela): versão antiga do live-cmd no PC. */
+/** Host conectado mas sem a tela (`caps_ok` sem ela, ou host antigo): versão antiga do live-cmd no PC. */
 export const OLD_HOST = 'Atualize o live-cmd no PC para usar esta aba.';
 
 /** Campo de texto com rótulo, no estilo das telas. */

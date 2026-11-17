@@ -17,7 +17,7 @@
 | D | Mobile: abas Sessões/Agentes/SSH/Histórico + mensagens de protocolo e lado host | alto | concluída |
 | E | Ligação celular↔host: `mobile::AppProvider` (app) registrado com `extras::set_provider` no setup; Agentes de `agents.json`, SSH de `ssh.json` (latência em cache, teste TCP em segundo plano) e Histórico de `history.jsonl`; `ssh_connect` abre o `ssh.exe` direto com destino validado | alto | concluída no código; falta teste ponta a ponta no celular |
 
-| F | Espelhamento desktop × celular: `auth_ok.caps`, registro único de agentes, filtros e limpar do histórico com `cwd`, SSH restaurado desconectado com Reconectar, cadastro SSH e nova sessão de agente pelo celular, teste do ConPTY sem OSC | alto | concluída no código; falta teste ponta a ponta no celular |
+| F | Espelhamento desktop × celular: pergunta de capacidades (`session_attach` da sessão reservada `CAPS_PROBE`: host novo responde `caps_ok`, host 0.1.8 responde `NOT_FOUND` sem derrubar), registro único de agentes, filtros e limpar do histórico com `cwd`, SSH restaurado desconectado com Reconectar, cadastro SSH e nova sessão de agente pelo celular, teste do ConPTY sem OSC | alto | concluída no código; falta teste ponta a ponta no celular |
 
 **Pendências da fatia E:** resolvidas na fatia F.
 
@@ -45,4 +45,4 @@
 | Histórico | Agrupar por dia; hora, PC, rótulo, tipo, pasta, código de saída | sim | sim | `history_query_ok` |
 | Histórico | Reexecutar na sessão ativa | sim | sim | `term_input` / `history_run` |
 | Histórico | Limpar com confirmação | sim | sim | `hist_clear` / `history_clear` (mesmo store) |
-| Todas | Host antigo sem a tela | n/a | aviso "Atualize o live-cmd no PC" | `auth_ok.caps` |
+| Todas | Host antigo sem a tela | n/a | aviso "Atualize o live-cmd no PC" | `caps_ok` (pergunta `CAPS_PROBE`) |

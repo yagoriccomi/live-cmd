@@ -582,6 +582,8 @@ async fn c3_message(ch: &Arc<dyn DataChannel>, id: &str, host: &Host, l: &mut Li
     if let Err(e) = host.check_trusted(&l.pk) { return Ok(Some(e)); }
     let body = match req {
         Req::Focus(f) => { l.bg = f == Focus::Background; Ok(json!({"type":"client_focus_ok"})) }
+        // Pergunta de capacidades (`extras::CAPS_PROBE`): host antigo responde NOT_FOUND pelo hub.
+        Req::Attach { session_id, .. } if extras::is_caps_probe(&session_id) => Ok(extras::caps_ok()),
         req => hub().request(l.conn, l.pk, req, now),
     };
     let body = match body { Ok(v) => v, Err(InvalidMessage) => return Ok(Some(InvalidMessage)), Err(e) => proto::error(e) };
@@ -2347,6 +2349,21 @@ a=max-message-size:1024
         assert_eq!(host_error(h, 5).await, "INVALID_MESSAGE");
         keep.abort();
         let _ = tokio::time::timeout(Duration::from_secs(2), pc.close()).await;
+    }
+    /// Pergunta de capacidades pelo canal real: `caps_ok` com o mesmo `request_id`, conexão continua viva.
+    /// (Host 0.1.8 responde NOT_FOUND para esta sessão: ver `extras::CAPS_PROBE` e a fixture C3.)
+    #[tokio::test]
+    async fn caps_probe_responde_sem_derrubar() {
+        let (host, _, _tmp) = store("caps");
+        let otk = host.issue_otk(Instant::now()).unwrap();
+        let (pc, l) = loopback(host.clone(), false).await.unwrap();
+        authenticate(&l, l.b.clone(), Some(otk), SigningKey::from_bytes(&[37; 32]), host.pk()).await.unwrap();
+        let rid = "00000000-0000-4000-8000-0000000000c1";
+        l.dc.send_text(&json!({"v":1,"type":"session_attach","connection_id":l.id,"request_id":rid,"session_id":extras::CAPS_PROBE,"from_offset":null}).to_string()).await.unwrap();
+        let v: Value = serde_json::from_str(&next_text(&l.dc).await.unwrap()).unwrap();
+        assert_eq!((v["type"].as_str(), v["request_id"].as_str(), v["caps"].clone()), (Some("caps_ok"), Some(rid), json!(extras::CAPS)), "{v}");
+        echo(&l.dc, &l.id).await.unwrap();
+        finish(pc, l).await;
     }
     #[tokio::test]
     async fn d2b_n12_auth_timeout_30s() {

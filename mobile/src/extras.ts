@@ -1,11 +1,15 @@
 // Controles extras do pty-channel para as abas Agentes, SSH e Histórico.
 // Espelha desktop/src/extras.rs; a fixture desktop/tests/fixtures/c3-extras.json prova a paridade. Puro: sem RN, sem rede.
 // Todo pedido e resposta leva `api` (hoje 1); `api` numérico diferente na resposta é VERSION_UNSUPPORTED.
-// O host anuncia as telas em `auth_ok.caps` (CAPS); sem a tela, a aba pede para atualizar o live-cmd no PC.
+// Capacidades: logo após a auth o app manda `capsProbe()` (um `session_attach` para a sessão reservada CAPS_PROBE,
+// que o host 0.1.8 já entende e responde NOT_FOUND sem derrubar). Host novo responde `caps_ok`; sem a tela, a aba
+// pede para atualizar o live-cmd no PC. O `auth_ok` não muda: validadores antigos recusam campo novo.
 import { AuthError, uuidBytes, type Bytes, type Code } from './auth.ts';
 import { parseU64 } from './pty.ts';
 
 export const API = 1;
+/** Sessão reservada da pergunta de capacidades (desktop/src/extras.rs CAPS_PROBE). */
+export const CAPS_PROBE = '00000000-0000-4000-8000-000000000001';
 export type Cap = 'agents' | 'ssh' | 'history';
 const MAX_MSG = 65536;
 const fail = (c: Code): never => { throw new AuthError(c); };
@@ -19,6 +23,7 @@ export const HISTORY_KINDS: Record<string, string> = { pwsh: 'PowerShell', cmd: 
 // ---- pedidos (app → host) ----
 export interface HistoryFilter { query?: string; limit?: number; days?: number | null; kind?: string | null; errors?: boolean }
 export interface SshForm { serverId?: string; label: string; user: string; host: string; port: number; key: string | null }
+export const capsProbe = () => ({ type: 'session_attach', session_id: CAPS_PROBE, from_offset: null });
 export const agentList = () => ({ type: 'agent_list', api: API });
 export const agentResume = (sessionId: string, cols: number, rows: number) => ({ type: 'agent_resume', api: API, session_id: sessionId, cols, rows });
 export const agentCreate = (agent: string, cwd: string | null, args: string, cols: number, rows: number) =>
@@ -50,12 +55,13 @@ export type ExtraMsg =
   | { t: 'agent_resume_ok' | 'agent_create_ok' | 'ssh_connect_ok' | 'ssh_reconnect_ok'; requestId: string; sessionId: string }
   | { t: 'ssh_list_ok'; requestId: string; servers: SshServer[]; sessions: SshSession[] }
   | { t: 'ssh_save_ok'; requestId: string; serverId: string }
+  | { t: 'caps_ok'; requestId: string; caps: string[] }
   | { t: 'history_query_ok'; requestId: string; entries: HistoryEntry[] }
   | { t: 'history_run_ok' | 'history_clear_ok' | 'agent_remove_ok' | 'ssh_remove_ok' | 'ssh_probe_ok'; requestId: string };
 
 const SESSION_REPLIES = ['agent_resume_ok', 'agent_create_ok', 'ssh_connect_ok', 'ssh_reconnect_ok'];
 const EMPTY_REPLIES = ['history_run_ok', 'history_clear_ok', 'agent_remove_ok', 'ssh_remove_ok', 'ssh_probe_ok'];
-const REPLIES = ['agent_list_ok', 'ssh_list_ok', 'ssh_save_ok', 'history_query_ok', ...SESSION_REPLIES, ...EMPTY_REPLIES];
+const REPLIES = ['caps_ok', 'agent_list_ok', 'ssh_list_ok', 'ssh_save_ok', 'history_query_ok', ...SESSION_REPLIES, ...EMPTY_REPLIES];
 const SSH_STATUS: SshStatus[] = ['unknown', 'testing', 'ok', 'dns', 'timeout', 'offline'];
 const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const isObj = (x: unknown): x is Record<string, any> => typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -108,6 +114,12 @@ export function parseExtraReply(text: string, connectionId: string): ExtraMsg {
         const connected = s.state === 'connected' ? true : s.state === 'disconnected' ? false : bad();
         return { sessionId: uuid(s.session_id), label: str(s.label), connected };
       }) };
+    }
+    case 'caps_ok': {
+      const requestId = reply(['caps']);
+      const c = o.caps;
+      if (!Array.isArray(c) || c.length > 32 || !c.every((x: unknown) => typeof x === 'string' && /^[a-z0-9_.:-]{1,32}$/.test(x))) bad();
+      return { t, requestId, caps: c };
     }
     case 'ssh_save_ok': { const requestId = reply(['server_id']); return { t, requestId, serverId: str(o.server_id) }; }
     default: {

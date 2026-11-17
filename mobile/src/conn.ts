@@ -5,7 +5,7 @@ import { randomUUID } from 'expo-crypto';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { Offerer, b64d, parseMsg, toJson, uuidBytes, type Bytes } from './auth.ts';
 import { encodeFrame, parseFrame, parseHostControl, encodeControl } from './pty.ts';
-import { isExtraReply, parseExtraReply } from './extras.ts';
+import { capsProbe, isExtraReply, parseExtraReply } from './extras.ts';
 
 export interface Pin { hostPk: string; room: string; server: string }
 /** `reset`: a sessão exibida mudou (agente retomado, SSH, troca de aba); limpar a tela. */
@@ -90,7 +90,6 @@ export class Conn {
         try {
           const m = parseMsg(e.data, this.id);
           if (m.type === 'error') throw Object.assign(new Error(m.code), { code: m.code });
-          if (m.type === 'auth_ok') this.caps = m.caps ?? [];
           const r = off.handle(m, Date.now());
           if (r) this.dc.send(toJson(r, this.id)); else ok();
         } catch (err) { ko(err); }
@@ -98,6 +97,8 @@ export class Conn {
     });
     this.otk = undefined;
     this.dc.onmessage = (e: any) => this.recv(e.data);
+    // Host antigo responde NOT_FOUND (não fatal) à pergunta de capacidades: abas extras pedem atualização.
+    this.caps = await this.request(capsProbe()).then((r: any) => r.t === 'caps_ok' ? r.caps as string[] : [], () => []);
     const list = await this.request({ type: 'session_list' });
     const profile = list.profiles[0]?.profile_id;
     const created = await this.request({ type: 'session_create', profile_id: profile, label: 'Celular', cols: 80, rows: 24 });
@@ -108,7 +109,7 @@ export class Conn {
     this.h.status('conectado');
   }
 
-  /** Telas extras anunciadas pelo host em `auth_ok.caps`; vazio = host antigo (abas pedem atualização). */
+  /** Telas extras que o host entende (`caps_ok`); vazio = host antigo (abas pedem atualização). */
   caps: string[] = [];
 
   /** Pedido das abas Agentes/SSH/Histórico (corpo de `extras.ts`); resposta já validada. */

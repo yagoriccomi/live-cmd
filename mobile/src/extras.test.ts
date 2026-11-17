@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { AuthError } from './auth.ts';
+import { parseHostControl } from './pty.ts';
 import {
-  agentList, agentResume, agentCreate, agentRemove, sshList, sshConnect, sshSave, sshRemove, sshProbe, sshReconnect,
+  capsProbe, agentList, agentResume, agentCreate, agentRemove, sshList, sshConnect, sshSave, sshRemove, sshProbe, sshReconnect,
   historyQuery, historyRun, historyClear, parseExtraReply, isExtraReply, groupByFolder, groupByDay, baseName, sshFormError, validArgs,
   type Agent, type HistoryEntry,
 } from './extras.ts';
@@ -96,4 +97,19 @@ test('formulário SSH e args do agente: mesmas regras do host', () => {
   assert.ok(!('password' in sshSave({ ...f, password: 'x' } as any)), 'senha nunca vai no pedido');
   assert.equal(validArgs('--model opus'), true);
   assert.equal(validArgs('a; rm -rf'), false);
+});
+
+test('capacidades: pergunta que o host 0.1.8 entende; host novo responde caps_ok, antigo NOT_FOUND não fatal', () => {
+  const p = fx.caps_probe;
+  assert.deepEqual(capsProbe(), p.request);
+  assert.equal(isExtraReply(p.reply), true);
+  const r = parseExtraReply(p.reply, fx.connection_id);
+  assert.ok(r.t === 'caps_ok');
+  assert.deepEqual(r.caps, fx.caps);
+  // Host antigo: `error` com request_id, resposta comum de pedido (pty.ts), não fecha a conexão.
+  assert.equal(isExtraReply(p.reply_host_antigo), false);
+  const old = JSON.parse(p.reply_host_antigo);
+  assert.deepEqual([old.type, old.code, typeof old.request_id], ['error', 'NOT_FOUND', 'string']);
+  assert.doesNotThrow(() => parseHostControl(p.reply_host_antigo, fx.connection_id));
+  for (const bad of [['SSH'], 'ssh', [1]]) assert.equal(res(() => parseExtraReply(JSON.stringify({ ...JSON.parse(p.reply), caps: bad }), fx.connection_id)), 'INVALID_MESSAGE');
 });

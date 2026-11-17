@@ -143,21 +143,14 @@ impl Msg {
                 if let Some(m) = mac_o { v["mac_o"] = e(m); }
                 v
             }
-            // `caps`: telas extras que este host entende (`extras.rs`). Cliente antigo sem `caps` no validador não fala com este host.
-            Msg::AuthOk => json!({"type":"auth_ok","caps":crate::extras::CAPS}),
+            // Sem campo novo: clientes antigos recusam campo desconhecido. Capacidades vão por `extras::CAPS_PROBE`.
+            Msg::AuthOk => json!({"type":"auth_ok"}),
             Msg::Fail(c) => json!({"type":"error","code":c.code()}),
         };
         m["v"] = 1.into();
         m["connection_id"] = connection_id.into();
         m.to_string()
     }
-}
-
-/// `auth_ok.caps`: até 32 nomes de 1 a 32 caracteres `[a-z0-9_.:-]`.
-pub fn caps(v: &Value) -> R<Vec<String>> {
-    let l = v.as_array().filter(|l| l.len() <= 32).ok_or(InvalidMessage)?;
-    l.iter().map(|c| c.as_str().filter(|c| (1..=32).contains(&c.len()) && c.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_.:-".contains(&b)))
-        .map(str::to_owned).ok_or(InvalidMessage)).collect()
 }
 
 pub fn parse_msg(text: &str, connection_id: &str) -> R<Msg> {
@@ -186,12 +179,7 @@ pub fn parse_msg(text: &str, connection_id: &str) -> R<Msg> {
             Msg::Challenge { host_pk: b64(s("host_pk")?)?, nonce_a: b64(s("nonce_a")?)?, sig_a: b64(s("sig_a")?)?, mac_a: opt_mac("mac_a")? }
         }
         "auth_proof" => { fields(&["sig_o"], "mac_o")?; Msg::Proof { sig_o: b64(s("sig_o")?)?, mac_o: opt_mac("mac_o")? } }
-        "auth_ok" => {
-            // `caps` opcional (host antigo não manda): lista curta de nomes; o cliente Rust não precisa dela.
-            fields(&[], "caps")?;
-            if let Some(c) = o.get("caps") { caps(c)?; }
-            Msg::AuthOk
-        }
+        "auth_ok" => { fields(&[], "")?; Msg::AuthOk }
         "error" => { fields(&["code"], "")?; Msg::Fail(Error::from_code(s("code")?).ok_or(InvalidMessage)?) }
         _ => return Err(InvalidMessage),
     })
@@ -432,18 +420,15 @@ mod tests {
     use super::*;
     const CID: &str = "00010203-0405-0607-0809-0a0b0c0d0e0f"; // vetor 3.1: bytes 00..0f
 
+    /// `auth_ok` no formato da versão 0.1.8: sem campo novo (cliente antigo recusaria) e estrito.
     #[test]
-    fn auth_ok_caps_opcional() {
-        let t = Msg::AuthOk.to_json(CID);
-        let v: Value = serde_json::from_str(&t).unwrap();
-        assert_eq!(v["caps"], json!(["agents", "ssh", "history"]));
-        assert_eq!(parse_msg(&t, CID), Ok(Msg::AuthOk));
+    fn auth_ok_igual_ao_antigo() {
         let old = format!(r#"{{"type":"auth_ok","v":1,"connection_id":"{CID}"}}"#);
-        assert_eq!(parse_msg(&old, CID), Ok(Msg::AuthOk), "host antigo, sem caps");
-        for bad in [r#""ssh""#, r#"[1]"#, r#"["SSH"]"#, r#"[""]"#] {
-            let m = format!(r#"{{"type":"auth_ok","v":1,"connection_id":"{CID}","caps":{bad}}}"#);
-            assert_eq!(parse_msg(&m, CID), Err(InvalidMessage), "{bad}");
-        }
+        let v: Value = serde_json::from_str(&Msg::AuthOk.to_json(CID)).unwrap();
+        assert_eq!(v, serde_json::from_str::<Value>(&old).unwrap());
+        assert_eq!(parse_msg(&old, CID), Ok(Msg::AuthOk));
+        let caps = format!(r#"{{"type":"auth_ok","v":1,"connection_id":"{CID}","caps":["ssh"]}}"#);
+        assert_eq!(parse_msg(&caps, CID), Err(InvalidMessage));
     }
 
     fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }

@@ -4,6 +4,16 @@
     "ssh",
     "history"
   ],
+  "caps_probe": {
+    "auth_ok_host_antigo": "{\"type\":\"auth_ok\",\"v\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\"}",
+    "reply": "{\"api\":1,\"caps\":[\"agents\",\"ssh\",\"history\"],\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"caps_ok\",\"v\":1}",
+    "reply_host_antigo": "{\"code\":\"NOT_FOUND\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"error\",\"v\":1}",
+    "request": {
+      "from_offset": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "type": "session_attach"
+    }
+  },
   "connection_id": "9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d",
   "replies": [
     {
