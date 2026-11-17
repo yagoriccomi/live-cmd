@@ -3,16 +3,28 @@
 <head>
 <meta charset="utf-8">
 <title>live-cmd</title>
+<link rel="stylesheet" href="fonts/fonts.css">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="aurora.css">
 <script src="app.js" defer></script>
 <script src="extras.js" defer></script>
 </head>
-<body>
+<body class="app-body">
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="rail app-rail" aria-hidden="true"><span class="rail-logo">›_</span></div>
+<aside class="app-side">
+<h1 class="app-side-t">live-cmd</h1>
+<p class="side-sub app-side-s">Celular, aparelhos e ajustes deste PC</p>
 <div role="tablist" aria-label="Seções">
   <button role="tab" id="tab-pair" aria-controls="pair" aria-selected="true">Parear</button>
   <button role="tab" id="tab-devices" aria-controls="devices" aria-selected="false" tabindex="-1">Aparelhos</button>
   <button role="tab" id="tab-settings" aria-controls="settings" aria-selected="false" tabindex="-1">Configurações</button>
 </div>
+</aside>
+<!-- Destaque do mockup (só na janela larga); repete o nome da aba, por isso fica fora da árvore de acessibilidade. -->
+<div class="hero app-hero" id="hero-pair" aria-hidden="true"><div class="hero-top"><span class="tile tile-lg">▣</span><div class="hero-txt"><div class="hero-t">Parear celular</div><div class="hero-s mono">aguardando leitura do QR Code…</div></div></div></div>
+<div class="hero app-hero" id="hero-devices" aria-hidden="true"><div class="hero-top"><span class="tile tile-lg">⇄</span><div class="hero-txt"><div class="hero-t">Aparelhos</div><div class="hero-s mono">celulares pareados com este PC</div></div></div></div>
+<div class="hero app-hero" id="hero-settings" aria-hidden="true"><div class="hero-top"><span class="tile tile-lg">⚙</span><div class="hero-txt"><div class="hero-t">Configurações</div><div class="hero-s mono">tema, servidor, rolagem e perfis</div></div></div></div>
 
 <!-- Parear. O URI nunca entra no DOM: só a imagem do QR (alt genérico). -->
 <section id="pair" role="tabpanel" aria-labelledby="tab-pair" class="window-body qr-panel">
