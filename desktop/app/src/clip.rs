@@ -76,6 +76,59 @@ fn read_open() -> Option<String> {
     }
 }
 
+/// Print no clipboard (`CF_DIB` 24/32 bits) em PNG RGB; `None` se não há imagem. ponytail: outros formatos (8 bits, JPEG) ignorados.
+pub fn read_png() -> Result<Option<Vec<u8>>, String> {
+    const CF_DIB: u32 = 8;
+    let dib = unsafe {
+        OpenClipboard(None).map_err(|_| "CLIPBOARD")?;
+        let d = (|| {
+            let g = HGLOBAL(GetClipboardData(CF_DIB).ok()?.0);
+            let p = GlobalLock(g) as *const u8;
+            if p.is_null() { return None; }
+            let v = std::slice::from_raw_parts(p, GlobalSize(g)).to_vec();
+            let _ = GlobalUnlock(g);
+            Some(v)
+        })();
+        let _ = CloseClipboard();
+        d
+    };
+    Ok(dib.and_then(|d| dib_png(&d)))
+}
+
+fn dib_png(d: &[u8]) -> Option<Vec<u8>> {
+    let u32_at = |i: usize| Some(u32::from_le_bytes(d.get(i..i + 4)?.try_into().ok()?));
+    let (hs, w, h) = (u32_at(0)? as usize, u32_at(4)? as i32, u32_at(8)? as i32);
+    let (bits, comp) = (u16::from_le_bytes(d.get(14..16)?.try_into().ok()?), u32_at(16)?);
+    if !(bits == 24 || bits == 32) || !(comp == 0 || comp == 3) || w <= 0 || h == 0 || w > 20000 || h.abs() > 20000 { return None; }
+    let (w, ah) = (w as usize, h.unsigned_abs() as usize);
+    let off = hs + if comp == 3 && hs == 40 { 12 } else { 0 };
+    let bpp = bits as usize / 8;
+    let stride = (w * bpp).div_ceil(4) * 4;
+    if d.len() < off + stride * ah { return None; }
+    let mut rgb = Vec::with_capacity(w * ah * 3);
+    for y in 0..ah {
+        let row = if h > 0 { ah - 1 - y } else { y };
+        for px in d[off + row * stride..][..w * bpp].chunks(bpp) { rgb.extend([px[2], px[1], px[0]]); }
+    }
+    let mut out = Vec::new();
+    let mut e = png::Encoder::new(&mut out, w as u32, ah as u32);
+    e.set_color(png::ColorType::Rgb);
+    e.write_header().ok()?.write_image_data(&rgb).ok()?;
+    Some(out)
+}
+
+#[test]
+fn dib_2x1_bottom_up() {
+    let mut d = vec![0u8; 40];
+    d[0] = 40; d[4] = 2; d[8] = 1; d[12] = 1; d[14] = 24;
+    d.extend([1, 2, 3, 4, 5, 6, 0, 0]);
+    let p = dib_png(&d).unwrap();
+    let mut r = png::Decoder::new(std::io::Cursor::new(p)).read_info().unwrap();
+    let mut buf = vec![0; r.output_buffer_size().unwrap()];
+    r.next_frame(&mut buf).unwrap();
+    assert_eq!(&buf[..6], &[3, 2, 1, 6, 5, 4]);
+}
+
 /// `Ctrl+Shift+V` do terminal.
 pub fn read_text() -> Result<String, String> {
     unsafe {

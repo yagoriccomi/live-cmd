@@ -323,6 +323,8 @@ async function newSession(conn, profile) {
   } catch (e) { banner(msg(e), "err"); }
 }
 
+const dropCwds = {}; // pasta atual por aba (OSC 7), para arrastar/colar em remoto
+
 // ---------- Lista lateral ----------
 async function refresh(conn) {
   try {
@@ -783,7 +785,14 @@ function copySel() {
 }
 function paste() {
   const t = curTab();
-  if (t && t.exited == null) invoke("term_paste", { conn: t.conn, sessionId: t.sid }).catch((err) => banner(msg(err), "err"));
+  if (!t || t.exited != null) return $("screen").focus();
+  const dir = t.conn === LOCAL ? null : dropCwds[t.key] ?? null;
+  // Remoto com print: o app envia a imagem ao outro PC e cola o caminho (claude/codex anexam pelo caminho).
+  invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir }).then((name) => {
+    if (!name) return;
+    send(dir ? `"${dir.replace(/[\/]+$/, "")}\${name}"` : name);
+    banner(`Print enviado: ${name} em ${dir ?? "pasta padrão do outro PC"}.`);
+  }).catch((err) => banner(msg(err), "err"));
   $("screen").focus();
 }
 function selectAll() {
@@ -924,7 +933,6 @@ $("screen").addEventListener("click", (e) => {
 $("screen").addEventListener("mousemove", (e) => $("screen").classList.toggle("ctrl", e.ctrlKey));
 
 // Arrastar arquivo(s): sessão local cola o(s) caminho(s) entre aspas; remota envia ao outro PC (pasta atual da sessão, senão a padrão do host).
-const dropCwds = {};
 window.__TAURI__.event.listen("term-cwd", (e) => { dropCwds[e.payload.key] = e.payload.cwd || undefined; });
 window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload }) => {
   if (payload.type !== "drop" || !payload.paths?.length) return;

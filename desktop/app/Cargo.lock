@@ -2530,10 +2530,11 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "live-cmd-app"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "base64 0.22.1",
  "live-cmd-echo",
+ "png",
  "qrcode",
  "serde",
  "serde_json",
