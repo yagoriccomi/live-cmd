@@ -11,7 +11,13 @@
 
 | Fatia | Escopo | Nível | Estado |
 |---|---|---|---|
-| A | Agentes: lista de sessões de IA por grupo (pasta), retomar, nova sessão | alto | em andamento |
-| B | SSH: cadastro de servidores (host, usuário, porta, chave), conectar abre aba ssh.exe, status | alto | em andamento |
-| C | Histórico: gravar comandos por sessão, busca, filtros, reexecutar | alto | em andamento |
-| D | Mobile: abas Sessões/Agentes/SSH/Histórico + mensagens de protocolo e lado host | alto | em andamento |
+| A | Agentes: lista de sessões de IA por grupo (pasta), retomar, nova sessão | alto | concluída |
+| B | SSH: cadastro de servidores (host, usuário, porta, chave), conectar abre aba ssh.exe, status | alto | concluída |
+| C | Histórico: gravar comandos por sessão, busca, filtros, reexecutar | alto | concluída |
+| D | Mobile: abas Sessões/Agentes/SSH/Histórico + mensagens de protocolo e lado host | alto | concluída |
+| E | Ligação celular↔host: `mobile::AppProvider` (app) registrado com `extras::set_provider` no setup; Agentes de `agents.json`, SSH de `ssh.json` (latência em cache, teste TCP em segundo plano) e Histórico de `history.jsonl`; `ssh_connect` abre o `ssh.exe` direto com destino validado | alto | concluída no código; falta teste ponta a ponta no celular |
+
+**Pendências da fatia E:**
+- Sessões de agente criadas pelo celular não entram em `agents.json`; depois de fechadas somem da lista (desktop e celular).
+- Retomar pelo celular não atualiza `used_ms` no registro.
+- `history_query` do celular só filtra por texto (sem dias, tipo ou só erros).
