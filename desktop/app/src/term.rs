@@ -181,12 +181,13 @@ fn on_event(app: &AppHandle, conn: &str, e: ClientEvent) {
         ClientEvent::Control(c) if c["type"] == "command_completed" => {
             let k = key(conn, c["session_id"].as_str().unwrap_or_default());
             if let Some(v) = t.views.lock().unwrap().get_mut(&k) { v.osc = true; v.busy = false; }
-            crate::hist::record_done(app, &k, c["exit_code"].as_i64());
+            // Abas deste PC: o host já entrega o código ao histórico (`mobile.rs`).
+            if conn != LOCAL { crate::hist::record_done(app, &k, c["exit_code"].as_i64()); }
             let _ = app.emit_to(WIN, "term-cmd-done", json!({ "key": k, "code": c["exit_code"] }));
         }
         // F4: pasta atual (OSC 7 no host) para "Nova sessão aqui".
         ClientEvent::Control(c) if c["type"] == "cwd_changed" => {
-            crate::hist::record_cwd(app, &key(conn, c["session_id"].as_str().unwrap_or_default()), c["cwd"].as_str());
+            if conn != LOCAL { crate::hist::record_cwd(app, &key(conn, c["session_id"].as_str().unwrap_or_default()), c["cwd"].as_str()); }
             let _ = app.emit_to(WIN, "term-cwd", json!({ "key": key(conn, c["session_id"].as_str().unwrap_or_default()), "cwd": c["cwd"] }));
         }
         ClientEvent::Control(_) => {}
@@ -309,13 +310,14 @@ pub fn term_close(app: AppHandle, conn: String, session_id: String) -> Result<()
 #[tauri::command(async)]
 pub fn term_input(app: AppHandle, conn: String, session_id: String, data: String) -> Result<(), String> {
     // Histórico: linha do cursor antes do envio (tela alternativa, como vim, não grava).
+    // Neste PC quem grava é o host (ponto comum com o celular); aqui só as abas de outro PC.
     let mut line = None;
     with_view(&app, &conn, &session_id, |v| {
         v.vt.screen_mut().set_scrollback(0);
         v.busy |= data.contains('\r');
         if data.contains('\r') && !v.vt.screen().alternate_screen() { line = Some(crate::hist::cursor_line(&v.vt)); }
     });
-    crate::hist::record_input(&app, &key(&conn, &session_id), &conn, &data, line);
+    if conn != LOCAL { crate::hist::record_input(&app, &key(&conn, &session_id), &conn, &data, line); }
     client(&app, &conn)?.input(&session_id, data.as_bytes())
 }
 

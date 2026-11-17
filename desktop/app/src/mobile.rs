@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use live_cmd_echo::extras::{Agent, AgentState, HistoryEntry, HistoryFilter, Provider, SshServer};
+use live_cmd_echo::extras::{Agent, AgentDefault, AgentState, HistoryEntry, HistoryFilter, Input, Provider, SshServer};
 
 use crate::{agents, hist, settings, ssh, term};
 
@@ -29,6 +29,9 @@ pub struct AppProvider {
     lat: Arc<Mutex<HashMap<(String, u16), Lat>>>,
     /// O mesmo store da tela Histórico (ver `hist::Shared`).
     hist: hist::Shared,
+    /// Digitação desde o último Enter e último comando à espera do código, por sessão deste PC (`Provider::session_input`).
+    typed: Mutex<HashMap<[u8; 16], hist::Typed>>,
+    pending: Mutex<HashMap<[u8; 16], u64>>,
 }
 
 impl AppProvider {
@@ -40,7 +43,9 @@ impl AppProvider {
         AppProvider::with_probe(dir, probe)
     }
 
-    pub fn with_probe(dir: PathBuf, probe: Probe) -> AppProvider { AppProvider { dir, probe, lat: Default::default(), hist: Default::default() } }
+    pub fn with_probe(dir: PathBuf, probe: Probe) -> AppProvider {
+        AppProvider { dir, probe, lat: Default::default(), hist: Default::default(), typed: Default::default(), pending: Default::default() }
+    }
 
     /// Usa o store da tela Histórico em vez de um próprio.
     pub fn with_history(mut self, h: hist::Shared) -> AppProvider { self.hist = h; self }
@@ -147,6 +152,40 @@ impl Provider for AppProvider {
     }
 
     fn history_clear(&self) -> Result<(), String> { self.with_history_store(|s| s.clear()).map_err(|_| "IO_ERROR".into()) }
+
+    /// Ponto comum do histórico das sessões deste PC: terminal desktop (cliente local), outro PC e celular.
+    /// Mesmas regras de `hist::on_input`: senha, sem eco e tela alternativa não gravam; o host já tirou as de agente.
+    fn session_input(&self, i: &Input) {
+        let cmds = hist::on_input(self.typed.lock().unwrap_or_else(|e| e.into_inner()).entry(i.session_id).or_default(), i.data, i.line.as_deref());
+        if cmds.is_empty() { return; }
+        let kind = if i.ssh { "ssh" } else { hist::kind_of(&i.label) };
+        if kind == "ia" { return; }
+        let label = if i.label.is_empty() { "Terminal" } else { i.label.as_str() };
+        for c in cmds {
+            if let Ok(id) = self.with_history_store(|s| s.add_in(crate::host::now_ms(), &c, kind, label, "Este PC", i.cwd.as_deref())) {
+                self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(i.session_id, id);
+            }
+        }
+    }
+
+    fn command_done(&self, session_id: &[u8; 16], code: Option<i32>) {
+        let Some(id) = self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(session_id) else { return };
+        if let Some(c) = code { let _ = self.with_history_store(|s| s.set_code(id, c.into())); }
+    }
+
+    fn session_gone(&self, session_id: &[u8; 16]) {
+        self.typed.lock().unwrap_or_else(|e| e.into_inner()).remove(session_id);
+        self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(session_id);
+    }
+
+    /// "Salvar como padrão": o mesmo `agent-default.json` do diálogo desktop.
+    fn agent_default(&self) -> Option<AgentDefault> {
+        agents::read_default(&self.dir).map(|d| AgentDefault { agent: d.agent, cwd: d.cwd, args: d.args })
+    }
+
+    fn agent_default_save(&self, d: &AgentDefault) -> Result<(), String> {
+        agents::save_default(&self.dir, agents::AiDefault { agent: d.agent.clone(), cwd: d.cwd.clone(), args: d.args.clone() }).map(drop)
+    }
 }
 
 #[cfg(test)]
@@ -256,6 +295,52 @@ mod tests {
         p.ssh_remove(&id).unwrap();
         assert!(settings::ssh_servers(&d).unwrap().is_empty());
         assert_eq!(p.ssh_remove(&id), Err("NOT_FOUND".into()));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// Ponto comum do host (`session_input`): comando digitado pelo celular ou pelo terminal desktop entra uma vez,
+    /// com as mesmas regras da tela desktop; senha, sem eco e tela alternativa não gravam; código chega depois.
+    #[test]
+    fn historico_do_host_com_as_regras_do_desktop() {
+        let d = tmp("hist-host");
+        let shared = hist::Shared::default();
+        let p = AppProvider::new(d.clone()).with_history(shared.clone());
+        let sid = [7u8; 16];
+        let inp = |data: &str, line: Option<&str>, label: &str, ssh: bool| p.session_input(&Input { session_id: sid, data, line: line.map(str::to_owned), label: label.into(), cwd: Some(r"C:\proj".into()), ssh });
+        // Celular manda tecla a tecla; o Enter vem com a linha da tela do host.
+        for c in ["g", "i", "t", " ", "s"] { inp(c, None, "", false); }
+        inp("\r", Some(r"PS C:\proj> git s"), "PowerShell", false);
+        p.command_done(&sid, Some(2));
+        inp("segredo\r", Some("Password:"), "PowerShell", false);
+        inp("abc", None, "", false);
+        inp("\r", Some("Enter passphrase"), "PowerShell", false);
+        inp("oculto", None, "", false);
+        inp("\r", Some(r"PS C:\proj>"), "PowerShell", false);
+        inp(":q\r", None, "PowerShell", false);
+        inp("ls\r", Some("$"), "srv", true);
+        inp("oi\r", Some("> oi"), "api · claude", false);
+        let all = hist::with_shared(&shared, &d, |s| s.entries().to_vec());
+        assert_eq!(all.iter().map(|e| (e.cmd.as_str(), e.kind.as_str(), e.pc.as_str(), e.code)).collect::<Vec<_>>(),
+            vec![("git s", "pwsh", "Este PC", Some(2)), ("ls", "ssh", "Este PC", None)], "{all:?}");
+        assert_eq!(all[0].cwd.as_deref(), Some(r"C:\proj"));
+        p.session_gone(&sid);
+        p.command_done(&sid, Some(9));
+        assert_eq!(hist::with_shared(&shared, &d, |s| s.entries()[1].code), None, "sessão encerrada não recebe código atrasado");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn padrao_do_agente_e_o_mesmo_arquivo_do_desktop() {
+        let d = tmp("padrao");
+        let p = AppProvider::new(d.clone());
+        assert_eq!(p.agent_default(), None);
+        p.agent_default_save(&AgentDefault { agent: "codex".into(), cwd: Some(r" C:\api ".into()), args: " --full-auto ".into() }).unwrap();
+        assert_eq!(agents::read_default(&d), Some(agents::AiDefault { agent: "codex".into(), cwd: Some(r"C:\api".into()), args: "--full-auto".into() }), "a tela desktop lê o mesmo");
+        assert_eq!(p.agent_default().map(|x| (x.agent, x.cwd, x.args)), Some(("codex".into(), Some(r"C:\api".into()), "--full-auto".into())));
+        assert_eq!(p.agent_default_save(&AgentDefault { agent: "bash".into(), ..Default::default() }), Err("INVALID_MESSAGE".into()));
+        assert_eq!(p.agent_default_save(&AgentDefault { agent: "claude".into(), args: "& calc".into(), cwd: None }), Err("INVALID_MESSAGE".into()));
+        std::fs::write(d.join("agent-default.json"), r#"{"agent":"claude","args":"; calc"}"#).unwrap();
+        assert_eq!(p.agent_default(), None, "arquivo editado à mão com args perigosos é ignorado");
         let _ = std::fs::remove_dir_all(d);
     }
 

@@ -9,6 +9,8 @@ mod screen;
 mod session;
 pub mod ssh;
 pub use client::{Client, ClientEvent, RemotePin, parse_pair_link};
+pub use screen::cursor_line;
+pub use proto::{AGENTS, valid_args};
 use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, sync::{atomic::{AtomicBool, AtomicU64, Ordering::Relaxed}, Arc, LazyLock, Mutex, MutexGuard, OnceLock}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 use auth::{Binding, Host, HostHandshake, Msg};
 use proto::{Control, Focus, Op, Req};
@@ -226,7 +228,13 @@ impl Hub {
         let outs = match ev {
             conpty::Ev::Output(d) => {
                 let events = self.screens.get_mut(&sid).map(|s| s.feed(&d)).unwrap_or_default();
-                for e in &events { if let screen::Event::Cwd(c) = e { self.cwds.insert(sid, c.into()); } }
+                for e in &events {
+                    match e {
+                        screen::Event::Cwd(c) => { self.cwds.insert(sid, c.into()); }
+                        // Código de saída do último comando gravado no histórico (qualquer cliente pode ter digitado).
+                        screen::Event::CommandCompleted(c) => extras::provider().command_done(&sid, *c),
+                    }
+                }
                 self.dirty = true;
                 let mut outs = self.s.on_output(sid, &d, now_ms());
                 if let Some(b) = self.base.get_mut(&sid) { b.feed(self.s.dropped(&sid)); }
@@ -240,7 +248,38 @@ impl Hub {
     }
     /// Solta a tela das sessões que saíram da tabela (close após o `05`, TTL).
     fn forget(&mut self, sids: &[Sid]) {
-        for sid in sids { if self.s.size(sid).is_none() { self.screens.remove(sid); self.base.remove(sid); self.plain.remove(sid); self.cwds.remove(sid); self.ai.remove(sid); self.ssh.remove(sid); } }
+        for sid in sids {
+            if self.s.size(sid).is_none() && self.screens.remove(sid).is_some() {
+                self.base.remove(sid); self.plain.remove(sid); self.cwds.remove(sid); self.ai.remove(sid); self.ssh.remove(sid);
+                extras::provider().session_gone(sid);
+            }
+        }
+    }
+    /// Frame `01` de qualquer cliente (remoto ou o terminal local): escreve no PTY e, se a entrada é nova
+    /// (não é reenvio do mesmo `seq`), passa pelo histórico. Ponto único: nada é gravado duas vezes.
+    fn input(&mut self, conn: ConnId, sid: Sid, seq: u64, data: &[u8], now: u64) -> std::result::Result<Option<Value>, auth::Error> {
+        let fresh = self.s.fresh(conn, &sid, seq);
+        let r = self.s.input(conn, sid, seq, data, now)?;
+        if fresh { self.capture(&sid, data); }
+        Ok(r)
+    }
+    /// Histórico (tela Histórico, desktop e celular): entrega a entrada ao provedor com a linha do cursor da tela
+    /// do host. Sessão de agente não grava (lá se digita prompt, não comando).
+    fn capture(&self, sid: &Sid, data: &[u8]) {
+        if self.ai.contains_key(sid) { return; }
+        let data = String::from_utf8_lossy(data);
+        let enter = data.contains('\r');
+        let line = if enter { self.screens.get(sid).and_then(|s| s.cursor_line()) } else { None };
+        let (label, cwd) = if enter { (self.label_of(sid), self.cwds.get(sid).map(|d| d.to_string_lossy().into_owned())) } else { (String::new(), None) };
+        extras::provider().session_input(&extras::Input { session_id: *sid, data: &data, line, label, cwd, ssh: self.ssh.contains_key(sid) });
+    }
+    /// Rótulo da sessão; sem rótulo, o do perfil (como a aba mostra).
+    fn label_of(&self, sid: &Sid) -> String {
+        let id = proto::uuid_str(sid);
+        let l = self.s.list().into_iter().find(|x| x["session_id"] == id.as_str()).and_then(|x| x["label"].as_str().map(str::to_owned)).unwrap_or_default();
+        if !l.is_empty() { return l; }
+        if self.ssh.contains_key(sid) { return "SSH".into(); }
+        self.prof.get(sid).and_then(|p| self.profiles.iter().find(|x| &x.0 == p)).map(|x| x.1.label.clone()).unwrap_or_default()
     }
     fn request(&mut self, conn: ConnId, pk: Pk, req: Req, now: u64) -> std::result::Result<Value, auth::Error> {
         Ok(match req {
@@ -358,10 +397,22 @@ impl Hub {
             }
             X::HistoryQuery(f) => extras::history_query_ok(&p.history(&f)),
             X::HistoryClear => { p.history_clear().map_err(|c| extras::code(&c))?; extras::empty_ok("history_clear_ok") }
+            // Mesma listagem do `dir_list` (navegador de pastas do agente no desktop).
+            X::FolderList(path) => extras::folder_list_ok(&path, &list_dirs(&path)),
+            X::SshKeyList(path) => {
+                let root = extras::ssh_root().ok_or(auth::Error::NotFound)?;
+                let (shown, dirs, keys) = extras::ssh_keys(&root, &path)?;
+                extras::ssh_key_list_ok(&root.to_string_lossy(), &shown, &dirs, &keys)
+            }
+            X::AgentDefaultGet => extras::agent_default_ok(p.agent_default().as_ref()),
+            X::AgentDefaultSet(d) => { p.agent_default_save(&d).map_err(|c| extras::code(&c))?; extras::empty_ok("agent_default_set_ok") }
             X::HistoryRun { entry_id, session_id } => {
                 if self.s.size(&session_id).is_none() { return Err(auth::Error::NotFound); }
                 let cmd = p.history_command(&entry_id).ok_or(auth::Error::NotFound)?;
-                self.s.type_in(&session_id, format!("{cmd}\r").as_bytes());
+                let data = format!("{cmd}\r");
+                self.s.type_in(&session_id, data.as_bytes());
+                // Como "Reexecutar" no desktop (que passa pelo frame `01`): entra de novo no histórico.
+                self.capture(&session_id, data.as_bytes());
                 extras::history_run_ok()
             }
         })
@@ -580,7 +631,7 @@ async fn c3_message(ch: &Arc<dyn DataChannel>, id: &str, host: &Host, l: &mut Li
                 // Eco do ping do cliente; o eco do nosso ping só renova `last_rx`.
                 Op::Heartbeat if l.awaiting && f.seq == l.ping => { l.awaiting = false; Ok(None) }
                 Op::Heartbeat => Ok(Some(Out::Frame(f.clone()))),
-                Op::Input(d) => h.s.input(l.conn, f.session_id, f.seq, d, now).map(|a| a.map(Out::Ctl)),
+                Op::Input(d) => h.input(l.conn, f.session_id, f.seq, d, now).map(|a| a.map(Out::Ctl)),
                 Op::Resize { cols, rows } => h.s.resize(l.conn, f.session_id, *cols, *rows).map(|_| None),
                 _ => Err(InvalidMessage),
             };
@@ -1155,6 +1206,11 @@ mod tests {
                 let t = |user: &str| ssh::Ssh { user: user.into(), host: "127.0.0.1".into(), port: 1, key: None };
                 match id { "s1" => Some(t("u")), "bad" => Some(t("u;calc")), _ => None }
             }
+            fn session_input(&self, i: &extras::Input) { INPUTS.lock().unwrap().push((i.session_id, i.data.to_owned(), i.line.clone(), i.label.clone(), i.ssh)); }
+            fn command_done(&self, sid: &[u8; 16], code: Option<i32>) { DONE.lock().unwrap().push((*sid, code)); }
+            fn history_command(&self, id: &str) -> Option<String> { (id == "h1").then(|| "echo de-novo".into()) }
+            fn agent_default(&self) -> Option<extras::AgentDefault> { DEFAULT.lock().unwrap().clone() }
+            fn agent_default_save(&self, d: &extras::AgentDefault) -> std::result::Result<(), String> { *DEFAULT.lock().unwrap() = Some(d.clone()); Ok(()) }
             fn saved_agents(&self) -> Vec<extras::Agent> {
                 let a = extras::Agent { session_id: [0x6b; 16], agent: "claude".into(), args: String::new(), label: "app".into(), cwd: None, state: extras::AgentState::Saved, last_activity_ms: 1, profile_id: Some("test-b".into()) };
                 vec![extras::Agent { session_id: [0x6c; 16], args: "& calc".into(), ..a.clone() }, a]
@@ -1196,9 +1252,42 @@ mod tests {
         assert_eq!(h.extra(X::SshReconnect { session_id: sid, cols: 80, rows: 24 }, now_ms()).unwrap()["session_id"], proto::uuid_str(&sid));
         assert!(matches!(h.extra(X::SshReconnect { session_id: [0x6b; 16], cols: 80, rows: 24 }, now_ms()), Err(auth::Error::NotFound)), "não é SSH");
         let _ = h.s.close(sid);
+        // Histórico: ponto comum do frame `01` (qualquer cliente) e do "Reexecutar"; reenvio não grava de novo; agente não grava.
+        h.profiles.push(("test-osc".into(), Profile { label: "PowerShell".into(), command: "cmd.exe".into(), osc: true }));
+        let plain = h.open(None, "test-osc", None, None, 80, 24, now_ms()).unwrap();
+        for s in [plain, [0x6b; 16]] { h.request(9, [9; 32], Req::Attach { session_id: s, from_offset: None, size: None }, now_ms()).unwrap(); }
+        let mine = |s: Sid| INPUTS.lock().unwrap().iter().filter(|x| x.0 == s).cloned().collect::<Vec<_>>();
+        h.input(9, plain, 1, b"dir\r", now_ms()).unwrap();
+        h.input(9, plain, 1, b"dir\r", now_ms()).unwrap();
+        h.input(9, plain, 2, b"x", now_ms()).unwrap();
+        let got = mine(plain);
+        assert_eq!(got.len(), 2, "reenvio do mesmo seq não grava de novo: {got:?}");
+        assert_eq!((got[0].1.as_str(), got[0].2.is_some(), got[0].3.as_str(), got[0].4), ("dir\r", true, "PowerShell", false), "rótulo do perfil, linha do cursor no Enter");
+        assert_eq!((got[1].2.as_ref(), got[1].3.as_str()), (None, ""), "sem Enter não manda linha nem rótulo");
+        h.input(9, [0x6b; 16], 1, b"oi\r", now_ms()).unwrap();
+        assert!(mine([0x6b; 16]).is_empty(), "sessão de agente não grava");
+        h.extra(X::HistoryRun { entry_id: "h1".into(), session_id: plain }, now_ms()).unwrap();
+        assert_eq!(mine(plain).last().map(|x| x.1.clone()), Some("echo de-novo\r".into()), "reexecutar pelo celular grava como no desktop");
+        h.pty(plain, conpty::Ev::Output(b"\x1b]133;D;3\x07".to_vec()));
+        assert!(DONE.lock().unwrap().contains(&(plain, Some(3))), "código de saída vai ao provedor");
+        // Padrão do agente: o mesmo registro do provedor (o app grava em `agent-default.json`).
+        assert_eq!(h.extra(X::AgentDefaultGet, now_ms()).unwrap()["agent"], Value::Null);
+        let d = extras::AgentDefault { agent: "codex".into(), cwd: Some(r"C:\p".into()), args: "--full-auto".into() };
+        assert_eq!(h.extra(X::AgentDefaultSet(d), now_ms()).unwrap()["type"], "agent_default_set_ok");
+        let g = h.extra(X::AgentDefaultGet, now_ms()).unwrap();
+        assert_eq!((g["agent"].as_str(), g["cwd"].as_str(), g["args"].as_str()), (Some("codex"), Some(r"C:\p"), Some("--full-auto")));
+        // Pastas: a mesma listagem do `dir_list`.
+        let f = h.extra(X::FolderList(String::new()), now_ms()).unwrap();
+        assert!(f["dirs"].as_array().unwrap().iter().any(|d| d == "C:\\"), "{f}");
+        assert_eq!(f, extras::folder_list_ok("", &list_dirs("")));
+        let _ = h.s.close(plain);
+        let _ = h.s.close(sid);
         let _ = h.s.close([0x6b; 16]);
     }
     static STARTED: Mutex<Vec<([u8; 16], String, String)>> = Mutex::new(vec![]);
+    static INPUTS: Mutex<Vec<([u8; 16], String, Option<String>, String, bool)>> = Mutex::new(vec![]);
+    static DONE: Mutex<Vec<([u8; 16], Option<i32>)>> = Mutex::new(vec![]);
+    static DEFAULT: Mutex<Option<extras::AgentDefault>> = Mutex::new(None);
     /// SSH restaurado do disco volta desconectado (sem processo) e `ssh_reconnect` abre o ssh.exe com o mesmo id.
     #[test]
     fn ssh_restaurado_fica_desconectado() {

@@ -166,18 +166,8 @@ pub fn kind_of(label: &str) -> &'static str {
     else { "outro" }
 }
 
-/// Linha lógica onde está o cursor (junta as linhas quebradas pela largura).
-pub fn cursor_line(vt: &vt100::Parser) -> String {
-    let s = vt.screen();
-    let cols = s.size().1.get();
-    let mut r = s.cursor_position().0;
-    let mut text = s.rows(0, cols).nth(r as usize).unwrap_or_default();
-    while r > 0 && s.row_wrapped(r - 1) {
-        r -= 1;
-        text = s.rows(0, cols).nth(r as usize).unwrap_or_default() + &text;
-    }
-    text.trim_end().to_owned()
-}
+/// Linha lógica onde está o cursor (junta as linhas quebradas pela largura): a mesma regra da tela do host.
+pub fn cursor_line(vt: &vt100::Parser) -> String { live_cmd_echo::cursor_line(vt.screen()) }
 
 fn is_secret(line: &str) -> bool {
     let l = line.to_lowercase();
@@ -261,7 +251,9 @@ pub fn record_cwd(app: &AppHandle, key: &str, cwd: Option<&str>) {
     h.meta.lock().unwrap().entry(key.into()).or_insert_with(|| Meta { kind: "outro".into(), label: "Terminal".into(), pc: String::new(), cwd: None }).cwd = cwd.map(str::to_owned);
 }
 
-/// Chamado por `term_input` (term.rs). `line`: linha do cursor se `data` tem Enter e a tela é a normal.
+/// Chamado por `term_input` (term.rs) só para abas de outro PC: as deste PC, venham do terminal desktop ou do
+/// celular, o host grava no ponto comum da entrada (`mobile.rs`, `Provider::session_input`), uma vez só.
+/// `line`: linha do cursor se `data` tem Enter e a tela é a normal.
 pub fn record_input(app: &AppHandle, key: &str, conn: &str, data: &str, line: Option<String>) {
     let h = app.state::<History>();
     let cmds = on_input(h.typed.lock().unwrap().entry(key.into()).or_default(), data, line.as_deref());
