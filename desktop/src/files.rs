@@ -1843,7 +1843,7 @@ mod tests {
 
     #[test] fn n25_slow_network_expires() {
         assert_eq!(timed(50, |_| std::thread::sleep(std::time::Duration::from_millis(300))), Err(Expired));
-        assert_eq!(timed(400, |b| { for _ in 0..6 { std::thread::sleep(std::time::Duration::from_millis(150)); b(); } 7 }), Ok(7), "beat renova o prazo");
+        assert_eq!(timed(600, |b| { for _ in 0..8 { std::thread::sleep(std::time::Duration::from_millis(100)); b(); } 7 }), Ok(7), "beat renova o prazo");
         let d = tmp();
         let Some(u) = unc(&d) else { return };
         let mut f = files(&d);

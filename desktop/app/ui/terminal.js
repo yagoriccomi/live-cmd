@@ -187,6 +187,9 @@ function editInline(span, value, save) {
 
 function renameSession(conn, sid, span, label) {
   const cur = conns[conn]?.sessions.find((s) => s.session_id === sid)?.label || label || "Terminal";
+  // Menu aberto antes de um redesenho guarda o span antigo (fora do DOM): usa o da aba atual.
+  if (!span.isConnected) span = $("tabs").querySelector(`[data-key="${CSS.escape(conn + "/" + sid)}"] .tab-name`);
+  if (!span) return;
   editInline(span, cur, async (v) => {
     await invoke("term_rename", { conn, sessionId: sid, label: v });
     for (const t of tabs) if (t.conn === conn && t.sid === sid) { t.label = v; t.title = titleOf(conn, { label: v }); }

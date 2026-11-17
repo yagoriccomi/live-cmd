@@ -486,11 +486,17 @@ mod tests {
     /// Worker falso de presença: host entra, cliente entra com o seu `connection_id`, os dois recebem `ready`;
     /// depois repassa as mensagens.
     async fn relay(listener: tokio::net::TcpListener) {
-        let mut h = tokio_tungstenite::accept_async(listener.accept().await.unwrap().0).await.unwrap();
-        h.next().await.unwrap().unwrap();
+        // Host e cliente conectam em paralelo: a ordem do accept não é garantida, então separa pelo `role` do hello.
+        let mut conns = vec![];
+        for _ in 0..2 {
+            let mut ws = tokio_tungstenite::accept_async(listener.accept().await.unwrap().0).await.unwrap();
+            let hello = envelope_any(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+            conns.push((ws, hello));
+        }
+        if conns[0].1["payload"]["role"] != "host" { conns.swap(0, 1); }
+        let ((mut h, host_hello), (mut c, hello)) = (conns.remove(0), conns.remove(0));
+        assert_eq!(host_hello["payload"]["role"], "host");
         h.send(json!({"v":1,"type":"hello","connection_id":null,"request_id":"w","payload":{"status":"waiting"}}).to_string().into()).await.unwrap();
-        let mut c = tokio_tungstenite::accept_async(listener.accept().await.unwrap().0).await.unwrap();
-        let hello = envelope_any(c.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
         assert_eq!(hello["payload"]["role"], "mobile");
         let id = hello["connection_id"].as_str().unwrap().to_owned();
         assert!(auth::uuid_v4_lower(&id).is_some(), "connection_id v4 sorteado pelo cliente");
