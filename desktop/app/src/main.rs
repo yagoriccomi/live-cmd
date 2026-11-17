@@ -6,6 +6,7 @@ mod agents;
 mod clip;
 mod host;
 mod settings;
+mod ssh;
 mod term;
 
 use std::sync::Mutex;
@@ -338,7 +339,8 @@ fn main() {
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove,
             term::term_export, term::term_export_file, term::term_clear, term::term_upload, term::term_conn_stats, term::term_busy, term::term_rename, term::remote_rename,
-            agents::agent_list, agents::agent_resume, agents::agent_remove])
+            agents::agent_list, agents::agent_resume, agents::agent_remove,
+            ssh::ssh_list, ssh::ssh_save, ssh::ssh_remove, ssh::ssh_probe, ssh::ssh_connect])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;

@@ -250,3 +250,18 @@ input.rename { font:inherit; padding:0 4px; width:12em; }
 .ag-empty { display:grid; place-items:center; text-align:center; padding:calc(var(--space)*4); color:var(--text-muted); }
 :root:not([data-theme=light]):not([data-theme=contrast]) .tool-panel { background:var(--scrim); backdrop-filter:blur(30px); }
 :root:not([data-theme=light]):not([data-theme=contrast]) .ag-group { backdrop-filter:blur(30px); box-shadow:var(--glow); }
+/* Servidores SSH (painel no lugar da área do terminal). */
+.ssh-panel { flex:1; min-height:0; overflow:auto; padding:calc(var(--space)*2); }
+.ssh-head { display:flex; gap:var(--space); align-items:center; margin-bottom:var(--space); }
+.ssh-head h2 { margin:0 auto 0 0; }
+.ssh-head input[type=search] { font:inherit; width:260px; padding:6px 10px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--text); user-select:text; }
+.ssh-list { list-style:none; margin:var(--space) 0 0; padding:0; display:grid; gap:var(--space); }
+.ssh-list li { display:flex; align-items:center; gap:calc(var(--space)*1.5); padding:var(--space) calc(var(--space)*1.5); border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); box-shadow:var(--glow, none); }
+.ssh-list .ssh-info { min-width:0; flex:1; }
+.ssh-list .ssh-name { font-weight:600; }
+.ssh-list .ssh-dest { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ssh-list .ssh-st { min-width:7em; text-align:right; }
+.ssh-list .ssh-acts { display:flex; gap:4px; }
+.ssh-row { display:flex; gap:var(--space); }
+.ssh-row > div:first-child { flex:1; }
+.ssh-port { width:96px; }

@@ -6,6 +6,7 @@ mod files;
 mod proto;
 mod screen;
 mod session;
+pub mod ssh;
 pub use client::{Client, ClientEvent, RemotePin, parse_pair_link};
 use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, sync::{atomic::{AtomicBool, AtomicU64, Ordering::Relaxed}, Arc, LazyLock, Mutex, MutexGuard, OnceLock}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 use auth::{Binding, Host, HostHandshake, Msg};
@@ -93,6 +94,8 @@ struct Hub { s: session::Sessions, screens: HashMap<Sid, screen::Screen>, /// Te
     prof: HashMap<Sid, String>,
     /// Agente de IA da sessão: (cli, args extras).
     ai: HashMap<Sid, (String, String)>,
+    /// Destino das sessões SSH (tela Servidores SSH), para recriar do disco.
+    ssh: HashMap<Sid, ssh::Ssh>,
     /// `sessions.json` (só no serviço de verdade; testes ficam sem disco) e se mudou desde a última gravação.
     store: Option<PathBuf>, dirty: bool }
 static HUB: LazyLock<Mutex<Hub>> = LazyLock::new(Default::default);
@@ -103,6 +106,18 @@ impl Hub {
     /// Abre o PTY do perfil e registra a sessão (`sid` dado = restauração do disco).
     fn open(&mut self, sid: Option<Sid>, profile_id: &str, cwd: Option<PathBuf>, label: Option<String>, cols: u16, rows: u16, now: u64) -> std::result::Result<Sid, auth::Error> {
         let p = self.profiles.iter().find(|p| p.0 == profile_id).ok_or(auth::Error::NotFound)?.1.clone();
+        self.open_with(sid, profile_id, p, cwd, label, cols, rows, now)
+    }
+    /// Sessão SSH: o PTY roda o `ssh.exe` direto (argumentos já validados), sem shell.
+    #[allow(clippy::too_many_arguments)]
+    fn open_ssh(&mut self, sid: Option<Sid>, ssh: ssh::Ssh, cwd: Option<PathBuf>, label: Option<String>, cols: u16, rows: u16, now: u64) -> std::result::Result<Sid, auth::Error> {
+        let p = Profile { label: "SSH".into(), command: ssh.command_line(), osc: false };
+        let sid = self.open_with(sid, SSH_PROFILE, p, cwd, label, cols, rows, now)?;
+        self.ssh.insert(sid, ssh);
+        Ok(sid)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn open_with(&mut self, sid: Option<Sid>, profile_id: &str, p: Profile, cwd: Option<PathBuf>, label: Option<String>, cols: u16, rows: u16, now: u64) -> std::result::Result<Sid, auth::Error> {
         let cell = Arc::new(OnceLock::new());
         let c = cell.clone();
         // O lock do hub é tomado antes de ler `cell`: a saída que chegar antes do `create` espera, não se perde.
@@ -134,6 +149,7 @@ impl Hub {
         let list: Vec<Saved> = self.s.saved(SAVED_TAIL).into_iter().filter_map(|(sid, label, cols, rows, tail)| Some(Saved {
             id: proto::uuid_str(&sid), profile: self.prof.get(&sid)?.clone(), label, cwd: self.cwds.get(&sid).cloned(), cols, rows, tail: B64.encode(tail),
             agent: self.ai.get(&sid).map(|a| a.0.clone()), args: self.ai.get(&sid).map(|a| a.1.clone()).unwrap_or_default(),
+            ssh: self.ssh.get(&sid).cloned(),
         })).collect();
         // ponytail: falha ao gravar é silenciosa (sem console no app); tenta de novo no próximo save.
         let _ = write_saved(&path, &list);
@@ -144,7 +160,12 @@ impl Hub {
             let Some(sid) = auth::uuid_bytes(&x.id) else { continue };
             let cwd = x.cwd.filter(|d| d.is_dir());
             let label = Some(x.label).filter(|l| !l.is_empty());
-            if self.open(Some(sid), &x.profile, cwd, label, x.cols.max(1), x.rows.max(1), now_ms()).is_err() { continue; }
+            let (cols, rows) = (x.cols.max(1), x.rows.max(1));
+            let opened = match x.ssh.filter(|t| t.check().is_ok()) {
+                Some(t) => self.open_ssh(Some(sid), t, cwd, label, cols, rows, now_ms()),
+                None => self.open(Some(sid), &x.profile, cwd, label, cols, rows, now_ms()),
+            };
+            if opened.is_err() { continue; }
             let mut out = B64.decode(&x.tail).unwrap_or_default();
             // Sai da tela alternativa e zera cores de um programa que estava aberto; depois, o separador.
             out.extend_from_slice("\x1b[?1049l\x1b[0m\r\n\x1b[2m— sessão restaurada —\x1b[0m\r\n".as_bytes());
@@ -185,15 +206,18 @@ impl Hub {
     }
     /// Solta a tela das sessões que saíram da tabela (close após o `05`, TTL).
     fn forget(&mut self, sids: &[Sid]) {
-        for sid in sids { if self.s.size(sid).is_none() { self.screens.remove(sid); self.base.remove(sid); self.plain.remove(sid); self.cwds.remove(sid); self.ai.remove(sid); } }
+        for sid in sids { if self.s.size(sid).is_none() { self.screens.remove(sid); self.base.remove(sid); self.plain.remove(sid); self.cwds.remove(sid); self.ai.remove(sid); self.ssh.remove(sid); } }
     }
     fn request(&mut self, conn: ConnId, pk: Pk, req: Req, now: u64) -> std::result::Result<Value, auth::Error> {
         Ok(match req {
-            Req::Create { profile_id, cols, rows, label, cwd, agent, args, resume_id } => {
+            Req::Create { profile_id, cols, rows, label, cwd, agent, args, resume_id, ssh } => {
                 let cwd = cwd.map(PathBuf::from);
                 if cwd.as_ref().is_some_and(|d| !d.is_absolute() || !d.is_dir()) { return Err(auth::Error::NotFound); }
                 // `resume_id`: mesmo id da sessão encerrada; o CLI retoma a conversa (`--resume`). Id ainda vivo é INVALID_MESSAGE.
-                let sid = self.open(resume_id, &profile_id, cwd, label, cols, rows, now)?;
+                let sid = match ssh {
+                    Some(t) => self.open_ssh(resume_id, t, cwd, label, cols, rows, now)?,
+                    None => self.open(resume_id, &profile_id, cwd, label, cols, rows, now)?,
+                };
                 if let Some(a) = agent { self.start_ai(sid, a, args.unwrap_or_default(), resume_id.is_some()); self.save(); }
                 json!({"type":"session_create_ok","session_id":proto::uuid_str(&sid)})
             }
@@ -218,7 +242,10 @@ const SAVED_TAIL: usize = 128 << 10;
 /// Uma sessão em `sessions.json`.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 struct Saved { id: String, profile: String, label: String, cwd: Option<PathBuf>, cols: u16, rows: u16, tail: String,
-    #[serde(default)] agent: Option<String>, #[serde(default)] args: String }
+    #[serde(default)] agent: Option<String>, #[serde(default)] args: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")] ssh: Option<ssh::Ssh> }
+/// Perfil gravado das sessões SSH (o comando sai de `Saved::ssh`, não de `profiles.json`).
+const SSH_PROFILE: &str = "ssh";
 /// Linha digitada no shell para iniciar/retomar o agente. `args` já validado no proto (sem metacaracteres de shell).
 // ponytail: codex não aceita id na criação; retoma a última conversa da pasta (`resume --last`).
 fn ai_cmd(agent: &str, args: &str, id: &str, resume: bool) -> String {
@@ -921,7 +948,7 @@ mod tests {
     fn create_resume_keeps_id() {
         let mut h = Hub { profiles: vec![("test-cmd".to_string(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false })], ..Default::default() };
         let id = [0x5au8; 16];
-        let req = || Req::Create { profile_id: "test-cmd".into(), cols: 80, rows: 24, label: Some("app · claude".into()), cwd: None, agent: Some("claude".into()), args: None, resume_id: Some(id) };
+        let req = || Req::Create { profile_id: "test-cmd".into(), cols: 80, rows: 24, label: Some("app · claude".into()), cwd: None, agent: Some("claude".into()), args: None, resume_id: Some(id), ssh: None };
         let v = h.request(1, [0; 32], req(), now_ms()).unwrap();
         assert_eq!(v["session_id"], proto::uuid_str(&id));
         assert_eq!(h.ai.get(&id).map(|a| a.0.as_str()), Some("claude"));

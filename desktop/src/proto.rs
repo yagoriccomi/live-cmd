@@ -68,8 +68,9 @@ pub const AGENTS: [&str; 3] = ["claude", "openclaude", "codex"];
 #[derive(Debug, Clone, PartialEq)]
 pub enum Req {
     /// `cwd`: pasta inicial opcional (precisa existir e ser diretório).
+    /// `ssh`: abre o `ssh.exe` com esse destino no lugar do shell do perfil (exclui `agent`).
     /// `resume_id`: recria uma sessão de agente encerrada com o mesmo id e retoma a conversa (exige `agent`).
-    Create { profile_id: String, cols: u16, rows: u16, label: Option<String>, cwd: Option<String>, agent: Option<String>, args: Option<String>, resume_id: Option<[u8; 16]> },
+    Create { profile_id: String, cols: u16, rows: u16, label: Option<String>, cwd: Option<String>, agent: Option<String>, args: Option<String>, resume_id: Option<[u8; 16]>, ssh: Option<crate::ssh::Ssh> },
     List,
     Attach { session_id: [u8; 16], from_offset: Option<u64>, size: Option<(u16, u16)> },
     Detach([u8; 16]),
@@ -106,7 +107,7 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
     }
     let req = match ty {
         "session_create" => {
-            fields(&["profile_id", "cols", "rows"], &["label", "cwd", "agent", "args", "resume_id"])?;
+            fields(&["profile_id", "cols", "rows"], &["label", "cwd", "agent", "args", "resume_id", "ssh"])?;
             let agent = o.get("agent").map(|_| s("agent").map(str::to_owned)).transpose()?;
             if agent.as_deref().is_some_and(|a| !AGENTS.contains(&a)) { return Err(InvalidMessage); }
             let args = o.get("args").map(|_| s("args").map(str::to_owned)).transpose()?;
@@ -116,7 +117,9 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
             if label.as_ref().is_some_and(|l| l.chars().count() > 64) { return Err(InvalidMessage); }
             let resume_id = o.get("resume_id").map(|_| sid("resume_id")).transpose()?;
             if resume_id.is_some() && agent.is_none() { return Err(InvalidMessage); }
-            Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label, cwd, agent, args, resume_id }
+            let ssh = o.get("ssh").map(|v| serde_json::from_value::<crate::ssh::Ssh>(v.clone()).ok().filter(|x| x.check().is_ok()).ok_or(InvalidMessage)).transpose()?;
+            if ssh.is_some() && agent.is_some() { return Err(InvalidMessage); }
+            Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label, cwd, agent, args, resume_id, ssh }
         }
         "session_list" => { fields(&[], &[])?; Req::List }
         "session_attach" => {
@@ -362,6 +365,22 @@ mod tests {
         let fix = |x: String| x.replace(&ss, SID).replace(&ss.to_uppercase(), &SID.to_uppercase()).replace(&uuid_str(&s2), "2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e").replace(&uuid_str(&s3), "3f1e2d3c-4b5a-4968-8778-695a4b3c2d1e");
         let v: Vec<Value> = cases.into_iter().map(|(n, t, r)| { let t = fix(t); assert!(t.len() <= MAX_MSG, "{n}"); json!({"name":n,"text":t,"result":r}) }).collect();
         fixture("c3-host-controls.json", json!({"connection_id": CID, "cases": v}));
+    }
+
+    #[test]
+    fn session_create_ssh() {
+        let c = |ssh: Value, extra: Option<(&str, &str)>| {
+            let mut m = json!({"v":1,"connection_id":CID,"request_id":RID,"type":"session_create","profile_id":"ssh","cols":80,"rows":24,"ssh":ssh});
+            if let Some((k, v)) = extra { m[k] = v.into(); }
+            parse_control(&m.to_string(), CID)
+        };
+        let ok = c(json!({"user":"root","host":"10.0.0.5","port":22,"key":r"C:\k\id"}), None);
+        assert!(matches!(ok, Ok(Control::Request { req: Req::Create { ssh: Some(ref t), .. }, .. }) if t.host == "10.0.0.5" && t.key.as_deref() == Some(r"C:\k\id")));
+        for bad in [json!({"user":"root","host":"-oProxyCommand=calc","port":22}), json!({"user":"a b","host":"h","port":22}),
+            json!({"user":"u","host":"h","port":0}), json!({"user":"u","host":"h","port":22,"password":"x"}), json!("u@h")] {
+            assert_eq!(c(bad.clone(), None).err(), Some(InvalidMessage), "{bad}");
+        }
+        assert_eq!(c(json!({"user":"u","host":"h","port":22}), Some(("agent", "claude"))).err(), Some(InvalidMessage), "ssh e agent juntos");
     }
 
     #[test]
