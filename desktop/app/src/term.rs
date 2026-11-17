@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::host::{Client, ClientEvent, RemotePin, parse_pair_link};
 use crate::{App, clip, settings};
 
-const LOCAL: &str = "local";
+pub(crate) const LOCAL: &str = "local";
 const WIN: &str = "terminal";
 const FILE: &str = "remotes.json";
 
@@ -230,7 +230,7 @@ pub fn shutdown(app: &AppHandle) {
     t.views.lock().unwrap().clear();
 }
 
-fn client(app: &AppHandle, conn: &str) -> Result<Arc<Client>, String> {
+pub(crate) fn client(app: &AppHandle, conn: &str) -> Result<Arc<Client>, String> {
     let t = app.state::<Term>();
     if conn == LOCAL {
         let mut l = t.local.lock().unwrap();
