@@ -17,7 +17,32 @@
 | D | Mobile: abas Sessões/Agentes/SSH/Histórico + mensagens de protocolo e lado host | alto | concluída |
 | E | Ligação celular↔host: `mobile::AppProvider` (app) registrado com `extras::set_provider` no setup; Agentes de `agents.json`, SSH de `ssh.json` (latência em cache, teste TCP em segundo plano) e Histórico de `history.jsonl`; `ssh_connect` abre o `ssh.exe` direto com destino validado | alto | concluída no código; falta teste ponta a ponta no celular |
 
-**Pendências da fatia E:**
-- Sessões de agente criadas pelo celular não entram em `agents.json`; depois de fechadas somem da lista (desktop e celular).
-- Retomar pelo celular não atualiza `used_ms` no registro.
-- `history_query` do celular só filtra por texto (sem dias, tipo ou só erros).
+| F | Espelhamento desktop × celular: `auth_ok.caps`, registro único de agentes, filtros e limpar do histórico com `cwd`, SSH restaurado desconectado com Reconectar, cadastro SSH e nova sessão de agente pelo celular, teste do ConPTY sem OSC | alto | concluída no código; falta teste ponta a ponta no celular |
+
+**Pendências da fatia E:** resolvidas na fatia F.
+
+## Paridade desktop × celular
+
+| Tela | Função | Desktop | Celular | Pedido / comando |
+|---|---|---|---|---|
+| Agentes | Listar sessões de IA por pasta (estado, agente, args, último uso) | sim | sim | `agent_list` |
+| Agentes | Abrir sessão em execução / retomar gravada (`--resume`) | sim | sim | `agent_resume` |
+| Agentes | Nova sessão (agente, pasta, comandos extras) | sim | sim | `term_create` com agente / `agent_create` |
+| Agentes | Remover (encerra se aberta) com confirmação | sim | sim | `agent_remove` |
+| Agentes | Registro em `agents.json` com `used_ms` | sim | sim | `Provider::agent_started` (ponto único no host) |
+| Agentes | "Salvar como padrão" do agente | sim | não | só configuração local do desktop |
+| Agentes | Escolher outro PC pareado | sim | não | o celular fala com um PC por vez |
+| SSH | Listar servidores com busca | sim | sim | `ssh_list` |
+| SSH | Status de alcance (testando, ms, host não encontrado, sem resposta, offline) | sim | sim | `ssh_list.status` / `ssh_probe` |
+| SSH | Testar alcance agora | sim | sim | `ssh_probe` |
+| SSH | Adicionar / editar servidor (nome, usuário, host, porta, chave; sem senha) | sim | sim | `ssh_save` (validado por `Ssh::check`) |
+| SSH | Remover servidor com confirmação | sim | sim | `ssh_remove` |
+| SSH | Conectar (abre `ssh.exe` no PC) | sim | sim | `ssh_connect` |
+| SSH | Sessões SSH: abrir conectada, Reconectar desconectada | sim | sim | `ssh_list.sessions` / `ssh_reconnect` |
+| SSH | Procurar arquivo da chave | sim | não | seletor de arquivo do PC; no celular digita o caminho |
+| Histórico | Busca por texto | sim | sim | `history_query.query` |
+| Histórico | Filtros últimos 7 dias, tipo de sessão, só erros | sim | sim | `history_query.days/kind/errors` |
+| Histórico | Agrupar por dia; hora, PC, rótulo, tipo, pasta, código de saída | sim | sim | `history_query_ok` |
+| Histórico | Reexecutar na sessão ativa | sim | sim | `term_input` / `history_run` |
+| Histórico | Limpar com confirmação | sim | sim | `hist_clear` / `history_clear` (mesmo store) |
+| Todas | Host antigo sem a tela | n/a | aviso "Atualize o live-cmd no PC" | `auth_ok.caps` |
