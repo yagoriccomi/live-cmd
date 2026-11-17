@@ -108,7 +108,8 @@ impl Store {
         Ok(())
     }
 
-    /// Grava um comando; devolve o id (para o código de saída depois).
+    /// Grava um comando sem pasta (atalho dos testes); devolve o id.
+    #[cfg(test)]
     pub fn add(&mut self, ts: u64, cmd: &str, kind: &str, label: &str, pc: &str) -> std::io::Result<u64> { self.add_in(ts, cmd, kind, label, pc, None) }
 
     /// Como `add`, com a pasta da aba (`None` se o shell não anunciou).
