@@ -1,0 +1,280 @@
+{
+  "connection_id": "9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d",
+  "replies": [
+    {
+      "name": "agent_list_ok",
+      "result": "ok",
+      "text": "{\"agents\":[{\"agent\":\"claude\",\"cwd\":\"C:/proj/api\",\"label\":\"api\",\"last_activity_ms\":\"1700000000000\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"running\"},{\"agent\":\"codex\",\"cwd\":null,\"label\":\"\",\"last_activity_ms\":\"5\",\"session_id\":\"2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"saved\"}],\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "agent_list_vazia",
+      "result": "ok",
+      "text": "{\"agents\":[],\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "agent_resume_ok",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"agent_resume_ok\",\"v\":1}"
+    },
+    {
+      "name": "ssh_list_ok",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"servers\":[{\"host\":\"10.0.0.5\",\"label\":\"Produção\",\"latency_ms\":38,\"port\":22,\"server_id\":\"srv-1\",\"user\":\"deploy\"},{\"host\":\"nas.local\",\"label\":\"NAS\",\"latency_ms\":null,\"port\":2222,\"server_id\":\"srv-2\",\"user\":\"admin\"}],\"type\":\"ssh_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "ssh_list_vazia",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"servers\":[],\"type\":\"ssh_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "ssh_connect_ok",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"ssh_connect_ok\",\"v\":1}"
+    },
+    {
+      "name": "history_query_ok",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"entries\":[{\"at_ms\":\"1700000000000\",\"command\":\"git status\",\"cwd\":\"C:/proj\",\"entry_id\":\"h_42\",\"exit_code\":0},{\"at_ms\":\"7\",\"command\":\"npm test\",\"cwd\":null,\"entry_id\":\"h_43\",\"exit_code\":null}],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"history_query_ok\",\"v\":1}"
+    },
+    {
+      "name": "history_query_vazia",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"entries\":[],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"history_query_ok\",\"v\":1}"
+    },
+    {
+      "name": "history_run_ok",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"history_run_ok\",\"v\":1}"
+    },
+    {
+      "name": "api_2",
+      "result": "VERSION_UNSUPPORTED",
+      "text": "{\"api\":2,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"history_run_ok\",\"v\":1}"
+    },
+    {
+      "name": "sem_api",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"history_run_ok\",\"v\":1}"
+    },
+    {
+      "name": "sem_request_id",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"type\":\"history_run_ok\",\"v\":1}"
+    },
+    {
+      "name": "agente_state_invalido",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"agents\":[{\"agent\":\"claude\",\"cwd\":\"C:/proj/api\",\"label\":\"api\",\"last_activity_ms\":\"1700000000000\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"zombie\"},{\"agent\":\"codex\",\"cwd\":null,\"label\":\"\",\"last_activity_ms\":\"5\",\"session_id\":\"2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"saved\"}],\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "agente_atividade_numero",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"agents\":[{\"agent\":\"claude\",\"cwd\":\"C:/proj/api\",\"label\":\"api\",\"last_activity_ms\":1,\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"running\"},{\"agent\":\"codex\",\"cwd\":null,\"label\":\"\",\"last_activity_ms\":\"5\",\"session_id\":\"2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"saved\"}],\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "agente_campo_extra",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"agents\":[{\"agent\":\"claude\",\"cwd\":\"C:/proj/api\",\"label\":\"api\",\"last_activity_ms\":\"1700000000000\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"running\",\"x\":1},{\"agent\":\"codex\",\"cwd\":null,\"label\":\"\",\"last_activity_ms\":\"5\",\"session_id\":\"2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"saved\"}],\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "ssh_porta_0",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"servers\":[{\"host\":\"10.0.0.5\",\"label\":\"Produção\",\"latency_ms\":38,\"port\":0,\"server_id\":\"srv-1\",\"user\":\"deploy\"},{\"host\":\"nas.local\",\"label\":\"NAS\",\"latency_ms\":null,\"port\":2222,\"server_id\":\"srv-2\",\"user\":\"admin\"}],\"type\":\"ssh_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "ssh_latencia_texto",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"servers\":[{\"host\":\"10.0.0.5\",\"label\":\"Produção\",\"latency_ms\":\"38\",\"port\":22,\"server_id\":\"srv-1\",\"user\":\"deploy\"},{\"host\":\"nas.local\",\"label\":\"NAS\",\"latency_ms\":null,\"port\":2222,\"server_id\":\"srv-2\",\"user\":\"admin\"}],\"type\":\"ssh_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "historico_sem_command",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"entries\":[{\"at_ms\":\"1700000000000\",\"cwd\":\"C:/proj\",\"entry_id\":\"h_42\",\"exit_code\":0},{\"at_ms\":\"7\",\"command\":\"npm test\",\"cwd\":null,\"entry_id\":\"h_43\",\"exit_code\":null}],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"history_query_ok\",\"v\":1}"
+    },
+    {
+      "name": "resume_sid_maiusculo",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"session_id\":\"0F1E2D3C-4B5A-4968-8778-695A4B3C2D1E\",\"type\":\"agent_resume_ok\",\"v\":1}"
+    }
+  ],
+  "requests": [
+    {
+      "body": {
+        "api": 1,
+        "type": "agent_list"
+      },
+      "name": "agent_list",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "cols": 80,
+        "rows": 24,
+        "session_id": "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e",
+        "type": "agent_resume"
+      },
+      "name": "agent_resume",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "type": "ssh_list"
+      },
+      "name": "ssh_list",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "cols": 80,
+        "rows": 24,
+        "server_id": "srv-1",
+        "type": "ssh_connect"
+      },
+      "name": "ssh_connect",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "limit": 50,
+        "query": "git",
+        "type": "history_query"
+      },
+      "name": "history_query",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "type": "history_query"
+      },
+      "name": "history_query_vazio",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "entry_id": "h_42",
+        "session_id": "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e",
+        "type": "history_run"
+      },
+      "name": "history_run",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 2,
+        "type": "agent_list"
+      },
+      "name": "api_2",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "type": "agent_list"
+      },
+      "name": "sem_api",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": "1",
+        "type": "agent_list"
+      },
+      "name": "api_string",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "type": "ssh_list",
+        "x": 1
+      },
+      "name": "campo_desconhecido",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "cols": 80,
+        "rows": 24,
+        "session_id": "0F1E2D3C-4B5A-4968-8778-695A4B3C2D1E",
+        "type": "agent_resume"
+      },
+      "name": "resume_sid_maiusculo",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "cols": 0,
+        "rows": 24,
+        "session_id": "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e",
+        "type": "agent_resume"
+      },
+      "name": "resume_cols_0",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "cols": 80,
+        "rows": 24,
+        "server_id": "",
+        "type": "ssh_connect"
+      },
+      "name": "connect_id_vazio",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "cols": 80,
+        "rows": 24,
+        "server_id": "a b",
+        "type": "ssh_connect"
+      },
+      "name": "connect_id_espaco",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "limit": 0,
+        "type": "history_query"
+      },
+      "name": "query_limit_0",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "limit": 201,
+        "type": "history_query"
+      },
+      "name": "query_limit_201",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "query": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "type": "history_query"
+      },
+      "name": "query_257",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "entry_id": "h_42",
+        "type": "history_run"
+      },
+      "name": "run_sem_sessao",
+      "result": "INVALID_MESSAGE"
+    }
+  ]
+}

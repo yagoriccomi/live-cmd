@@ -75,6 +75,8 @@ pub enum Req {
     Close([u8; 16]),
     Focus(Focus),
     Rename { session_id: [u8; 16], label: String },
+    /// Telas do celular (Agentes, SSH, Histórico): ver `extras.rs`.
+    Extra(crate::extras::Req),
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Control {
@@ -135,7 +137,7 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
             if label.chars().count() > 64 { return Err(InvalidMessage); }
             Req::Rename { session_id: sid("session_id")?, label: label.into() }
         }
-        _ => return Err(InvalidMessage),
+        t => match crate::extras::parse(t, &o) { Some(r) => Req::Extra(r?), None => return Err(InvalidMessage) },
     };
     Ok(Control::Request { request_id: rid.ok_or(InvalidMessage)?, req })
 }
