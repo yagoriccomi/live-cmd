@@ -44,8 +44,8 @@ function size() {
 // ---------- Desenho ----------
 function draw(key, s = $("screen")) {
   const scr = screens[key];
-  for (const n of [...s.children]) if (n.id !== "measure") n.remove();
-  if (!scr) return;
+  const keep = [...s.children].filter((n) => n.id === "measure"), lines = [];
+  if (!scr) return s.replaceChildren(...keep);
   if (s === pane()) appCursor = scr.app_cursor;
   for (const row of scr.rows) {
     const line = el("div");
@@ -60,9 +60,17 @@ function draw(key, s = $("screen")) {
       if (fl & 16) sp.classList.add("cur");
       line.append(sp);
     }
-    s.append(line);
+    lines.push(line);
   }
+  s.replaceChildren(...keep, ...lines);
   afterDraw();
+}
+
+// Junta várias telas recebidas no mesmo quadro num só desenho.
+const soon = new Map();
+function drawSoon(key, s = $("screen")) {
+  if (!soon.size) requestAnimationFrame(() => { const q = [...soon]; soon.clear(); for (const [el, k] of q) draw(k, el); });
+  soon.set(s, key);
 }
 
 // ---------- Banner ----------
@@ -88,8 +96,10 @@ function updateBanner() {
 }
 
 // ---------- Abas ----------
+let tabsLater = false;
 function renderTabs() {
   const bar = $("tabs");
+  if (bar.querySelector("input.rename")) { tabsLater = true; return; }
   bar.replaceChildren(...tabs.map((t) => {
     const b = el("button");
     b.type = "button";
@@ -112,7 +122,7 @@ function renderTabs() {
     x.title = "Fechar aba (Ctrl+Shift+W)";
     x.onclick = (e) => { e.stopPropagation(); closeTab(t.key); };
     b.append(x);
-    b.onclick = () => activate(t.key);
+    b.onclick = () => { if (t.key !== active) activate(t.key); };
     b.onauxclick = (e) => { if (e.button === 1) closeTab(t.key); };
     return b;
   }));
@@ -158,9 +168,11 @@ function editInline(span, value, save) {
     done = true;
     const v = inp.value.trim();
     inp.replaceWith(span);
+    if (tabsLater) { tabsLater = false; renderTabs(); }
     if (ok && v && v !== value) { try { await save(v); } catch (e) { banner(msg(e), "err"); } }
   };
   inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") end(true); else if (e.key === "Escape") end(false); };
+  inp.onkeyup = (e) => { e.stopPropagation(); e.preventDefault(); };
   inp.onclick = inp.ondblclick = inp.onmousedown = (e) => e.stopPropagation();
   inp.onblur = () => end(false);
   span.replaceWith(inp);
@@ -556,8 +568,8 @@ $("remote-add").onclick = openAdd;
 listen("term-screen", ({ payload }) => {
   const k = payload.key, t = activeTab();
   screens[k] = payload;
-  if (k === active) { if (!holdDraw()) draw(k); }
-  else if (t?.split?.key === k) draw(k, $("screen2"));
+  if (k === active) { if (!holdDraw()) drawSoon(k); }
+  else if (t?.split?.key === k) drawSoon(k, $("screen2"));
   else if (!busy.has(k)) { busy.add(k); renderTabs(); }
 });
 // Item 9 (evento do F1): avisa no Windows se o comando levou mais de 10 s e não estava à vista.
