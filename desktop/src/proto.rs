@@ -68,7 +68,8 @@ pub const AGENTS: [&str; 3] = ["claude", "openclaude", "codex"];
 #[derive(Debug, Clone, PartialEq)]
 pub enum Req {
     /// `cwd`: pasta inicial opcional (precisa existir e ser diretório).
-    Create { profile_id: String, cols: u16, rows: u16, label: Option<String>, cwd: Option<String>, agent: Option<String>, args: Option<String> },
+    /// `resume_id`: recria uma sessão de agente encerrada com o mesmo id e retoma a conversa (exige `agent`).
+    Create { profile_id: String, cols: u16, rows: u16, label: Option<String>, cwd: Option<String>, agent: Option<String>, args: Option<String>, resume_id: Option<[u8; 16]> },
     List,
     Attach { session_id: [u8; 16], from_offset: Option<u64>, size: Option<(u16, u16)> },
     Detach([u8; 16]),
@@ -105,7 +106,7 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
     }
     let req = match ty {
         "session_create" => {
-            fields(&["profile_id", "cols", "rows"], &["label", "cwd", "agent", "args"])?;
+            fields(&["profile_id", "cols", "rows"], &["label", "cwd", "agent", "args", "resume_id"])?;
             let agent = o.get("agent").map(|_| s("agent").map(str::to_owned)).transpose()?;
             if agent.as_deref().is_some_and(|a| !AGENTS.contains(&a)) { return Err(InvalidMessage); }
             let args = o.get("args").map(|_| s("args").map(str::to_owned)).transpose()?;
@@ -113,7 +114,9 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
             let cwd = o.get("cwd").map(|_| s("cwd").map(str::to_owned)).transpose()?;
             let label = o.get("label").map(|_| s("label").map(str::to_owned)).transpose()?;
             if label.as_ref().is_some_and(|l| l.chars().count() > 64) { return Err(InvalidMessage); }
-            Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label, cwd, agent, args }
+            let resume_id = o.get("resume_id").map(|_| sid("resume_id")).transpose()?;
+            if resume_id.is_some() && agent.is_none() { return Err(InvalidMessage); }
+            Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label, cwd, agent, args, resume_id }
         }
         "session_list" => { fields(&[], &[])?; Req::List }
         "session_attach" => {
@@ -370,6 +373,10 @@ mod tests {
         assert_eq!(uuid_str(&sid()), SID);
         let t = json!({"v":1,"connection_id":CID,"request_id":RID,"type":"session_create","profile_id":"p","cols":80,"rows":24,"cwd":"C:/x"}).to_string();
         assert!(matches!(parse_control(&t, CID), Ok(Control::Request { req: Req::Create { cwd: Some(c), .. }, .. }) if c == "C:/x"));
+        let cr = |extra: Value| { let mut m = json!({"v":1,"connection_id":CID,"request_id":RID,"type":"session_create","profile_id":"p","cols":80,"rows":24}); for (k, v) in extra.as_object().unwrap() { m[k] = v.clone(); } parse_control(&m.to_string(), CID) };
+        assert!(matches!(cr(json!({"agent":"claude","resume_id":SID})), Ok(Control::Request { req: Req::Create { resume_id: Some(r), .. }, .. }) if r == sid()));
+        assert!(matches!(cr(json!({"resume_id":SID})), Err(InvalidMessage)), "resume_id sem agent");
+        assert!(matches!(cr(json!({"agent":"claude","resume_id":"x"})), Err(InvalidMessage)));
         let m: Value = serde_json::from_str(&encode_control(CID, Some(RID), json!({"type":"replay_end","session_id":SID,"offset":u64s(u64::MAX)}))).unwrap();
         assert_eq!(m, json!({"v":1,"connection_id":CID,"request_id":RID,"type":"replay_end","session_id":SID,"offset":"18446744073709551615"}));
         let rn = |l: &str| parse_control(&json!({"v":1,"type":"session_rename","connection_id":CID,"request_id":RID,"session_id":SID,"label":l}).to_string(), CID);
