@@ -59,7 +59,7 @@ pub fn record(dir: &Path, mut a: Agent) -> Result<(), String> {
     edit(dir, |l| { l.retain(|x| !(x.conn == a.conn && x.session_id == a.session_id)); l.insert(0, a); })
 }
 
-fn remove_entry(dir: &Path, conn: &str, sid: &str) -> Result<(), String> {
+pub fn remove_entry(dir: &Path, conn: &str, sid: &str) -> Result<(), String> {
     edit(dir, |l| l.retain(|x| !(x.conn == conn && x.session_id == sid)))
 }
 

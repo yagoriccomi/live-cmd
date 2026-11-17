@@ -50,6 +50,22 @@ pub fn ssh_connect(app: AppHandle, id: String, cols: u16, rows: u16) -> Result<S
     Ok(v["session_id"].as_str().unwrap_or_default().to_owned())
 }
 
+/// Sessões SSH do host deste PC (`[{session_id, label, state: connected|disconnected}]`), pelo mesmo
+/// pedido `ssh_list` do celular: as restauradas ao reiniciar voltam desconectadas, à espera de Reconectar.
+#[tauri::command(async)]
+pub fn ssh_sessions(app: AppHandle) -> Result<Value, String> {
+    let v = term::client(&app, term::LOCAL)?.request(json!({ "type": "ssh_list", "api": live_cmd_echo::extras::API }))?;
+    Ok(v["sessions"].clone())
+}
+
+/// Abre de novo o ssh.exe de uma sessão desconectada, com o mesmo id (a aba continua a mesma).
+#[tauri::command(async)]
+pub fn ssh_reconnect(app: AppHandle, session_id: String, cols: u16, rows: u16) -> Result<String, String> {
+    let req = json!({ "type": "ssh_reconnect", "api": live_cmd_echo::extras::API, "session_id": session_id, "cols": cols, "rows": rows });
+    let v = term::client(&app, term::LOCAL)?.request(req)?;
+    Ok(v["session_id"].as_str().unwrap_or_default().to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

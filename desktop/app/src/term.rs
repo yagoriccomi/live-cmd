@@ -186,6 +186,7 @@ fn on_event(app: &AppHandle, conn: &str, e: ClientEvent) {
         }
         // F4: pasta atual (OSC 7 no host) para "Nova sessão aqui".
         ClientEvent::Control(c) if c["type"] == "cwd_changed" => {
+            crate::hist::record_cwd(app, &key(conn, c["session_id"].as_str().unwrap_or_default()), c["cwd"].as_str());
             let _ = app.emit_to(WIN, "term-cwd", json!({ "key": key(conn, c["session_id"].as_str().unwrap_or_default()), "cwd": c["cwd"] }));
         }
         ClientEvent::Control(_) => {}
@@ -274,7 +275,9 @@ pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: Stri
     let v = client(&app, &conn)?.request(req)?;
     let sid = v["session_id"].as_str().unwrap_or_default().to_owned();
     // Tela Agentes: lembra a sessão para retomar depois do close. Falha ao gravar não desfaz a sessão criada.
-    if let (Some(agent), Ok(dir)) = (agent, settings::data_dir()) {
+    // Neste PC quem grava é o host (`mobile::AppProvider::agent_started`), para valer também para o celular;
+    // aqui só as sessões em PC remoto, que o host de lá não registra neste app.
+    if let (Some(agent), Ok(dir), false) = (agent, settings::data_dir(), conn == LOCAL) {
         let _ = agents::record(&dir, agents::Agent { conn, session_id: sid.clone(), profile_id, agent, args: args.unwrap_or_default(), cwd, label, used_ms: 0 });
     }
     Ok(sid)

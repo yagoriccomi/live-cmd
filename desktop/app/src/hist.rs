@@ -35,6 +35,19 @@ pub struct Entry {
     pub pc: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<i64>,
+    /// Pasta da aba no Enter, quando o shell anuncia (OSC 7 / 9;9 lidos pelo host → `cwd_changed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+}
+
+/// Store único do processo: a tela desktop e o celular (`mobile.rs`) leem, gravam e limpam o mesmo,
+/// para "Limpar" de um lado não ser desfeito pela cópia em memória do outro.
+pub type Shared = std::sync::Arc<Mutex<Option<Store>>>;
+
+/// Abre `dir/history.jsonl` na primeira vez e aplica `f` com o lock tomado.
+pub fn with_shared<R>(s: &Shared, dir: &std::path::Path, f: impl FnOnce(&mut Store) -> R) -> R {
+    let mut g = s.lock().unwrap_or_else(|e| e.into_inner());
+    f(g.get_or_insert_with(|| Store::open(dir.join(FILE), MAX)))
 }
 
 #[derive(Deserialize)]
@@ -96,9 +109,13 @@ impl Store {
     }
 
     /// Grava um comando; devolve o id (para o código de saída depois).
-    pub fn add(&mut self, ts: u64, cmd: &str, kind: &str, label: &str, pc: &str) -> std::io::Result<u64> {
+    pub fn add(&mut self, ts: u64, cmd: &str, kind: &str, label: &str, pc: &str) -> std::io::Result<u64> { self.add_in(ts, cmd, kind, label, pc, None) }
+
+    /// Como `add`, com a pasta da aba (`None` se o shell não anunciou).
+    pub fn add_in(&mut self, ts: u64, cmd: &str, kind: &str, label: &str, pc: &str, cwd: Option<&str>) -> std::io::Result<u64> {
         let id = self.entries.last().map_or(ts, |l| ts.max(l.id + 1));
-        let e = Entry { id, ts, cmd: cmd.chars().take(MAX_CMD).collect(), kind: kind.into(), label: label.into(), pc: pc.into(), code: None };
+        let cwd = cwd.map(|c| c.chars().take(1024).collect());
+        let e = Entry { id, ts, cmd: cmd.chars().take(MAX_CMD).collect(), kind: kind.into(), label: label.into(), pc: pc.into(), code: None, cwd };
         let line = serde_json::to_string(&e).unwrap();
         self.entries.push(e);
         let cut = self.entries.len().saturating_sub(self.max);
@@ -218,11 +235,12 @@ fn from_line(t: &Typed, line: &str, now: &str) -> Option<String> {
 // ---------- Estado no app ----------
 
 #[derive(Default)]
-struct Meta { kind: String, label: String, pc: String }
+struct Meta { kind: String, label: String, pc: String, cwd: Option<String> }
 
 #[derive(Default)]
 pub struct History {
-    store: Mutex<Option<Store>>,
+    /// Também entregue ao provedor do celular (`mobile.rs`).
+    pub store: Shared,
     /// Chave `"<conn>/<session_id>"`.
     meta: Mutex<HashMap<String, Meta>>,
     typed: Mutex<HashMap<String, Typed>>,
@@ -233,10 +251,13 @@ pub struct History {
 fn now_ms() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64) }
 
 fn with_store<R>(app: &AppHandle, f: impl FnOnce(&mut Store) -> R) -> R {
+    with_shared(&app.state::<History>().store, &app.state::<App>().data_dir, f)
+}
+
+/// `cwd_changed` do host (term.rs): a pasta vai junto dos próximos comandos da aba.
+pub fn record_cwd(app: &AppHandle, key: &str, cwd: Option<&str>) {
     let h = app.state::<History>();
-    let mut s = h.store.lock().unwrap();
-    let st = s.get_or_insert_with(|| Store::open(app.state::<App>().data_dir.join(FILE), MAX));
-    f(st)
+    h.meta.lock().unwrap().entry(key.into()).or_insert_with(|| Meta { kind: "outro".into(), label: "Terminal".into(), pc: String::new(), cwd: None }).cwd = cwd.map(str::to_owned);
 }
 
 /// Chamado por `term_input` (term.rs). `line`: linha do cursor se `data` tem Enter e a tela é a normal.
@@ -244,13 +265,14 @@ pub fn record_input(app: &AppHandle, key: &str, conn: &str, data: &str, line: Op
     let h = app.state::<History>();
     let cmds = on_input(h.typed.lock().unwrap().entry(key.into()).or_default(), data, line.as_deref());
     if cmds.is_empty() { return; }
-    let (kind, label, pc) = match h.meta.lock().unwrap().get(key) {
-        Some(m) => (m.kind.clone(), m.label.clone(), m.pc.clone()),
-        None => ("outro".into(), "Terminal".into(), if conn == "local" { "Este PC".into() } else { "Outro PC".into() }),
+    let fallback_pc = || if conn == "local" { "Este PC".to_owned() } else { "Outro PC".to_owned() };
+    let (kind, label, pc, cwd) = match h.meta.lock().unwrap().get(key) {
+        Some(m) => (m.kind.clone(), m.label.clone(), if m.pc.is_empty() { fallback_pc() } else { m.pc.clone() }, m.cwd.clone()),
+        None => ("outro".into(), "Terminal".into(), fallback_pc(), None),
     };
     if kind == "ia" { return; }
     for c in cmds {
-        if let Ok(id) = with_store(app, |s| s.add(now_ms(), &c, &kind, &label, &pc)) { h.pending.lock().unwrap().insert(key.into(), id); }
+        if let Ok(id) = with_store(app, |s| s.add_in(now_ms(), &c, &kind, &label, &pc, cwd.as_deref())) { h.pending.lock().unwrap().insert(key.into(), id); }
     }
 }
 
@@ -264,8 +286,12 @@ pub fn record_done(app: &AppHandle, key: &str, code: Option<i64>) {
 #[tauri::command]
 pub fn hist_meta(app: AppHandle, conn: String, session_id: String, label: String, pc: String) {
     let kind = kind_of(&label).to_owned();
-    let m = Meta { kind, label: label.chars().take(64).collect(), pc: pc.chars().take(40).collect() };
-    app.state::<History>().meta.lock().unwrap().insert(format!("{conn}/{session_id}"), m);
+    let h = app.state::<History>();
+    let mut meta = h.meta.lock().unwrap();
+    // A pasta pode ter chegado antes (cwd_changed no attach): fica.
+    let cwd = meta.get(&format!("{conn}/{session_id}")).and_then(|m| m.cwd.clone());
+    let m = Meta { kind, label: label.chars().take(64).collect(), pc: pc.chars().take(40).collect(), cwd };
+    meta.insert(format!("{conn}/{session_id}"), m);
 }
 
 #[tauri::command(async)]
@@ -300,6 +326,19 @@ mod tests {
         let s = Store::open(p.clone(), 10);
         assert_eq!(s.entries().iter().map(|e| (e.cmd.as_str(), e.code)).collect::<Vec<_>>(), vec![("git status", None), ("ls", Some(2))]);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn grava_pasta_e_store_compartilhado() {
+        let p = tmp("pasta");
+        let shared = Shared::default();
+        let dir = p.parent().unwrap().to_path_buf();
+        with_shared(&shared, &dir, |s| s.add_in(1, "ls", "pwsh", "PowerShell", "Este PC", Some(r"C:\proj"))).unwrap();
+        assert_eq!(Store::open(p.clone(), 10).entries()[0].cwd.as_deref(), Some(r"C:\proj"), "pasta volta do disco");
+        // Quem limpa pelo store compartilhado não deixa cópia velha em memória do outro lado.
+        with_shared(&shared, &dir, |s| s.clear()).unwrap();
+        assert!(with_shared(&shared, &dir, |s| s.search(&Query::default(), 10)).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
