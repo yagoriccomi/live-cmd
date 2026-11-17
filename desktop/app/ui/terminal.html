@@ -7,6 +7,7 @@
 <script src="links.js" defer></script>
 <script src="terminal.js" defer></script>
 <script src="extras.js" defer></script>
+<script src="historico.js" defer></script>
 </head>
 <body class="term-body">
 <div class="term-layout" id="layout">
@@ -17,6 +18,7 @@
     <h3 id="h-remote">Outros PCs</h3>
     <ul id="remote-ul" aria-labelledby="h-remote"></ul>
     <button type="button" class="add" id="remote-add">+ Adicionar PC</button>
+    <button type="button" class="nav-hist" id="hist-open" aria-controls="hist" aria-expanded="false">🕘 Histórico</button>
   </nav>
   <main class="term-main">
     <div class="term-bar">
@@ -46,6 +48,25 @@
         <div><p>Nenhum terminal aberto. Escolha uma sessão à esquerda ou crie uma nova.</p>
         <div class="actions center"><button type="button" class="btn-primary" id="empty-new">Nova sessão</button></div></div>
       </div>
+      <section class="hist-panel" id="hist" aria-labelledby="hist-t" hidden>
+        <header class="hist-head">
+          <h2 id="hist-t">Histórico</h2>
+          <button type="button" class="btn-danger" id="hist-clear">Limpar histórico</button>
+          <button type="button" id="hist-x" aria-label="Fechar histórico (Esc)">×</button>
+        </header>
+        <div class="hist-filters" role="search">
+          <input type="text" id="hist-q" aria-label="Buscar comandos" placeholder="Buscar comandos" autocomplete="off" spellcheck="false">
+          <label class="hist-chk"><input type="checkbox" id="hist-7d"> Últimos 7 dias</label>
+          <select id="hist-kind" aria-label="Tipo de sessão">
+            <option value="">Todas as sessões</option><option value="pwsh">PowerShell</option><option value="cmd">Prompt de Comando</option>
+            <option value="wsl">WSL / bash</option><option value="ssh">SSH</option><option value="outro">Outras</option>
+          </select>
+          <label class="hist-chk"><input type="checkbox" id="hist-err"> Só erros</label>
+        </div>
+        <p class="muted small" id="hist-n" role="status"></p>
+        <div class="hist-list" id="hist-list"></div>
+        <p class="muted small hist-note">Gravado só neste PC. Linhas digitadas em pedidos de senha não são gravadas.</p>
+      </section>
     </div>
   </main>
 </div>
