@@ -304,7 +304,8 @@ fn refresh_tray(app: &AppHandle, force: bool) {
 fn tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
     TrayIconBuilder::with_id("main")
         .icon(Image::from_bytes(include_bytes!("../icons/tray-connecting.png"))?)
-        .show_menu_on_left_click(true)
+        // Clique simples não abre o menu (engolia o duplo clique); menu fica no botão direito.
+        .show_menu_on_left_click(false)
         .on_tray_icon_event(|t, e| if let tauri::tray::TrayIconEvent::DoubleClick { .. } = e { open_terminal(t.app_handle()) })
         .on_menu_event(|app, e| match e.id().as_ref() {
             "terminal" => open_terminal(app),

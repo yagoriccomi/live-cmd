@@ -785,8 +785,6 @@ function ctxMenu(x, y) {
     ["Exportar saída", action("export")], ["Dividir painel", action("split")], ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
     ["Aumentar fonte   Ctrl+=", () => zoom(1)], ["Diminuir fonte   Ctrl+-", () => zoom(-1)], ["Redefinir fonte   Ctrl+0", () => zoom(0)],
     ["Limpar", clearTab], ["Atalhos e ajuda   F1", () => help()],
-    ["Novo pareamento (QR Code)", () => invoke("tray_action", { id: "pair" })], ["Dispositivos conectados", () => invoke("tray_action", { id: "devices" })],
-    ["Configurações", () => invoke("tray_action", { id: "settings" })], ["Sair do live-cmd", () => invoke("tray_action", { id: "quit" })],
   ].filter(([, fn]) => fn));
 }
 // Limpa o buffer vt100 no app (vale em cmd) e manda Ctrl+L para o shell redesenhar o prompt.
@@ -802,7 +800,9 @@ $("screen").oncontextmenu = (e) => {
   else if (hasSel()) copySel();
   else paste();
 };
-$("tb-menu").onclick = () => { const r = $("tb-menu").getBoundingClientRect(); ctxMenu(r.right - 220, r.bottom); };
+// ☰ Menu: só as ações da bandeja; o resto já tem lugar (barra, Shift+botão direito, atalhos).
+$("tb-menu").onclick = () => menu($("tb-menu"), [["Novo pareamento (QR Code)", "pair"], ["Dispositivos conectados", "devices"], ["Configurações", "settings"], ["Sair do live-cmd", "quit"]]
+  .map(([n, id]) => [n, () => invoke("tray_action", { id }).catch((err) => banner(msg(err), "err"))]));
 $("tb-new").onclick = action("new");
 $("tb-find").onclick = () => openFind();
 $("tb-split").onclick = action("split");
