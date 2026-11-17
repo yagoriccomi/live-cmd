@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod clip;
+mod hist;
 mod host;
 mod settings;
 mod term;
@@ -336,13 +337,15 @@ fn main() {
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove,
-            term::term_export, term::term_export_file, term::term_clear, term::term_upload, term::term_conn_stats, term::term_busy, term::term_rename, term::remote_rename])
+            term::term_export, term::term_export_file, term::term_clear, term::term_upload, term::term_conn_stats, term::term_busy, term::term_rename, term::remote_rename,
+            hist::hist_meta, hist::hist_list, hist::hist_clear])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
             let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: host::room_id(&dir)? })?;
             a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });
             a.manage(term::Term::default());
+            a.manage(hist::History::default());
             term::start(a.handle());
             tray(a.handle())?;
             refresh_tray(a.handle(), true);

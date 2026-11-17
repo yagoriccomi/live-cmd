@@ -181,6 +181,7 @@ fn on_event(app: &AppHandle, conn: &str, e: ClientEvent) {
         ClientEvent::Control(c) if c["type"] == "command_completed" => {
             let k = key(conn, c["session_id"].as_str().unwrap_or_default());
             if let Some(v) = t.views.lock().unwrap().get_mut(&k) { v.osc = true; v.busy = false; }
+            crate::hist::record_done(app, &k, c["exit_code"].as_i64());
             let _ = app.emit_to(WIN, "term-cmd-done", json!({ "key": k, "code": c["exit_code"] }));
         }
         // F4: pasta atual (OSC 7 no host) para "Nova sessão aqui".
@@ -298,7 +299,14 @@ pub fn term_close(app: AppHandle, conn: String, session_id: String) -> Result<()
 
 #[tauri::command(async)]
 pub fn term_input(app: AppHandle, conn: String, session_id: String, data: String) -> Result<(), String> {
-    with_view(&app, &conn, &session_id, |v| { v.vt.screen_mut().set_scrollback(0); v.busy |= data.contains('\r'); });
+    // Histórico: linha do cursor antes do envio (tela alternativa, como vim, não grava).
+    let mut line = None;
+    with_view(&app, &conn, &session_id, |v| {
+        v.vt.screen_mut().set_scrollback(0);
+        v.busy |= data.contains('\r');
+        if data.contains('\r') && !v.vt.screen().alternate_screen() { line = Some(crate::hist::cursor_line(&v.vt)); }
+    });
+    crate::hist::record_input(&app, &key(&conn, &session_id), &conn, &data, line);
     client(&app, &conn)?.input(&session_id, data.as_bytes())
 }
 
