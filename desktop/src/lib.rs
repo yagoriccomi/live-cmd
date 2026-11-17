@@ -251,8 +251,10 @@ impl Hub {
             X::AgentResume { session_id, cols, rows } => {
                 if !self.ai.contains_key(&session_id) {
                     let a = p.saved_agents().into_iter().find(|a| a.session_id == session_id).ok_or(auth::Error::NotFound)?;
+                    // Mesmas regras do `session_create`: o registro vem do disco, não do proto.
+                    if !proto::AGENTS.contains(&a.agent.as_str()) || !proto::valid_args(&a.args) { return Err(auth::Error::InvalidMessage); }
                     let cwd = a.cwd.map(PathBuf::from).filter(|d| d.is_dir());
-                    let label = Some(a.label).filter(|l| !l.is_empty());
+                    let label = Some(a.label).filter(|l| !l.is_empty()).map(|l| l.chars().take(64).collect());
                     let profile = pick(a.profile_id.as_deref())?;
                     // Mesmo caminho do `session_create` com `resume_id`: mesmo id, CLI com `--resume` se a conversa existe.
                     let sid = self.open(Some(session_id), &profile, cwd, label, cols, rows, now)?;
@@ -1033,7 +1035,8 @@ mod tests {
                 match id { "s1" => Some(t("u")), "bad" => Some(t("u;calc")), _ => None }
             }
             fn saved_agents(&self) -> Vec<extras::Agent> {
-                vec![extras::Agent { session_id: [0x6b; 16], agent: "claude".into(), args: String::new(), label: "app".into(), cwd: None, state: extras::AgentState::Saved, last_activity_ms: 1, profile_id: Some("test-b".into()) }]
+                let a = extras::Agent { session_id: [0x6b; 16], agent: "claude".into(), args: String::new(), label: "app".into(), cwd: None, state: extras::AgentState::Saved, last_activity_ms: 1, profile_id: Some("test-b".into()) };
+                vec![extras::Agent { session_id: [0x6c; 16], args: "& calc".into(), ..a.clone() }, a]
             }
         }
         extras::set_provider(Arc::new(P));
@@ -1047,6 +1050,7 @@ mod tests {
         let v = h.extra(X::AgentResume { session_id: [0x6b; 16], cols: 80, rows: 24 }, now_ms()).unwrap();
         assert_eq!(v["session_id"], proto::uuid_str(&[0x6b; 16]));
         assert_eq!(h.prof.get(&[0x6b; 16]).map(String::as_str), Some("test-b"), "perfil gravado, não o primeiro");
+        assert!(matches!(h.extra(X::AgentResume { session_id: [0x6c; 16], cols: 80, rows: 24 }, now_ms()), Err(auth::Error::InvalidMessage)), "args do disco com metacaractere");
         let _ = h.s.close(sid);
         let _ = h.s.close([0x6b; 16]);
     }

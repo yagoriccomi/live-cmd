@@ -65,6 +65,8 @@ pub fn parse_u64(v: &Value) -> R<u64> {
 pub enum Focus { Foreground, Background }
 /// CLIs de IA que `session_create` pode iniciar.
 pub const AGENTS: [&str; 3] = ["claude", "openclaude", "codex"];
+/// Argumentos extras do agente: vão digitados no shell, então só caracteres sem efeito de shell.
+pub fn valid_args(a: &str) -> bool { a.len() <= 512 && a.chars().all(|c| c.is_ascii_alphanumeric() || " ._=/:-,".contains(c)) }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Req {
     /// `cwd`: pasta inicial opcional (precisa existir e ser diretório).
@@ -113,7 +115,7 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
             let agent = o.get("agent").map(|_| s("agent").map(str::to_owned)).transpose()?;
             if agent.as_deref().is_some_and(|a| !AGENTS.contains(&a)) { return Err(InvalidMessage); }
             let args = o.get("args").map(|_| s("args").map(str::to_owned)).transpose()?;
-            if args.as_ref().is_some_and(|a| a.len() > 512 || !a.chars().all(|c| c.is_ascii_alphanumeric() || " ._=/:-,".contains(c))) { return Err(InvalidMessage); }
+            if args.as_ref().is_some_and(|a| !valid_args(a)) { return Err(InvalidMessage); }
             let cwd = o.get("cwd").map(|_| s("cwd").map(str::to_owned)).transpose()?;
             let label = o.get("label").map(|_| s("label").map(str::to_owned)).transpose()?;
             if label.as_ref().is_some_and(|l| l.chars().count() > 64) { return Err(InvalidMessage); }
