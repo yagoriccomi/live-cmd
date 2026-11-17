@@ -196,3 +196,35 @@ select { font:inherit; padding:6px 10px; border-radius:var(--radius); border:1px
 .conn-q { margin-left:auto; }
 input.rename { font:inherit; padding:0 4px; width:12em; }
 .term-tabs [role=tab][draggable=true] { cursor:grab; }
+
+/* Tema Glass Aurora (mockup V1, canvas de design): padrão do app, só escuro.
+   Claro e alto contraste continuam disponíveis por data-theme. */
+:root, :root[data-theme=dark] {
+  --bg:#140b2e; --surface:rgb(255 255 255 / .08); --surface-2:rgb(255 255 255 / .14); --text:#f4efff; --text-muted:#c8b8ff;
+  --border:rgb(206 170 255 / .5); --accent:#8b5cf6; --on-accent:#fff;
+  --ok:#5ef2b0; --warn:#ffd35c; --danger:#ff5c8a;
+  --scrim:rgb(10 4 30 / .6); --shadow:0 0 28px rgb(168 85 247 / .35);
+  --radius:14px;
+  --term-bg:rgb(10 4 30 / .72); --term-fg:#e6dcff; --term-sel:#5b2fb0;
+  --glow:0 0 28px rgb(168 85 247 / .35), inset 0 1px 0 rgb(255 255 255 / .3);
+  --font:"Sora","Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+  --font-mono:"Fira Code","Cascadia Mono",Consolas,monospace;
+  color-scheme: dark;
+}
+:root:not([data-theme=light]):not([data-theme=contrast]) body {
+  background:
+    radial-gradient(600px 600px at 0% 0%, rgb(139 92 246 / .75), transparent 70%),
+    radial-gradient(520px 520px at 100% 100%, rgb(255 79 216 / .45), transparent 70%),
+    radial-gradient(480px 480px at 100% 0%, rgb(60 108 255 / .35), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+}
+:root:not([data-theme=light]):not([data-theme=contrast]) :is(.sidebar, .menu, dialog, .find-bar, .status-banner, .device-row, [role=tablist]) {
+  backdrop-filter: blur(30px); box-shadow: var(--glow);
+}
+:root:not([data-theme=light]):not([data-theme=contrast]) .btn-primary { background:linear-gradient(135deg, var(--accent), #ff4fd8); border-color:transparent; box-shadow:0 0 20px rgb(255 79 216 / .45); }
+:root:not([data-theme=light]):not([data-theme=contrast]) .sidebar li > button[aria-current=true],
+:root:not([data-theme=light]):not([data-theme=contrast]) .palette li[aria-selected=true] { background:#fff; color:#2a1460; border-radius:10px; }
+:root:not([data-theme=light]):not([data-theme=contrast]) [role=tab][aria-selected=true] { border-bottom-color:#ff4fd8; }
+:root:not([data-theme=light]):not([data-theme=contrast]) .term-empty { background:transparent; }
+:root:not([data-theme=light]):not([data-theme=contrast]) .toast { background:#fff; color:#2a1460; }

@@ -102,10 +102,10 @@ export default function App() {
 }
 
 const st = StyleSheet.create({
-  root: { flex: 1, padding: 8, paddingTop: 32, backgroundColor: '#111' },
-  status: { color: '#9cf', marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: '#555', color: '#eee', padding: 6, marginVertical: 4 },
-  term: { flex: 1, backgroundColor: '#000', marginVertical: 6 },
-  mono: { fontFamily: 'monospace', color: '#ddd', fontSize: 12 },
+  root: { flex: 1, padding: 8, paddingTop: 32, backgroundColor: '#140b2e' },
+  status: { color: '#c8b8ff', marginBottom: 6 },
+  input: { borderWidth: 1, borderColor: 'rgba(206,170,255,0.5)', borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)', color: '#f4efff', padding: 6, marginVertical: 4 },
+  term: { flex: 1, backgroundColor: 'rgba(10,4,30,0.85)', borderRadius: 14, marginVertical: 6 },
+  mono: { fontFamily: 'monospace', color: '#e6dcff', fontSize: 12 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 4 },
 });
