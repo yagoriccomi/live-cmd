@@ -44,8 +44,8 @@ function size() {
 // ---------- Desenho ----------
 function draw(key, s = $("screen")) {
   const scr = screens[key];
-  for (const n of [...s.children]) if (n.id !== "measure") n.remove();
-  if (!scr) return;
+  const keep = [...s.children].filter((n) => n.id === "measure"), lines = [];
+  if (!scr) return s.replaceChildren(...keep);
   if (s === pane()) appCursor = scr.app_cursor;
   for (const row of scr.rows) {
     const line = el("div");
@@ -60,9 +60,17 @@ function draw(key, s = $("screen")) {
       if (fl & 16) sp.classList.add("cur");
       line.append(sp);
     }
-    s.append(line);
+    lines.push(line);
   }
+  s.replaceChildren(...keep, ...lines);
   afterDraw();
+}
+
+// Junta várias telas recebidas no mesmo quadro num só desenho.
+const soon = new Map();
+function drawSoon(key, s = $("screen")) {
+  if (!soon.size) requestAnimationFrame(() => { const q = [...soon]; soon.clear(); for (const [el, k] of q) draw(k, el); });
+  soon.set(s, key);
 }
 
 // ---------- Banner ----------
@@ -88,8 +96,10 @@ function updateBanner() {
 }
 
 // ---------- Abas ----------
+let tabsLater = false;
 function renderTabs() {
   const bar = $("tabs");
+  if (bar.querySelector("input.rename")) { tabsLater = true; return; }
   bar.replaceChildren(...tabs.map((t) => {
     const b = el("button");
     b.type = "button";
@@ -112,7 +122,7 @@ function renderTabs() {
     x.title = "Fechar aba (Ctrl+Shift+W)";
     x.onclick = (e) => { e.stopPropagation(); closeTab(t.key); };
     b.append(x);
-    b.onclick = () => activate(t.key);
+    b.onclick = () => { if (t.key !== active) activate(t.key); };
     b.onauxclick = (e) => { if (e.button === 1) closeTab(t.key); };
     return b;
   }));
@@ -156,13 +166,20 @@ function editInline(span, value, save) {
   const end = async (ok) => {
     if (done) return;
     done = true;
+    document.removeEventListener("pointerdown", down, true);
     const v = inp.value.trim();
     inp.replaceWith(span);
+    if (tabsLater) { tabsLater = false; renderTabs(); }
     if (ok && v && v !== value) { try { await save(v); } catch (e) { banner(msg(e), "err"); } }
   };
   inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") end(true); else if (e.key === "Escape") end(false); };
+  inp.onkeyup = (e) => { e.stopPropagation(); e.preventDefault(); };
   inp.onclick = inp.ondblclick = inp.onmousedown = (e) => e.stopPropagation();
-  inp.onblur = () => end(false);
+  // Foco roubado (redesenho, atualização) não cancela: volta ao campo. Clique fora salva.
+  let out = false;
+  const down = (e) => { if (e.target !== inp) out = true; };
+  document.addEventListener("pointerdown", down, true);
+  inp.onblur = () => { if (done) return; if (out || !document.hasFocus()) { document.removeEventListener("pointerdown", down, true); end(true); } else setTimeout(() => inp.isConnected && inp.focus()); };
   span.replaceWith(inp);
   inp.focus();
   inp.select();
@@ -308,6 +325,8 @@ async function newSession(conn, profile) {
   } catch (e) { banner(msg(e), "err"); }
 }
 
+const dropCwds = {}; // pasta atual por aba (OSC 7), para arrastar/colar em remoto
+
 // ---------- Lista lateral ----------
 async function refresh(conn) {
   try {
@@ -363,6 +382,7 @@ function newButton(conn) {
 }
 
 function renderSidebar() {
+  if ($("sidebar").querySelector("input.rename")) { tabsLater = true; return; }
   $("local-ul").replaceChildren(...conns[LOCAL].sessions.map((s) => sessionItem(LOCAL, s)));
   $("remote-ul").replaceChildren(...remoteOrder.map((id) => {
     const c = conns[id], st = c.status.state, li = el("li"), b = el("button");
@@ -434,10 +454,27 @@ function profileMenu(anchor, conn) {
   menu(anchor, p.length ? [...p.map((x) => [x.label, () => newSession(conn, x)]), ["Agente de IA…", () => newAi(conn)]] : [["Nenhum perfil disponível."]]);
 }
 
+const AI_SUG = {
+  claude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
+  openclaude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
+  codex: ["--model gpt-5", "--full-auto", "--search", "--sandbox read-only", "--sandbox workspace-write", "--ask-for-approval on-request"],
+};
 // Agente de IA: pergunta agente, pasta e args; o host salva e retoma pelo id da sessão.
 async function newAi(conn) {
   const d = JSON.parse(localStorage.getItem("ai-default") || "{}");
   $("ai-agent").value = d.agent || "claude"; $("ai-cwd").value = d.cwd || ""; $("ai-args").value = d.args || ""; $("ai-def").checked = false;
+  const sug = () => $("ai-sug").replaceChildren(...(AI_SUG[$("ai-agent").value] || []).map((v) => { const o = el("option"); o.value = v; return o; }));
+  $("ai-agent").onchange = sug; sug();
+  // Navegação: subpastas no PC da conexão; clique entra, ".." sobe, raiz lista as unidades.
+  const browse = async (path) => {
+    let dirs = [];
+    try { dirs = await invoke("term_dirs", { conn, path }); } catch (e) { banner(msg(e), "err"); }
+    const base = path.replace(/[\/]+$/, ""), up = base.includes("\\") ? base.slice(0, base.lastIndexOf("\\") + 1) : "";
+    const item = (name, to) => { const b = el("button", null, name); b.type = "button"; b.onclick = () => { $("ai-cwd").value = to; browse(to); }; return b; };
+    $("ai-dirs").replaceChildren(...(path ? [item("..", up)] : []), ...dirs.map((d) => item(d, path ? base + "\\" + d : d)));
+  };
+  $("ai-cwd").onchange = () => browse($("ai-cwd").value.trim());
+  browse($("ai-cwd").value.trim());
   $("ai-scrim").hidden = false; $("ai-cwd").focus();
   const ok = await new Promise((done) => {
     const end = (v) => { $("ai-scrim").hidden = true; done(v); };
@@ -558,8 +595,8 @@ $("remote-add").onclick = openAdd;
 listen("term-screen", ({ payload }) => {
   const k = payload.key, t = activeTab();
   screens[k] = payload;
-  if (k === active) { if (!holdDraw()) draw(k); }
-  else if (t?.split?.key === k) draw(k, $("screen2"));
+  if (k === active) { if (!holdDraw()) drawSoon(k); }
+  else if (t?.split?.key === k) drawSoon(k, $("screen2"));
   else if (!busy.has(k)) { busy.add(k); renderTabs(); }
 });
 // Item 9 (evento do F1): avisa no Windows se o comando levou mais de 10 s e não estava à vista.
@@ -655,8 +692,8 @@ function send(data) {
 const termKey = (e) => {
   if (e.isComposing || e.key === "Process" || e.key === "Dead") return;
   if (screenKey(e)) return;
-  if (e.ctrlKey && e.shiftKey && ["C", "V", "T", "W", "F6"].includes(e.key.length === 1 ? e.key.toUpperCase() : e.key)) return;
-  if (e.ctrlKey && (e.key === "Tab" || (!e.shiftKey && !e.altKey && e.key.toLowerCase() === "b"))) return;
+  if (e.ctrlKey && e.shiftKey && ["C", "V", "T", "W", "F6", "B"].includes(e.key.length === 1 ? e.key.toUpperCase() : e.key)) return;
+  if (e.ctrlKey && e.key === "Tab") return;
   const b = keyBytes(e);
   if (b == null) return;
   e.preventDefault();
@@ -701,7 +738,7 @@ document.addEventListener("keydown", (e) => {
     const i = tabs.findIndex((t) => t.key === active);
     if (tabs.length) activate(tabs[(i + (e.shiftKey ? tabs.length - 1 : 1)) % tabs.length].key);
   }
-  else if (e.ctrlKey && !e.shiftKey && !e.altKey && k === "B") {
+  else if (e.ctrlKey && e.shiftKey && !e.altKey && k === "B") {
     e.preventDefault();
     const c = $("layout").classList.toggle("collapsed");
     if (c && $("sidebar").contains(document.activeElement)) $("screen").focus();
@@ -750,7 +787,14 @@ function copySel() {
 }
 function paste() {
   const t = curTab();
-  if (t && t.exited == null) invoke("term_paste", { conn: t.conn, sessionId: t.sid }).catch((err) => banner(msg(err), "err"));
+  if (!t || t.exited != null) return $("screen").focus();
+  const dir = dropCwds[t.key] ?? null;
+  // Print: local vai para <pasta>\.live-cmd; remoto é enviado ao outro PC. Cola o caminho (claude/codex anexam pelo caminho).
+  invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir }).then((name) => {
+    if (!name) return;
+    send(dir ? `"${dir.replace(/[\\/]+$/, "")}\\${name}"` : name);
+    banner(`Print enviado: ${name} em ${dir ?? "pasta padrão do outro PC"}.`);
+  }).catch((err) => banner(msg(err), "err"));
   $("screen").focus();
 }
 function selectAll() {
@@ -770,7 +814,6 @@ function screenKey(e) {
   let done = true;
   const hit = Object.keys(SHORTCUTS).find((a) => keyName(e) === binds[a]);
   if (plain && k === "c" && hasSel()) copySel();
-  else if (plain && k === "+") zoom(1);
   else if (hit) SHORTCUTS[hit][1]();
   else if (k === "ContextMenu" || (e.shiftKey && k === "F10")) { const r = $("screen").getBoundingClientRect(); ctxMenu(r.left + 20, r.top + 20); }
   else done = false;
@@ -782,10 +825,10 @@ function screenKey(e) {
 function ctxMenu(x, y) {
   const at = { getBoundingClientRect: () => ({ left: x, bottom: y }), focus: () => $("screen").focus() };
   menu(at, [
-    ["Copiar   Ctrl+C", hasSel() ? copySel : null], ["Colar   Ctrl+V", paste], ["Selecionar tudo", selectAll], ["Buscar   Ctrl+F", openFind],
+    ["Copiar   Ctrl+C", hasSel() ? copySel : null], ["Colar   Ctrl+V", paste], ["Selecionar tudo", selectAll], ["Buscar   Ctrl+Shift+F", openFind],
     ["Nova sessão   Ctrl+Shift+T", action("new")], ["Nova sessão nesta pasta", action("new-here")], ["Reabrir aba fechada   Ctrl+Alt+T", reopen],["Renomear aba", action("rename")], ["Fechar aba   Ctrl+Shift+W", action("close")],
     ["Exportar saída", action("export")], ["Dividir painel", action("split")], ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
-    ["Aumentar fonte   Ctrl+=", () => zoom(1)], ["Diminuir fonte   Ctrl+-", () => zoom(-1)], ["Redefinir fonte   Ctrl+0", () => zoom(0)],
+    ["Aumentar fonte", () => zoom(1)], ["Diminuir fonte", () => zoom(-1)], ["Redefinir fonte", () => zoom(0)],
     ["Limpar", clearTab], ["Atalhos e ajuda   F1", () => help()],
   ].filter(([, fn]) => fn));
 }
@@ -892,7 +935,6 @@ $("screen").addEventListener("click", (e) => {
 $("screen").addEventListener("mousemove", (e) => $("screen").classList.toggle("ctrl", e.ctrlKey));
 
 // Arrastar arquivo(s): sessão local cola o(s) caminho(s) entre aspas; remota envia ao outro PC (pasta atual da sessão, senão a padrão do host).
-const dropCwds = {};
 window.__TAURI__.event.listen("term-cwd", (e) => { dropCwds[e.payload.key] = e.payload.cwd || undefined; });
 window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload }) => {
   if (payload.type !== "drop" || !payload.paths?.length) return;
@@ -909,17 +951,19 @@ window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload })
 
 // Ajuda (F1).
 const KEYS = [["Ctrl+C", "Copiar seleção (sem seleção: interrompe, ^C)"], ["Ctrl+V / Ctrl+Shift+V", "Colar"], ["Ctrl+Shift+C", "Copiar seleção"],
-  ["Ctrl+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba"],
-  ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
-  ["Ctrl+= / Ctrl+- / Ctrl+0", "Aumentar / diminuir / redefinir fonte"], ["Ctrl+roda do mouse", "Zoom da fonte"], ["Roda do mouse", "Rolar histórico"],
+  ["Ctrl+Shift+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba"],
+  ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+Shift+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
+  ["Ctrl+roda do mouse", "Zoom da fonte"], ["Roda do mouse", "Rolar histórico"],
   ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito", "Colar (com seleção: copiar)"], ["Shift+botão direito / Shift+F10 / ☰", "Menu do terminal"], ["Arrastar arquivo", "Local: cola o caminho · Remoto: envia ao outro PC"]];
 // Atalhos remapeáveis: ação fixa, tecla editável no F1 (clique na tecla e pressione a nova). Salvos no localStorage.
 const SHORTCUTS = {
-  paste: ["Colar", () => paste(), "Ctrl+V"], find: ["Buscar", () => openFind(), "Ctrl+F"], clear: ["Limpar", () => clearTab(), "Ctrl+Shift+K"],
-  zin: ["Aumentar fonte", () => zoom(1), "Ctrl+="], zout: ["Diminuir fonte", () => zoom(-1), "Ctrl+-"], z0: ["Redefinir fonte", () => zoom(0), "Ctrl+0"],
+  paste: ["Colar", () => paste(), "Ctrl+V"], find: ["Buscar", () => openFind(), "Ctrl+Shift+F"], clear: ["Limpar", () => clearTab(), "Ctrl+Shift+K"],
+  zin: ["Aumentar fonte", () => zoom(1), ""], zout: ["Diminuir fonte", () => zoom(-1), ""], z0: ["Redefinir fonte", () => zoom(0), ""],
   help: ["Esta ajuda", () => help(), "F1"],
 };
-const binds = { ...Object.fromEntries(Object.entries(SHORTCUTS).map(([a, s]) => [a, s[2]])), ...(() => { try { return JSON.parse(localStorage.getItem("term-keys") || "{}"); } catch { return {}; } })() };
+// Atalhos antigos (Ctrl+F, Ctrl+=…) iam contra programas do terminal: descartados se salvos.
+const OLD_KEYS = ["Ctrl+F", "Ctrl+=", "Ctrl+-", "Ctrl+0"];
+const binds = { ...Object.fromEntries(Object.entries(SHORTCUTS).map(([a, s]) => [a, s[2]])), ...(() => { try { return Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem("term-keys") || "{}")).filter(([, k]) => !OLD_KEYS.includes(k))); } catch { return {}; } })() };
 function keyName(e) {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
   return [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");

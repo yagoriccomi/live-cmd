@@ -321,12 +321,31 @@ pub fn term_input(app: AppHandle, conn: String, session_id: String, data: String
 
 /// `Ctrl+Shift+V`: texto do clipboard, com bracketed paste se o programa pediu.
 #[tauri::command(async)]
-pub fn term_paste(app: AppHandle, conn: String, session_id: String) -> Result<(), String> {
+/// Remoto com print no clipboard: envia o PNG para `target_dir` do outro PC e devolve o nome do arquivo.
+pub fn term_paste(app: AppHandle, conn: String, session_id: String, target_dir: Option<String>) -> Result<Option<String>, String> {
     let text = clip::read_text()?.replace("\r\n", "\r").replace('\n', "\r");
+    // Sem texto (print/imagem): manda Ctrl+V cru; o programa (claude, codex…) lê a imagem do clipboard.
+    if text.is_empty() {
+        if conn == LOCAL && let (Some(dir), Some(png)) = (target_dir.as_deref(), clip::read_png()?) {
+            let name = format!("print-{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "IO_ERROR")?.as_millis());
+            let d = Path::new(dir).join(".live-cmd");
+            std::fs::create_dir_all(&d).and_then(|()| std::fs::write(d.join(&name), png)).map_err(|_| "IO_ERROR")?;
+            return Ok(Some(format!(".live-cmd\\{name}")));
+        }
+        if conn != LOCAL && let Some(png) = clip::read_png()? {
+            let name = format!("print-{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "IO_ERROR")?.as_millis());
+            let tmp = std::env::temp_dir().join(&name);
+            std::fs::write(&tmp, png).map_err(|_| "IO_ERROR")?;
+            let r = client(&app, &conn)?.upload(&tmp, target_dir.as_deref());
+            let _ = std::fs::remove_file(&tmp);
+            return r.map(|()| Some(name));
+        }
+        return client(&app, &conn)?.input(&session_id, b"").map(|()| None);
+    }
     let mut bracketed = false;
     with_view(&app, &conn, &session_id, |v| { bracketed = v.vt.screen().bracketed_paste(); v.vt.screen_mut().set_scrollback(0); });
     let data = if bracketed { format!("\x1b[200~{text}\x1b[201~") } else { text };
-    client(&app, &conn)?.input(&session_id, data.as_bytes())
+    client(&app, &conn)?.input(&session_id, data.as_bytes()).map(|()| None)
 }
 
 #[tauri::command(async)]
@@ -452,6 +471,12 @@ pub fn term_busy(app: AppHandle, conn: String, session_id: String) -> bool {
 pub fn term_rename(app: AppHandle, conn: String, session_id: String, label: String) -> Result<(), String> {
     let label: String = label.chars().take(64).collect();
     client(&app, &conn)?.request(json!({ "type": "session_rename", "session_id": session_id, "label": label })).map(drop)
+}
+
+/// Subpastas no PC da conexão (vazio: unidades).
+#[tauri::command(async)]
+pub fn term_dirs(app: AppHandle, conn: String, path: String) -> Result<Value, String> {
+    client(&app, &conn)?.request(json!({ "type": "dir_list", "path": path })).map(|v| v["dirs"].clone())
 }
 
 #[tauri::command]

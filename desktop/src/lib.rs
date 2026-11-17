@@ -102,6 +102,19 @@ struct Hub { s: session::Sessions, screens: HashMap<Sid, screen::Screen>, /// Te
 static HUB: LazyLock<Mutex<Hub>> = LazyLock::new(Default::default);
 static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
 fn hub() -> MutexGuard<'static, Hub> { HUB.lock().unwrap_or_else(|e| e.into_inner()) }
+/// DPAPI do usuário: só esta conta do Windows decifra a saída salva em `sessions.json`.
+fn dpapi(data: &[u8], protect: bool) -> Option<Vec<u8>> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Cryptography::{CRYPT_INTEGER_BLOB, CryptProtectData, CryptUnprotectData};
+    let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
+    let mut out = CRYPT_INTEGER_BLOB::default();
+    unsafe {
+        if protect { CryptProtectData(&input, None, None, None, None, 0, &mut out) } else { CryptUnprotectData(&input, None, None, None, None, 0, &mut out) }.ok()?;
+        let v = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+        let _ = LocalFree(Some(HLOCAL(out.pbData.cast())));
+        Some(v)
+    }
+}
 fn now_ms() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64) }
 impl Hub {
     /// Abre o PTY do perfil e registra a sessão (`sid` dado = restauração do disco).
@@ -161,7 +174,7 @@ impl Hub {
         let Some(path) = self.store.clone().filter(|_| self.dirty) else { return };
         self.dirty = false;
         let list: Vec<Saved> = self.s.saved(SAVED_TAIL).into_iter().filter_map(|(sid, label, cols, rows, tail)| Some(Saved {
-            id: proto::uuid_str(&sid), profile: self.prof.get(&sid)?.clone(), label, cwd: self.cwds.get(&sid).cloned(), cols, rows, tail: B64.encode(tail),
+            id: proto::uuid_str(&sid), profile: self.prof.get(&sid)?.clone(), label, cwd: self.cwds.get(&sid).cloned(), cols, rows, tail: B64.encode(dpapi(&tail, true).unwrap_or_default()),
             agent: self.ai.get(&sid).map(|a| a.0.clone()), args: self.ai.get(&sid).map(|a| a.1.clone()).unwrap_or_default(),
             ssh: self.ssh.get(&sid).cloned(),
         })).collect();
@@ -183,7 +196,9 @@ impl Hub {
                 None => self.open(Some(sid), &x.profile, cwd, label, cols, rows, now_ms()),
             };
             if opened.is_err() { continue; }
-            let mut out = B64.decode(&x.tail).unwrap_or_default();
+            // Arquivo antigo (texto puro) não decifra: usa como veio.
+            let raw = B64.decode(&x.tail).unwrap_or_default();
+            let mut out = dpapi(&raw, false).unwrap_or(raw);
             // Sai da tela alternativa e zera cores de um programa que estava aberto; depois, o separador.
             out.extend_from_slice("\x1b[?1049l\x1b[0m\r\n\x1b[2m— sessão restaurada —\x1b[0m\r\n".as_bytes());
             if dormant { out.extend_from_slice(SSH_DORMANT.as_bytes()); }
@@ -254,6 +269,7 @@ impl Hub {
             Req::Focus(_) => unreachable!("tratado na conexão"),
             Req::Rename { session_id, label } => { self.dirty = true; self.s.rename(session_id, label)? }
             Req::Extra(r) => self.extra(r, now)?,
+            Req::Dirs(path) => json!({"type":"dir_list_ok","dirs":list_dirs(&path)}),
         })
     }
     /// Telas do celular (`extras.rs`). Dados das fatias desktop vêm de `extras::provider()`.
@@ -395,6 +411,15 @@ impl session::Pty for Dormant {
     fn resize(&mut self, _: u16, _: u16) -> std::io::Result<()> { Ok(()) }
     fn kill(&mut self) -> std::io::Result<()> { Ok(()) }
 }
+/// Até 500 subpastas, ordem alfabética; vazio lista as unidades. Erro de leitura: lista vazia.
+fn list_dirs(path: &str) -> Vec<String> {
+    if path.is_empty() { return ('A'..='Z').map(|c| format!("{c}:\\")).filter(|d| Path::new(d).is_dir()).collect(); }
+    let Ok(rd) = std::fs::read_dir(path) else { return vec![] };
+    let mut v: Vec<String> = rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).filter_map(|e| e.file_name().into_string().ok()).take(500).collect();
+    v.sort_by_key(|n| n.to_lowercase());
+    v
+}
+
 /// O CLI só grava a conversa após a primeira mensagem; sem ela `--resume` falha ("Nenhuma conversa encontrada").
 /// Arquivo: `~/.<agente>/projects/<pasta>/<id>.jsonl` (procura em todas: a pasta da aba pode ter mudado).
 fn conversation_exists(agent: &str, id: &str) -> bool {
@@ -2396,5 +2421,16 @@ a=max-message-size:1024
                 assert!(allowed.contains(&line.trim()), "print/log não revisado: {line}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod dpapi_tests {
+    #[test]
+    fn dpapi_ida_e_volta() {
+        let c = super::dpapi(b"senha 123", true).unwrap();
+        assert!(!c.windows(5).any(|w| w == b"senha"));
+        assert_eq!(super::dpapi(&c, false).unwrap(), b"senha 123");
+        assert!(super::dpapi(b"texto puro antigo", false).is_none());
     }
 }
