@@ -2,6 +2,7 @@
 mod auth;
 mod client;
 mod conpty;
+pub mod extras;
 mod files;
 mod proto;
 mod screen;
@@ -234,7 +235,60 @@ impl Hub {
             Req::Close(sid) => { let ok = self.s.close(sid)?; self.forget(&[sid]); self.dirty = true; ok }
             Req::Focus(_) => unreachable!("tratado na conexão"),
             Req::Rename { session_id, label } => { self.dirty = true; self.s.rename(session_id, label)? }
+            Req::Extra(r) => self.extra(r, now)?,
         })
+    }
+    /// Telas do celular (`extras.rs`). Dados das fatias desktop vêm de `extras::provider()`.
+    fn extra(&mut self, r: extras::Req, now: u64) -> std::result::Result<Value, auth::Error> {
+        use extras::Req as X;
+        let p = extras::provider();
+        // Sessão nova no primeiro perfil, com uma linha digitada no shell (agente ou ssh).
+        let profile = self.profiles.first().map(|p| p.0.clone());
+        let first = || profile.clone().ok_or(auth::Error::NotFound);
+        Ok(match r {
+            X::Unsupported => return Err(auth::Error::VersionUnsupported),
+            X::AgentList => extras::agent_list_ok(&extras::merge_agents(self.live_agents(), p.saved_agents())),
+            X::AgentResume { session_id, cols, rows } => {
+                if !self.ai.contains_key(&session_id) {
+                    let a = p.saved_agents().into_iter().find(|a| a.session_id == session_id).ok_or(auth::Error::NotFound)?;
+                    let cwd = a.cwd.map(PathBuf::from).filter(|d| d.is_dir());
+                    let label = Some(a.label).filter(|l| !l.is_empty());
+                    let sid = self.open(Some(session_id), &first()?, cwd, label, cols, rows, now)?;
+                    self.start_ai(sid, a.agent, a.args, true);
+                    self.save();
+                }
+                extras::session_ok("agent_resume_ok", &session_id)
+            }
+            X::SshList => extras::ssh_list_ok(&p.ssh_servers()),
+            X::SshConnect { server_id, cols, rows } => {
+                let cmd = p.ssh_command(&server_id).ok_or(auth::Error::NotFound)?;
+                let label = p.ssh_servers().into_iter().find(|s| s.server_id == server_id).map(|s| s.label).filter(|l| !l.is_empty() && l.chars().count() <= 64);
+                let sid = self.open(None, &first()?, None, label, cols, rows, now)?;
+                self.s.type_in(&sid, format!("{cmd}\r").as_bytes());
+                extras::session_ok("ssh_connect_ok", &sid)
+            }
+            X::HistoryQuery { query, limit } => extras::history_query_ok(&p.history(&query, limit)),
+            X::HistoryRun { entry_id, session_id } => {
+                if self.s.size(&session_id).is_none() { return Err(auth::Error::NotFound); }
+                let cmd = p.history_command(&entry_id).ok_or(auth::Error::NotFound)?;
+                self.s.type_in(&session_id, format!("{cmd}\r").as_bytes());
+                extras::history_run_ok()
+            }
+        })
+    }
+    /// Sessões vivas com agente de IA, com rótulo, pasta e estado da tabela.
+    fn live_agents(&self) -> Vec<extras::Agent> {
+        let list = self.s.list();
+        self.ai.iter().filter_map(|(sid, (agent, args))| {
+            let id = proto::uuid_str(sid);
+            let x = list.iter().find(|x| x["session_id"] == id.as_str())?;
+            Some(extras::Agent {
+                session_id: *sid, agent: agent.clone(), args: args.clone(), label: x["label"].as_str().unwrap_or_default().to_owned(),
+                cwd: self.cwds.get(sid).map(|d| d.to_string_lossy().into_owned()),
+                state: if x["state"] == "exited" { extras::AgentState::Exited } else { extras::AgentState::Running },
+                last_activity_ms: x["last_activity_ms"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0),
+            })
+        }).collect()
     }
 }
 /// Últimos bytes de saída de cada sessão guardados no disco.

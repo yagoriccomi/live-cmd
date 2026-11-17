@@ -5,9 +5,11 @@ import { randomUUID } from 'expo-crypto';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { Offerer, b64d, parseMsg, toJson, uuidBytes, type Bytes } from './auth.ts';
 import { encodeFrame, parseFrame, parseHostControl, encodeControl } from './pty.ts';
+import { isExtraReply, parseExtraReply } from './extras.ts';
 
 export interface Pin { hostPk: string; room: string; server: string }
-export interface Handlers { status(s: string): void; output(b: Bytes): void; closed(code?: string): void }
+/** `reset`: a sessão exibida mudou (agente retomado, SSH, troca de aba); limpar a tela. */
+export interface Handlers { status(s: string): void; output(b: Bytes): void; closed(code?: string): void; reset?(): void }
 
 const signalUrl = (server: string) => {
   const host = server.split(':')[0];
@@ -35,6 +37,8 @@ export class Conn {
   private dc?: any;
   private id = randomUUID();
   private sid?: Bytes;
+  /** Sessão exibida (texto), para `history_run` e troca de sessão. */
+  sessionId?: string;
   private seq = 0n;
   private pending = new Map<string, (m: any) => void>();
   private done = false;
@@ -98,8 +102,28 @@ export class Conn {
     const created = await this.request({ type: 'session_create', profile_id: profile, label: 'Celular', cols: 80, rows: 24 });
     const att = await this.request({ type: 'session_attach', session_id: created.session_id, from_offset: null, cols: 80, rows: 24 });
     this.sid = uuidBytes(created.session_id)!;
+    this.sessionId = created.session_id;
     this.seq = BigInt(att.last_input_seq);
     this.h.status('conectado');
+  }
+
+  /** Pedido das abas Agentes/SSH/Histórico (corpo de `extras.ts`); resposta já validada. */
+  extra(body: Record<string, unknown>): Promise<any> {
+    if (!this.sid || this.done) return Promise.reject(Object.assign(new Error('NOT_CONNECTED'), { code: 'NOT_CONNECTED' }));
+    return this.request(body);
+  }
+
+  /** Passa a exibir outra sessão do host: solta a atual e anexa a nova (com replay do buffer). */
+  async switchTo(sessionId: string) {
+    if (!this.sid || this.done || sessionId === this.sessionId) return;
+    const old = this.sessionId;
+    this.sid = undefined;
+    if (old) await this.request({ type: 'session_detach', session_id: old }).catch(() => {});
+    this.h.reset?.();
+    const att = await this.request({ type: 'session_attach', session_id: sessionId, from_offset: null, cols: 80, rows: 24 });
+    this.sid = uuidBytes(sessionId)!;
+    this.sessionId = sessionId;
+    this.seq = BigInt(att.last_input_seq);
   }
 
   private request(body: Record<string, unknown>): Promise<any> {
@@ -114,6 +138,11 @@ export class Conn {
   private recv(data: string | ArrayBuffer) {
     try {
       if (typeof data === 'string') {
+        if (isExtraReply(data)) {
+          const x = parseExtraReply(data, this.id), w = this.pending.get(x.requestId);
+          if (w) { this.pending.delete(x.requestId); w(x); }
+          return;
+        }
         parseHostControl(data, this.id);
         const m = JSON.parse(data);
         if (m.type === 'error' && !('request_id' in m)) return this.close(m.code);
@@ -122,9 +151,10 @@ export class Conn {
         return;
       }
       const b = new Uint8Array(data), f = parseFrame(b);
+      const mine = !!this.sid && f.sessionId.every((x, i) => x === this.sid![i]);
       if (f.op.t === 'heartbeat') this.dc.send(b);
-      else if (f.op.t === 'output') this.h.output(f.op.data);
-      else if (f.op.t === 'exited') this.close(`saiu ${f.op.code}`);
+      else if (f.op.t === 'output' && mine) this.h.output(f.op.data);
+      else if (f.op.t === 'exited' && mine) this.close(`saiu ${f.op.code}`);
     } catch (e: any) { this.close(e?.code ?? 'INVALID_MESSAGE'); }
   }
 
