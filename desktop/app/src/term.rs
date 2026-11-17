@@ -309,6 +309,12 @@ pub fn term_paste(app: AppHandle, conn: String, session_id: String, target_dir: 
     let text = clip::read_text()?.replace("\r\n", "\r").replace('\n', "\r");
     // Sem texto (print/imagem): manda Ctrl+V cru; o programa (claude, codex…) lê a imagem do clipboard.
     if text.is_empty() {
+        if conn == LOCAL && let (Some(dir), Some(png)) = (target_dir.as_deref(), clip::read_png()?) {
+            let name = format!("print-{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "IO_ERROR")?.as_millis());
+            let d = Path::new(dir).join(".live-cmd");
+            std::fs::create_dir_all(&d).and_then(|()| std::fs::write(d.join(&name), png)).map_err(|_| "IO_ERROR")?;
+            return Ok(Some(format!(".live-cmd\\{name}")));
+        }
         if conn != LOCAL && let Some(png) = clip::read_png()? {
             let name = format!("print-{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "IO_ERROR")?.as_millis());
             let tmp = std::env::temp_dir().join(&name);

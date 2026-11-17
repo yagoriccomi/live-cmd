@@ -98,6 +98,19 @@ struct Hub { s: session::Sessions, screens: HashMap<Sid, screen::Screen>, /// Te
 static HUB: LazyLock<Mutex<Hub>> = LazyLock::new(Default::default);
 static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
 fn hub() -> MutexGuard<'static, Hub> { HUB.lock().unwrap_or_else(|e| e.into_inner()) }
+/// DPAPI do usuário: só esta conta do Windows decifra a saída salva em `sessions.json`.
+fn dpapi(data: &[u8], protect: bool) -> Option<Vec<u8>> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Cryptography::{CRYPT_INTEGER_BLOB, CryptProtectData, CryptUnprotectData};
+    let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
+    let mut out = CRYPT_INTEGER_BLOB::default();
+    unsafe {
+        if protect { CryptProtectData(&input, None, None, None, None, 0, &mut out) } else { CryptUnprotectData(&input, None, None, None, None, 0, &mut out) }.ok()?;
+        let v = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+        let _ = LocalFree(Some(HLOCAL(out.pbData.cast())));
+        Some(v)
+    }
+}
 fn now_ms() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64) }
 impl Hub {
     /// Abre o PTY do perfil e registra a sessão (`sid` dado = restauração do disco).
@@ -133,7 +146,7 @@ impl Hub {
         let Some(path) = self.store.clone().filter(|_| self.dirty) else { return };
         self.dirty = false;
         let list: Vec<Saved> = self.s.saved(SAVED_TAIL).into_iter().filter_map(|(sid, label, cols, rows, tail)| Some(Saved {
-            id: proto::uuid_str(&sid), profile: self.prof.get(&sid)?.clone(), label, cwd: self.cwds.get(&sid).cloned(), cols, rows, tail: B64.encode(tail),
+            id: proto::uuid_str(&sid), profile: self.prof.get(&sid)?.clone(), label, cwd: self.cwds.get(&sid).cloned(), cols, rows, tail: B64.encode(dpapi(&tail, true).unwrap_or_default()),
             agent: self.ai.get(&sid).map(|a| a.0.clone()), args: self.ai.get(&sid).map(|a| a.1.clone()).unwrap_or_default(),
         })).collect();
         // ponytail: falha ao gravar é silenciosa (sem console no app); tenta de novo no próximo save.
@@ -146,7 +159,9 @@ impl Hub {
             let cwd = x.cwd.filter(|d| d.is_dir());
             let label = Some(x.label).filter(|l| !l.is_empty());
             if self.open(Some(sid), &x.profile, cwd, label, x.cols.max(1), x.rows.max(1), now_ms()).is_err() { continue; }
-            let mut out = B64.decode(&x.tail).unwrap_or_default();
+            // Arquivo antigo (texto puro) não decifra: usa como veio.
+            let raw = B64.decode(&x.tail).unwrap_or_default();
+            let mut out = dpapi(&raw, false).unwrap_or(raw);
             // Sai da tela alternativa e zera cores de um programa que estava aberto; depois, o separador.
             out.extend_from_slice("\x1b[?1049l\x1b[0m\r\n\x1b[2m— sessão restaurada —\x1b[0m\r\n".as_bytes());
             self.pty(sid, conpty::Ev::Output(out));
@@ -2116,5 +2131,16 @@ a=max-message-size:1024
                 assert!(allowed.contains(&line.trim()), "print/log não revisado: {line}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod dpapi_tests {
+    #[test]
+    fn dpapi_ida_e_volta() {
+        let c = super::dpapi(b"senha 123", true).unwrap();
+        assert!(!c.windows(5).any(|w| w == b"senha"));
+        assert_eq!(super::dpapi(&c, false).unwrap(), b"senha 123");
+        assert!(super::dpapi(b"texto puro antigo", false).is_none());
     }
 }

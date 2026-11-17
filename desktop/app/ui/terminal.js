@@ -786,8 +786,8 @@ function copySel() {
 function paste() {
   const t = curTab();
   if (!t || t.exited != null) return $("screen").focus();
-  const dir = t.conn === LOCAL ? null : dropCwds[t.key] ?? null;
-  // Remoto com print: o app envia a imagem ao outro PC e cola o caminho (claude/codex anexam pelo caminho).
+  const dir = dropCwds[t.key] ?? null;
+  // Print: local vai para <pasta>\.live-cmd; remoto é enviado ao outro PC. Cola o caminho (claude/codex anexam pelo caminho).
   invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir }).then((name) => {
     if (!name) return;
     send(dir ? `"${dir.replace(/[\\/]+$/, "")}\\${name}"` : name);
