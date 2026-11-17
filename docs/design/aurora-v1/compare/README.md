@@ -6,12 +6,17 @@ PNGs quantizados em 256 cores para caber no repositório; a medida foi feita nas
 
 | Tela | Diferença |
 |---|---|
-| Terminal | 6,58% |
+| Terminal | 6,66% |
 | Agentes | 9,27% |
 | SSH | 4,71% |
 | Histórico | 6,16% |
-| Estados | 11,11% |
-| Config | 40,69% |
-| Pareamento | 34,02% |
+| Estados | 11,17% |
+| Config | 25,47% |
+| Pareamento | 15,23% |
 
 Rodar de novo: `python desktop/app/scripts/pixel/run.py <pasta-de-trabalho> [Tela ...]`.
+
+Config e Pareamento agora são painéis da janela do terminal. O que sobra de diferença nelas é conteúdo real
+no lugar do conteúdo ilustrativo do mockup: o formulário de servidor, rolagem e perfis em vez de "Fonte",
+"Opacidade" e "Desfoque" (que o app não tem), três temas em vez de quatro, e os passos de pareamento sem a
+etapa "Confirme os números", que o protocolo não tem.

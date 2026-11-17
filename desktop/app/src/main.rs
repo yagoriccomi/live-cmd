@@ -9,6 +9,7 @@ mod host;
 mod mobile;
 mod settings;
 mod ssh;
+mod sys;
 mod term;
 
 use std::sync::Mutex;
@@ -208,17 +209,17 @@ fn open_data_dir(app: State<App>) -> Result<(), String> {
     std::process::Command::new("explorer").arg(&app.data_dir).spawn().map(drop).map_err(|_| "IO_ERROR".into())
 }
 
-/// Abre (ou traz para frente) a janela já na aba pedida.
+/// Parear, Aparelhos e Configurações são painéis da janela do terminal (V1 Aurora): abre (ou traz
+/// para frente) a janela e pede o painel. Janela nova recebe o painel pelo hash da URL.
 fn open_window(app: &AppHandle, tab: &str) {
-    if let Some(w) = app.get_webview_window("main") {
+    if let Some(w) = app.get_webview_window("terminal") {
         let _ = w.emit("tab", tab);
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
         return;
     }
-    let _ = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(format!("index.html#{tab}").into()))
-        .title("live-cmd").inner_size(420.0, 560.0).resizable(false).maximizable(false).center().build();
+    build_terminal(app, &format!("terminal.html#{tab}"));
 }
 
 /// Terminal Desktop (design §6): janela própria, redimensionável.
@@ -229,8 +230,12 @@ fn open_terminal(app: &AppHandle) {
         let _ = w.set_focus();
         return;
     }
-    let _ = WebviewWindowBuilder::new(app, "terminal", WebviewUrl::App("terminal.html".into()))
-        .title("Terminal Desktop — live-cmd").inner_size(960.0, 600.0).min_inner_size(560.0, 360.0).center().build();
+    build_terminal(app, "terminal.html");
+}
+
+fn build_terminal(app: &AppHandle, url: &str) {
+    let _ = WebviewWindowBuilder::new(app, "terminal", WebviewUrl::App(url.into()))
+        .title("Terminal Desktop — live-cmd").inner_size(1280.0, 800.0).min_inner_size(560.0, 360.0).center().build();
 }
 
 /// Menu ☰ do terminal: abre Parear/Aparelhos/Configurações ou sai.
@@ -343,7 +348,7 @@ fn main() {
             term::term_export, term::term_export_file, term::term_clear, term::term_upload, term::term_conn_stats, term::term_busy, term::term_rename, term::term_dirs, term::remote_rename,
             agents::agent_list, agents::agent_resume, agents::agent_remove,
             ssh::ssh_list, ssh::ssh_save, ssh::ssh_remove, ssh::ssh_probe, ssh::ssh_connect, ssh::ssh_sessions, ssh::ssh_reconnect,
-            hist::hist_meta, hist::hist_list, hist::hist_clear])
+            hist::hist_meta, hist::hist_list, hist::hist_clear, sys::sys_stats])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
@@ -374,7 +379,7 @@ fn main() {
             // P13: fechar/minimizar não invalida a OTK (vale até 300 s ou o uso). Fechar destrói a
             // janela e o QR com ela; minimizar avisa a UI para tirar o QR da tela até restaurar.
             match (w.label(), e) {
-                ("main", WindowEvent::Resized(_)) => { let _ = w.emit("visible", !w.is_minimized().unwrap_or(false)); }
+                ("terminal", WindowEvent::Resized(_)) => { let _ = w.emit("visible", !w.is_minimized().unwrap_or(false)); }
                 ("terminal", WindowEvent::Destroyed) => term::shutdown(w.app_handle()),
                 _ => {}
             }

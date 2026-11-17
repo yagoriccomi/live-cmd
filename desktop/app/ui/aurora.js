@@ -3,7 +3,8 @@
 // agents.js, ssh.js e historico.js já desenham. Não chama comando novo: os botões do destaque repassam
 // o clique ao botão original da lista.
 (() => {
-  const PANELS = [["agents-panel", "nav-agents", "ag-x"], ["ssh-panel", "ssh-open", "ssh-x"], ["hist", "hist-open", "hist-x"]];
+  const PANELS = [["agents-panel", "nav-agents", "ag-x"], ["ssh-panel", "ssh-open", "ssh-x"], ["hist", "hist-open", "hist-x"],
+    ["pair-pane", "nav-pair", "pp-x"], ["cfg-pane", "nav-settings", "cfg-x"]];
   const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
   const txt = (root, sel) => root?.querySelector(sel)?.textContent.trim() || "";
 
@@ -52,9 +53,7 @@
     const ssh = live.filter((s) => sessionKind(s.label) === "ssh").length;
     const pcs = remoteOrder.filter((id) => conns[id]?.status.state === "ready").length;
     $("side-sub").textContent = `${plural(live.length, "sessão aberta", "sessões abertas")} · ${plural(agents, "agente", "agentes")}`;
-    setStat(1, live.length, `${plural(agents, "agente", "agentes")} · ${ssh} SSH`);
-    setStat(2, agents, agents ? "rodando agora" : "nenhum rodando");
-    setStat(3, pcs, `de ${remoteOrder.length} pareados`);
+    setStat(3, live.length, `${plural(agents, "agente", "agentes")} · ${ssh} SSH · ${pcs}/${remoteOrder.length} PCs`);
     const t = tabs.find((x) => x.key === active);
     const i = tabs.indexOf(t);
     $("hero-i").textContent = KIND_ICON[sessionKind(t?.label || t?.title)];
@@ -85,8 +84,22 @@
     for (const [p, , x] of PANELS) if (!$(p).hidden) $(x).click();
     $("screen").focus();
   };
+  // Celular e Ajustes abrem painéis desta janela (app.js expõe window.liveTab).
   for (const [id, act] of [["nav-pair", "pair"], ["nav-settings", "settings"]])
-    $(id).onclick = () => invoke("tray_action", { id: act }).catch((err) => banner(msg(err), "err"));
+    $(id).onclick = () => window.liveTab?.(act);
+
+  // CPU e memória do PC (comando sys_stats, Win32). A cada 3 s, só com a janela visível.
+  const gb = (b) => (b / 2 ** 30).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " GB";
+  async function sysStats() {
+    if (document.hidden) return;
+    const v = await invoke("sys_stats").catch(() => null);
+    if (!v) return;
+    if (v.cpu != null) setStat(1, Math.round(v.cpu) + "%", v.cores ? plural(v.cores, "núcleo", "núcleos") : "");
+    if (v.mem_total) setStat(2, gb(v.mem_used), "de " + Math.round(v.mem_total / 2 ** 30) + " GB");
+    if (v.host && $("pp-host")) $("pp-host").textContent = v.host;
+  }
+  sysStats();
+  setInterval(sysStats, 3000);
 
   // ---------- Agentes ----------
   const AG_BADGE = { "dot-ok": ["RODANDO", ""], "dot-warn": ["TERMINOU", "warn"], "dot-err": ["SEM RESPOSTA", "err"], muted: ["ENCERRADA", "off"] };

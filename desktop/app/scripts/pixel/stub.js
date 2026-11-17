@@ -50,12 +50,13 @@
       { ts: daysAgo(1, 11, 2), cmd: "git push -u origin fix/conpty", pc: "Este PC", label: "pwsh · live-cmd", kind: "pwsh", code: 0 },
       { ts: daysAgo(2, 9, 47), cmd: "git push", pc: "Este PC", label: "staging", kind: "ssh", code: 0 },
     ],
-    // Janela principal (index.html): QR desenhado como o do mockup Pareamento.
+    sys_stats: { cpu: 34, cores: 8, mem_used: 6.1 * 2 ** 30, mem_total: 32 * 2 ** 30, host: "DESKTOP-YAGO" },
+    // Painel Parear: QR desenhado como o do mockup Pareamento.
     qr: { qr: "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21" shape-rendering="crispEdges"><rect width="21" height="21" fill="#fff"/><g fill="#2a1460"><path d="M1 1h7v7H1zM13 1h7v7h-7zM1 13h7v7H1z"/><path fill="#8b5cf6" d="M3 3h3v3H3zM15 3h3v3h-3zM3 15h3v3H3z"/><path d="M9 2h1v2H9zM10 5h2v1h-2zM9 9h3v3H9zM14 9h2v1h-2zM2 10h2v1H2zM5 9h1v2H5zM13 13h3v3h-3zM9 14h1v2H9zM10 17h2v1h-2zM17 13h2v1h-2zM18 17h1v2h-1zM14 18h2v1h-2z"/></g></svg>'),
       now_ms: now, expires_ms: now + 292e3 },
     status: { state: "ready", pairing_expires_ms: now + 292e3 },
     devices: [{ id: "p8", label: "Pixel 8", connected: false, paired_at_ms: daysAgo(15, 10, 0) }],
-    get_settings: { autostart: true, server: "wss://sinal.livecmd.dev", scrollback: 10000 },
+    get_settings: { autostart: true, server: "wss://sinal.livecmd.dev", scrollback: 10000, version: "0.1.16" },
     get_profiles: { profiles: null, shells: [{ label: "PowerShell", command: "pwsh.exe" }, { label: "WSL", command: "wsl.exe" }] },
   };
   const PROBE = { "prod-01.exemplo.com": { ok: true, ms: 42 }, "10.0.0.12": { ok: true, ms: 18 }, "192.168.1.40": { ok: false, code: "OFFLINE" },

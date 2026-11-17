@@ -12,7 +12,7 @@ UI = HERE.parents[1] / "ui"
 SCREENS = {  # tela do mockup -> (página do app, hash do stub)
     "Terminal": ("terminal.html", "#terminal"), "Agentes": ("terminal.html", "#agentes"), "SSH": ("terminal.html", "#ssh"),
     "Historico": ("terminal.html", "#historico"), "Estados": ("terminal.html", "#estados"),
-    "Config": ("index.html", "#settings"), "Pareamento": ("index.html", "#pair"),
+    "Config": ("terminal.html", "#settings"), "Pareamento": ("terminal.html", "#pair"),
 }
 THRESH = 32
 
@@ -26,7 +26,7 @@ def prep_app(work: pathlib.Path) -> pathlib.Path:
     shutil.rmtree(app, ignore_errors=True)
     shutil.copytree(UI, app)
     shutil.copy(HERE / "stub.js", app / "stub.js")
-    for name in ("terminal.html", "index.html"):
+    for name in ("terminal.html",):
         p = app / name
         p.write_text(p.read_text(encoding="utf-8").replace("<head>", '<head>\n<script src="stub.js"></script>', 1), encoding="utf-8")
     return app

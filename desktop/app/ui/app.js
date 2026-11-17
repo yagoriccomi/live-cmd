@@ -3,32 +3,43 @@
 const { invoke } = window.__TAURI__.core;
 const $ = (id) => document.getElementById(id);
 const show = (ids, on) => ids.forEach((id) => { $(id).hidden = id !== on; });
-const TABS = ["pair", "devices", "settings"];
+// Visual V1 Aurora: Parear/Aparelhos e Configurações são painéis da janela do terminal.
+// Carregado como módulo: os nomes daqui não colidem com os de terminal.js.
+const PANES = { pair: "pair-pane", devices: "pair-pane", settings: "cfg-pane" };
+const OTHER = [["agents-panel", "ag-x"], ["ssh-panel", "ssh-x"], ["hist", "hist-x"]];
 
-// ---------- Abas ----------
-let current = null;
+// ---------- Painéis ----------
+let current = null; // "pair" | "settings" | null (painel fechado)
 function tab(name) {
-  if (!TABS.includes(name)) name = "pair";
-  for (const t of TABS) {
-    const sel = t === name;
-    $("tab-" + t).setAttribute("aria-selected", sel);
-    $("tab-" + t).tabIndex = sel ? 0 : -1;
-    $(t).hidden = !sel;
-  }
-  // Trocar de aba, fechar ou minimizar não invalida a OTK (P13): reabre a pendente; sem ela, gera outra.
-  if (name === "pair" && (current !== "pair" || !expires)) pair(true);
-  if (name === "devices") loadDevices();
-  if (name === "settings") loadSettings();
-  current = name;
+  const pane = PANES[name];
+  if (!pane) return;
+  for (const [p, x] of OTHER) if (!$(p).hidden) $(x).click();
+  for (const p of new Set(Object.values(PANES))) $(p).hidden = p !== pane;
+  const now = pane === "cfg-pane" ? "settings" : "pair";
+  // Trocar de painel, fechar ou minimizar não invalida a OTK (P13): reabre a pendente; sem ela, gera outra.
+  if (now === "pair" && (current !== "pair" || !expires)) pair(true);
+  if (now === "pair") loadDevices();
+  if (now === "settings") loadSettings();
+  current = now;
+  (name === "devices" ? $("dev-h") : $(now === "pair" ? "pp-x" : "cfg-x")).scrollIntoView({ block: "nearest" });
+  $(now === "pair" ? "pp-x" : "cfg-x").focus();
 }
-for (const t of TABS) $("tab-" + t).onclick = () => tab(t);
-document.querySelector("[role=tablist]").onkeydown = (e) => {
-  const d = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
-  if (!d) return;
-  const next = TABS[(TABS.indexOf(current) + d + 3) % 3];
-  tab(next);
-  $("tab-" + next).focus();
-};
+function closePane() {
+  if (!current) return;
+  $(PANES[current]).hidden = true;
+  current = null;
+  $("screen")?.focus();
+}
+window.liveTab = tab;
+$("pp-x").onclick = closePane;
+$("cfg-x").onclick = closePane;
+for (const p of ["pair-pane", "cfg-pane"]) $(p).addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("rm-scrim").hidden) { e.preventDefault(); closePane(); }
+});
+// Outro painel do trilho (Agentes, SSH, Histórico) abriu: este fecha.
+new MutationObserver((recs) => {
+  if (current && recs.some((r) => r.oldValue !== null && !r.target.hidden && OTHER.some(([p]) => r.target.id === p))) { $(PANES[current]).hidden = true; current = null; }
+}).observe($("layout"), { attributes: true, attributeFilter: ["hidden"], attributeOldValue: true, subtree: true });
 document.addEventListener("click", (e) => {
   const t = e.target.closest("[data-tab]");
   if (t) tab(t.dataset.tab);
@@ -61,6 +72,7 @@ async function pair(reuse = false) {
     $("pair-hint").hidden = false;
     $("copy").hidden = false;
     show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-show");
+    paneState("aguardando leitura do QR Code…", "ESPERANDO", "");
     clearInterval(ticker);
     ticker = setInterval(tick, 1000);
     tick();
@@ -80,12 +92,14 @@ function expire() {
   $("copy").hidden = true;
   $("copied").hidden = true;
   $("pair-expired").hidden = false;
+  $("pp-left").textContent = "–";
+  paneState("o QR Code expirou", "EXPIRADO", "warn");
 }
 
 async function tick() {
   const left = Math.max(0, expires - now());
   const s = Math.ceil(left / 1000);
-  $("left").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  $("left").textContent = $("pp-left").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   $("bar").style.width = (left / 3000) + "%";
   $("bar").parentElement.classList.toggle("warn", s <= 60);
   const st = await invoke("status");
@@ -95,10 +109,19 @@ async function tick() {
   if (fresh) paired(fresh); else expire();
 }
 
+function paneState(sub, badge, tone) {
+  $("pp-state").textContent = sub;
+  $("pp-badge").textContent = badge;
+  $("pp-badge").className = "badge" + (tone ? " " + tone : "");
+}
+
 function paired(dev) {
   clearInterval(ticker);
   expires = null;
   $("done-t").textContent = `${dev.label} pareado`;
+  $("pp-left").textContent = "–";
+  paneState(`${dev.label} pareado`, "PAREADO", "");
+  loadDevices();
   show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-done");
 }
 
@@ -137,6 +160,7 @@ async function loadDevices() {
       return li;
     }));
     show(["dev-busy", "dev-list", "dev-empty", "dev-error"], list.length ? "dev-list" : "dev-empty");
+    $("pp-devs").textContent = list.length;
   } catch {
     show(["dev-busy", "dev-list", "dev-empty", "dev-error"], "dev-error");
   }
@@ -169,10 +193,28 @@ $("rm-ok").onclick = async () => {
   $("toast").textContent = `${d.label} foi removido.`;
   $("toast-wrap").hidden = false;
   setTimeout(() => { $("toast-wrap").hidden = true; }, 4000);
-  (document.querySelector("#dev-ul button") || $("tab-devices")).focus();
+  (document.querySelector("#dev-ul button") || $("pp-x")).focus();
 };
 
 // ---------- Configurações ----------
+const THEME_NAME = { dark: "Tema Aurora", light: "Tema Claro", contrast: "Alto contraste" };
+function themePicked() {
+  const v = document.documentElement.dataset.theme || "dark";
+  for (const i of document.querySelectorAll("[name=theme-pick]")) i.checked = i.value === v;
+  $("cfg-theme-t").textContent = THEME_NAME[v] || THEME_NAME.dark;
+}
+for (const i of document.querySelectorAll("[name=theme-pick]")) i.onchange = () => {
+  $("theme").value = i.value;
+  $("theme").dispatchEvent(new Event("change"));
+  themePicked();
+};
+$("cfg-pane").addEventListener("click", (e) => {
+  const go = e.target.closest("[data-go]");
+  if (!go) return;
+  const f = $(go.dataset.go);
+  f.scrollIntoView({ block: "start", behavior: "smooth" });
+  f.querySelector("input, select, button")?.focus({ preventScroll: true });
+});
 // Mesma regra do Rust (settings::valid_server); o Rust valida de novo ao salvar.
 function validServer(v) {
   const m = /^(wss?):\/\/([A-Za-z0-9.-]+)(:\d{1,5})?([/?#][^\s]*)?$/.exec(v);
@@ -183,10 +225,14 @@ function validServer(v) {
 async function loadSettings() {
   const s = await invoke("get_settings");
   $("autostart").checked = s.autostart;
+  $("cfg-auto").textContent = s.autostart ? "Sim" : "Não";
   $("srv").value = s.server;
   $("sb").value = s.scrollback;
   srvCheck();
-  $("ver").textContent = s.version;
+  $("ver").textContent = $("cfg-ver").textContent = s.version;
+  $("cfg-sb").textContent = Number(s.scrollback).toLocaleString("pt-BR");
+  themePicked();
+  checkUpdate(true);
   $("prof-err").hidden = s.profiles_error_line == null;
   if (s.profiles_error_line != null) $("prof-err").firstElementChild.textContent = `O arquivo profiles.json tem um erro na linha ${s.profiles_error_line}. Os perfis padrão estão em uso.`;
   $("prof-default").hidden = !!s.profiles;
@@ -236,13 +282,13 @@ $("sb-save").onclick = async () => {
   const ok = Number.isInteger(n) && n >= 100 && n <= 100000;
   $("sb").setAttribute("aria-invalid", !ok); $("sb-e").hidden = ok; $("sb-msg").textContent = "";
   if (!ok) return $("sb").focus();
-  try { await invoke("set_scrollback", { lines: n }); $("sb-msg").textContent = "Salvo. Vale para as próximas abas."; }
+  try { await invoke("set_scrollback", { lines: n }); $("sb-msg").textContent = "Salvo. Vale para as próximas abas."; $("cfg-sb").textContent = n.toLocaleString("pt-BR"); }
   catch { $("sb-e").hidden = false; }
 };
 
 $("autostart").onchange = async (e) => {
   $("autostart-err").hidden = true;
-  try { await invoke("set_autostart", { on: e.target.checked }); }
+  try { await invoke("set_autostart", { on: e.target.checked }); $("cfg-auto").textContent = e.target.checked ? "Sim" : "Não"; }
   catch { e.target.checked = !e.target.checked; $("autostart-err").hidden = false; }
 };
 
@@ -274,25 +320,24 @@ async function checkUpdate(silent) {
   if (!silent) $("upd-msg").textContent = "Verificando…";
   try {
     const v = await invoke("check_update");
-    $("upd-go").hidden = !v;
+    $("cfg-upd-go").hidden = !v;
     if (v) $("upd-msg").textContent = `Versão ${v} disponível.`;
     else if (!silent) $("upd-msg").textContent = "Você já está na versão mais recente.";
   } catch { if (!silent) $("upd-msg").textContent = "Não foi possível verificar atualizações. Tente de novo."; }
 }
-$("upd").onclick = () => checkUpdate(false);
-$("upd-go").onclick = async () => {
-  $("upd-go").disabled = true;
+$("cfg-upd").onclick = () => checkUpdate(false);
+$("cfg-upd-go").onclick = async () => {
+  $("cfg-upd-go").disabled = true;
   $("upd-msg").textContent = "Baixando e instalando…";
   try { await invoke("install_update"); }
-  catch { $("upd-go").disabled = false; $("upd-msg").textContent = "Não foi possível atualizar. Tente de novo."; }
+  catch { $("cfg-upd-go").disabled = false; $("upd-msg").textContent = "Não foi possível atualizar. Tente de novo."; }
 };
-checkUpdate(true);
 
 // Bandeja pede uma aba com a janela já aberta.
 window.__TAURI__.event.listen("tab", (e) => tab(e.payload));
 // Minimizada: o QR sai da tela (P13); ao restaurar, volta o da OTK pendente.
 window.__TAURI__.event.listen("visible", (e) => {
   if (!e.payload) { clearInterval(ticker); expires = null; $("qr").removeAttribute("src"); show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-busy"); }
-  else if (current === "pair" && !expires) pair(true);
+  else if (current === "pair" && !$("pair-pane").hidden && !expires) pair(true);
 });
 tab(location.hash.slice(1));
