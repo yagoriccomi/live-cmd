@@ -3,6 +3,8 @@ import { Linking, SafeAreaView, StyleSheet, View } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { getRandomBytes } from 'expo-crypto';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useFonts } from 'expo-font';
+import { StatusBar } from 'expo-status-bar';
 import { b64d, b64e, parseQr } from './src/auth.ts';
 import { Conn, type Pin } from './src/conn.ts';
 import { Pill } from './src/screens/common.tsx';
@@ -12,6 +14,8 @@ import { AgentsScreen } from './src/screens/AgentsScreen.tsx';
 import { SshScreen } from './src/screens/SshScreen.tsx';
 import { HistoryScreen } from './src/screens/HistoryScreen.tsx';
 import { C, errText } from './src/screens/theme.ts';
+import { Shell } from './src/screens/aurora.tsx';
+import { FONTS } from './src/screens/fonts.ts';
 
 // Mesmo servidor padrão do desktop (desktop/app/src/settings.rs DEFAULT_SERVER).
 const ALLOW = ['live-cmd-signaling.yago-riccomi-s.workers.dev'];
@@ -40,6 +44,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('sessoes');
   const [scan, setScan] = useState(false);
   const [, askCam] = useCameraPermissions();
+  // Sora/Fira Code: enquanto carregam, o texto usa a fonte do sistema (não bloqueia a abertura).
+  useFonts(FONTS);
 
   useEffect(() => { SecureStore.getItemAsync('pin').then(p => p && setPin(JSON.parse(p))); }, []);
   // QR lido pela câmera do sistema abre o app via scheme remoteterm://
@@ -91,7 +97,8 @@ export default function App() {
   );
 
   return (
-    <SafeAreaView style={st.root}>
+    <Shell bar={<TabBar tab={tab} onChange={setTab} />}>
+      <StatusBar style="light" />
       {tab === 'sessoes' && (
         <SessionsScreen status={status} on={!!conn.current} pin={pin} out={out} link={link} setLink={setLink}
           onPair={() => connect(true)} onScan={async () => { if ((await askCam()).granted) setScan(true); }}
@@ -100,8 +107,7 @@ export default function App() {
       {tab === 'agentes' && <AgentsScreen conn={live} onOpen={open} />}
       {tab === 'ssh' && <SshScreen conn={live} onOpen={open} />}
       {tab === 'historico' && <HistoryScreen conn={live} onRan={() => setTab('sessoes')} />}
-      <TabBar tab={tab} onChange={setTab} />
-    </SafeAreaView>
+    </Shell>
   );
 }
 

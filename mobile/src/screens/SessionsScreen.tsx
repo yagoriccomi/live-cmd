@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Pin } from '../conn.ts';
-import { Pill } from './common.tsx';
-import { C, TAB_SPACE } from './theme.ts';
+import { Chip, Hero, HeroBtn, ListPanel, Panel, Section, TopBar, screen } from './aurora.tsx';
+import { C, F, TAB_SPACE } from './theme.ts';
 
 export interface SessionsProps {
   status: string; on: boolean; pin: Pin | null; out: string;
@@ -17,46 +17,49 @@ export function SessionsScreen(p: SessionsProps) {
   const scroll = useRef<any>(null);
   const submit = () => { p.send(line + '\r'); setLine(''); };
   const ok = p.status === 'conectado';
+  const badge = ok ? { text: 'AO VIVO', color: C.ok } : p.on ? { text: 'CONECTANDO', color: C.warn } : { text: 'OFFLINE', color: C.err };
   return (
-    <View style={[st.root, { paddingBottom: TAB_SPACE }]}>
-      <View style={st.top}>
-        <View style={[st.dot, { backgroundColor: ok ? C.ok : p.on ? C.warn : C.err }]} />
-        <Text style={st.status} accessibilityLiveRegion="polite" accessibilityLabel={`Estado: ${p.status}`}>{p.status}</Text>
-        {p.on && <Pill title="Desconectar" onPress={p.onDisconnect} />}
-      </View>
+    <View style={[screen, { flex: 1, paddingBottom: TAB_SPACE }]}>
+      <TopBar title={p.on ? 'Sessões' : 'Parear PC'} />
+      <Hero icon={p.on ? '›_' : '▣'} title={ok ? 'PC conectado' : p.on ? 'Conectando ao PC…' : 'Conectar ao PC'}
+        sub={p.status} subLive subLabel={`Estado: ${p.status}`} badge={badge}>
+        {p.on && <HeroBtn title="Desconectar" primary onPress={p.onDisconnect} />}
+        {!p.on && <HeroBtn title="Ler QR code" primary onPress={p.onScan} />}
+        {!p.on && p.pin && <HeroBtn title="Conectar ao PC" onPress={p.onReconnect} label="Conectar ao PC pareado" />}
+      </Hero>
       {!p.on && (
-        <View style={{ gap: 6 }}>
-          <TextInput style={st.input} value={p.link} onChangeText={p.setLink} placeholder="Cole o link remoteterm://pair?..." placeholderTextColor={C.muted}
-            autoCapitalize="none" autoCorrect={false} accessibilityLabel="Link de pareamento" />
-          <View style={st.row}>
-            <Pill title="Parear" primary onPress={p.onPair} disabled={!p.link} label="Parear com o link colado" />
-            <Pill title="Ler QR code" onPress={p.onScan} />
-            {p.pin && <Pill title="Conectar ao PC" onPress={p.onReconnect} label="Conectar ao PC pareado" />}
-          </View>
-        </View>
+        <>
+          <Section text="Link de pareamento" />
+          <ListPanel>
+            <View style={st.linkRow}>
+              <TextInput style={st.link} value={p.link} onChangeText={p.setLink} placeholder="Cole o link remoteterm://pair?..." placeholderTextColor={C.muted}
+                autoCapitalize="none" autoCorrect={false} accessibilityLabel="Link de pareamento" />
+              <HeroBtn title="Parear" primary onPress={p.onPair} disabled={!p.link} label="Parear com o link colado" />
+            </View>
+          </ListPanel>
+        </>
       )}
-      <ScrollView ref={scroll} style={st.term} onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })}
-        accessibilityLabel="Saída do terminal">
-        <Text style={st.mono} selectable>{p.out}</Text>
-      </ScrollView>
-      <View style={[st.row, { flexWrap: 'nowrap' }]}>
-        <TextInput style={[st.input, { flex: 1 }]} value={line} onChangeText={setLine} autoCapitalize="none" autoCorrect={false}
-          placeholder="comando" placeholderTextColor={C.muted} onSubmitEditing={submit} blurOnSubmit={false} editable={p.on}
-          accessibilityLabel="Comando para enviar ao terminal" />
-        <Pill title="Enviar" primary onPress={submit} disabled={!p.on} label="Enviar comando" />
-        <Pill title="Ctrl+C" onPress={() => p.send('\x03')} disabled={!p.on} label="Enviar Ctrl+C" />
-      </View>
+      <Panel style={{ flex: 1 }}>
+        <ScrollView ref={scroll} style={{ flex: 1 }} onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })}
+          accessibilityLabel="Saída do terminal">
+          <Text style={st.mono} selectable>{p.out}</Text>
+        </ScrollView>
+        <View style={st.keys}>
+          <TextInput style={st.cmd} value={line} onChangeText={setLine} autoCapitalize="none" autoCorrect={false}
+            placeholder="comando" placeholderTextColor={C.dim} onSubmitEditing={submit} blurOnSubmit={false} editable={p.on}
+            accessibilityLabel="Comando para enviar ao terminal" />
+          <Chip title="Enviar" onPress={submit} disabled={!p.on} label="Enviar comando" style={{ flex: 1 }} />
+          <Chip title="Ctrl+C" onPress={() => p.send('\x03')} disabled={!p.on} label="Enviar Ctrl+C" style={{ flex: 1 }} />
+        </View>
+      </Panel>
     </View>
   );
 }
 
 const st = StyleSheet.create({
-  root: { flex: 1, padding: 8, paddingTop: 32 },
-  top: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  status: { color: C.muted, flex: 1 },
-  input: { borderWidth: 1, borderColor: C.border, borderRadius: 14, backgroundColor: C.glass, color: C.text, padding: 6, marginVertical: 4, minHeight: 40 },
-  term: { flex: 1, backgroundColor: C.term, borderRadius: 14, marginVertical: 6 },
-  mono: { fontFamily: 'monospace', color: '#e6dcff', fontSize: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
+  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4, paddingLeft: 12, paddingRight: 6, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.05)' },
+  link: { flex: 1, minHeight: 44, color: C.text, fontFamily: F.mono, fontSize: 11, padding: 0 },
+  mono: { fontFamily: F.mono, color: '#e6dcff', fontSize: 11, lineHeight: 18 },
+  keys: { flexDirection: 'row', gap: 5, paddingTop: 8 },
+  cmd: { flex: 3, minHeight: 44, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.12)', color: C.text, fontFamily: F.mono, fontSize: 11, paddingHorizontal: 10, paddingVertical: 0 },
 });

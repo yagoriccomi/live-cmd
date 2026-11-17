@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Conn } from '../conn.ts';
-import { SSH_MSG, sshConnect, sshFormError, sshList, sshProbe, sshReconnect, sshRemove, sshSave, type SshServer, type SshSession, type SshStatus } from '../extras.ts';
-import { Dot, Field, Glass, Header, Notice, OFFLINE, OLD_HOST, Pill, confirm, s, useRemote } from './common.tsx';
-import { C, TAB_SPACE, errText } from './theme.ts';
+import { SSH_MSG, baseName, sshConnect, sshFormError, sshList, sshProbe, sshReconnect, sshRemove, sshSave, type SshServer, type SshSession, type SshStatus } from '../extras.ts';
+import { Field, Notice, OFFLINE, OLD_HOST, confirm, s, useRemote } from './common.tsx';
+import { Hero, HeroBtn, IconBtn, ListPanel, Panel, Row, Section, SettingRow, TopBar, screen } from './aurora.tsx';
+import { C, F, TAB_SPACE, errText } from './theme.ts';
 
 /** Mesmos estados da tela desktop (ssh.js `statusText`). */
 function status(st: SshStatus, ms: number | null): { color: string; text: string } {
@@ -60,75 +61,95 @@ export function SshScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (sessio
   }
 
   const shown = (data?.servers ?? []).filter(x => !q.trim() || `${x.label} ${x.user}@${x.host}:${x.port}`.toLowerCase().includes(q.trim().toLowerCase()));
+  // Servidor em destaque no cartão do topo e no painel de detalhes (mockup VM-MSSH): o tocado na lista, ou o primeiro.
+  const [selId, setSelId] = useState<string | null>(null);
+  const sel = shown.find(x => x.serverId === selId) ?? shown[0];
+  const selSt = sel ? status(sel.status, sel.latencyMs) : null;
+  const add = () => { setMsg(''); setForm(EMPTY); };
+  const edit = (x: SshServer) => { setMsg(''); setForm({ serverId: x.serverId, label: x.label, user: x.user, host: x.host, port: String(x.port), key: x.key ?? '' }); };
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 40, paddingBottom: TAB_SPACE }} keyboardShouldPersistTaps="handled">
-      <Header title="SSH" subtitle="Servidores salvos no PC" onReload={ok ? reload : undefined} busy={busy} />
+    <ScrollView contentContainerStyle={[screen, { flexGrow: 1, paddingBottom: TAB_SPACE }]} keyboardShouldPersistTaps="handled">
+      <TopBar title="Servidores" label="Adicionar servidor" onPress={add} disabled={!ok || !!form} />
+      {!form && (sel && selSt
+        ? (
+          <Hero icon="⇄" title={sel.label || sel.host} sub={`${sel.user}@${sel.host}${sel.port !== 22 ? `:${sel.port}` : ''}`}
+            badge={{ text: selSt.text.toUpperCase(), color: selSt.color === C.muted ? 'rgba(255,255,255,0.7)' : selSt.color }}>
+            <HeroBtn title={acting === sel.serverId ? 'Abrindo…' : 'Conectar'} primary disabled={!!acting} onPress={() => connect(sel)} label={`Conectar a ${sel.label || sel.host}`} />
+            <HeroBtn title="Editar" disabled={!!acting} onPress={() => edit(sel)} label={`Editar ${sel.label}`} />
+          </Hero>
+        )
+        : (
+          <Hero icon="⇄" title="Servidores SSH do PC" sub={!conn ? 'sem conexão com o PC' : !ok ? 'atualize o live-cmd no PC' : busy ? 'carregando…' : 'nenhum servidor'}>
+            {ok && <HeroBtn title="+ Adicionar servidor" primary onPress={add} />}
+            {ok && <HeroBtn title={busy ? 'Atualizando…' : 'Atualizar'} disabled={busy} onPress={reload} label="Atualizar Servidores" />}
+          </Hero>
+        ))}
       {!conn && <Notice text={OFFLINE} />}
       {conn && !ok && <Notice text={OLD_HOST} color={C.warn} />}
-      {ok && !form && (
-        <>
-          <TextInput value={q} onChangeText={setQ} placeholder="Buscar por nome, usuário ou host" placeholderTextColor={C.muted}
-            autoCapitalize="none" autoCorrect={false} accessibilityLabel="Buscar servidor" style={[s.input, { marginBottom: 10 }]} />
-          <View style={[s.wrap, { justifyContent: 'flex-end' }]}><Pill title="+ Adicionar servidor" primary onPress={() => { setMsg(''); setForm(EMPTY); }} /></View>
-        </>
-      )}
       {ok && form && (
-        <Glass>
-          <Text style={s.name} accessibilityRole="header">{form.serverId ? 'Editar servidor' : 'Adicionar servidor'}</Text>
+        <Panel title={form.serverId ? 'Editar servidor' : 'Adicionar servidor'}>
           <Field label="Nome" value={form.label} maxLength={40} onChangeText={label => setForm({ ...form, label })} placeholder="Produção" autoCapitalize="sentences" />
           <Field label="Usuário" value={form.user} maxLength={64} onChangeText={user => setForm({ ...form, user })} placeholder="deploy" />
           <Field label="Host" value={form.host} maxLength={253} onChangeText={host => setForm({ ...form, host })} placeholder="srv.exemplo.com" />
           <Field label="Porta" value={form.port} keyboardType="number-pad" maxLength={5} onChangeText={port => setForm({ ...form, port })} />
           <Field label="Chave privada no PC (opcional)" value={form.key} onChangeText={key => setForm({ ...form, key })} placeholder="C:\Users\voce\.ssh\id_ed25519" />
           <Text style={s.meta}>A senha é pedida no terminal e nunca é salva.</Text>
-          <View style={[s.wrap, { justifyContent: 'flex-end', marginTop: 10 }]}>
-            <Pill title="Cancelar" onPress={() => { setForm(null); setMsg(''); }} />
-            <Pill title={acting === 'form' ? 'Salvando…' : 'Salvar'} primary disabled={!!acting} onPress={save} />
+          <View style={[s.wrap, { justifyContent: 'flex-end', marginTop: 10, marginBottom: 0 }]}>
+            <HeroBtn title="Cancelar" onPress={() => { setForm(null); setMsg(''); }} />
+            <HeroBtn title={acting === 'form' ? 'Salvando…' : 'Salvar'} primary disabled={!!acting} onPress={save} />
           </View>
-        </Glass>
+        </Panel>
       )}
       {!!err && <Notice text={err} color={C.err} />}
       {!!msg && <Notice text={msg} color={C.err} />}
+      {ok && !form && !!data?.servers.length && (
+        <>
+          <Section text="Servidores" />
+          <ListPanel>
+            <View style={st.search}>
+              <TextInput value={q} onChangeText={setQ} placeholder="Buscar por nome, usuário ou host" placeholderTextColor={C.muted}
+                autoCapitalize="none" autoCorrect={false} accessibilityLabel="Buscar servidor" style={st.searchInput} />
+              <IconBtn glyph="↻" label="Atualizar Servidores" disabled={busy} onPress={reload} />
+            </View>
+            {shown.map(x => {
+              const l = status(x.status, x.latencyMs);
+              return (
+                <Row key={x.serverId} icon="⇄" title={x.label || x.host} sub={`${x.user}@${x.host}${x.port !== 22 ? `:${x.port}` : ''}${x.key ? ' · chave' : ''}`}
+                  status={{ color: l.color, text: l.text }} selected={x.serverId === sel?.serverId} onPress={() => setSelId(x.serverId)}
+                  label={`${x.label || x.host}, ${x.user}@${x.host}:${x.port}, ${l.text}. Mostrar detalhes`} />
+              );
+            })}
+          </ListPanel>
+        </>
+      )}
       {ok && data && !form && shown.length === 0 && <Notice text={data.servers.length ? 'Nenhum servidor encontrado para essa busca.' : 'Nenhum servidor salvo. Toque em “+ Adicionar servidor”.'} />}
-      {ok && !form && shown.map(x => {
-        const l = status(x.status, x.latencyMs);
-        return (
-          <Glass key={x.serverId}>
-            <View style={s.row}>
-              <Dot color={l.color} label={l.text} />
-              <View style={{ flex: 1 }}>
-                <Text style={s.name} numberOfLines={1}>{x.label || x.host}</Text>
-                <Text style={s.meta} numberOfLines={1}>{x.user}@{x.host}:{x.port}{x.key ? ' · chave' : ''} · {l.text}</Text>
-              </View>
-            </View>
-            <View style={[s.wrap, { justifyContent: 'flex-end', marginTop: 8, marginBottom: 0 }]}>
-              <Pill title="Remover" disabled={!!acting} onPress={() => remove(x)} label={`Remover ${x.label}`} />
-              <Pill title="Editar" disabled={!!acting} onPress={() => { setMsg(''); setForm({ serverId: x.serverId, label: x.label, user: x.user, host: x.host, port: String(x.port), key: x.key ?? '' }); }} label={`Editar ${x.label}`} />
-              <Pill title="Testar" disabled={!!acting} onPress={() => probe(x)} label={`Testar alcance de ${x.label}`} />
-              <Pill title={acting === x.serverId ? 'Abrindo…' : 'Conectar'} primary disabled={!!acting} onPress={() => connect(x)} label={`Conectar a ${x.label || x.host}`} />
-            </View>
-          </Glass>
-        );
-      })}
-      {ok && !form && !!data?.sessions.length && (
-        <View>
-          <Text style={s.group} accessibilityRole="header">Sessões SSH no PC</Text>
-          {data.sessions.map(x => (
-            <Glass key={x.sessionId}>
-              <View style={s.row}>
-                <Dot color={x.connected ? C.ok : C.warn} label={x.connected ? 'conectada' : 'desconectada'} />
-                <View style={{ flex: 1 }}>
-                  <Text style={s.name} numberOfLines={1}>{x.label || 'SSH'}</Text>
-                  <Text style={s.meta}>{x.connected ? 'conectada' : 'desconectada'}</Text>
-                </View>
-                {x.connected
-                  ? <Pill title="Abrir" disabled={!!acting} onPress={() => act(x.sessionId, () => onOpen(x.sessionId))} label={`Abrir ${x.label}`} />
-                  : <Pill title={acting === x.sessionId ? 'Abrindo…' : 'Reconectar'} primary disabled={!!acting} onPress={() => reconnect(x)} label={`Reconectar ${x.label}`} />}
-              </View>
-            </Glass>
-          ))}
+      {ok && !form && sel && selSt && (
+        <Panel title={sel.label || sel.host} style={{ flexGrow: 1 }}><View>
+          <SettingRow title="Testar alcance" value={selSt.text} onPress={() => probe(sel)} disabled={!!acting} label={`Testar alcance de ${sel.label}`} />
+          <SettingRow title="Porta" value={String(sel.port)} />
+          <SettingRow title="Chave" value={sel.key ? baseName(sel.key) : 'senha no terminal'} />
+          <SettingRow title="Excluir servidor" danger onPress={() => remove(sel)} disabled={!!acting} label={`Remover ${sel.label}`} last />
         </View>
+        </Panel>
+      )}
+      {ok && !form && !!data?.sessions.length && (
+        <>
+          <Section text="Sessões SSH no PC" />
+          <ListPanel>
+            {data.sessions.map(x => (
+              <Row key={x.sessionId} icon="›_" title={x.label || 'SSH'} sub={x.connected ? 'conectada' : 'desconectada'}
+                status={x.connected ? { color: C.ok, text: 'ativa' } : { color: C.warn, text: acting === x.sessionId ? 'abrindo…' : 'reconectar' }}
+                disabled={!!acting} onPress={() => x.connected ? act(x.sessionId, () => onOpen(x.sessionId)) : reconnect(x)}
+                label={`${x.connected ? 'Abrir' : 'Reconectar'} ${x.label}`} />
+            ))}
+          </ListPanel>
+        </>
       )}
     </ScrollView>
   );
 }
+
+const st = StyleSheet.create({
+  search: { flexDirection: 'row', alignItems: 'center', paddingLeft: 12, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.05)' },
+  searchInput: { flex: 1, minHeight: 44, color: C.text, fontFamily: F.regular, fontSize: 12, padding: 0 },
+});
