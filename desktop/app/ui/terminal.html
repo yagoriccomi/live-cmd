@@ -7,6 +7,7 @@
 <script src="links.js" defer></script>
 <script src="terminal.js" defer></script>
 <script src="extras.js" defer></script>
+<script src="ssh.js" defer></script>
 </head>
 <body class="term-body">
 <div class="term-layout" id="layout">
@@ -17,6 +18,7 @@
     <h3 id="h-remote">Outros PCs</h3>
     <ul id="remote-ul" aria-labelledby="h-remote"></ul>
     <button type="button" class="add" id="remote-add">+ Adicionar PC</button>
+    <button type="button" class="add" id="ssh-open" aria-controls="ssh-panel" aria-expanded="false">Servidores SSH</button>
   </nav>
   <main class="term-main">
     <div class="term-bar">
@@ -32,6 +34,17 @@
     </div>
     <div class="status-banner" role="status" id="upd-banner" hidden><span id="upd-t"></span><span class="inline"><button type="button" id="upd-go">Atualizar agora</button><button type="button" id="upd-x" aria-label="Dispensar">×</button></span></div>
     <div class="status-banner" role="status" id="banner" hidden><span id="banner-t"></span><span class="inline" id="banner-a"></span></div>
+    <section class="ssh-panel" id="ssh-panel" aria-labelledby="ssh-h" hidden>
+      <div class="ssh-head">
+        <h2 id="ssh-h">Servidores SSH</h2>
+        <input type="search" id="ssh-q" aria-label="Buscar servidor" placeholder="Buscar por nome, usuário ou host" autocomplete="off" spellcheck="false">
+        <button type="button" class="btn-primary" id="ssh-add">+ Adicionar servidor</button>
+        <button type="button" id="ssh-x" aria-label="Voltar ao terminal" title="Voltar ao terminal">×</button>
+      </div>
+      <p class="muted small">Conectar abre uma aba com o ssh.exe do Windows. A senha é pedida no terminal e nunca é salva.</p>
+      <ul class="ssh-list" id="ssh-list" aria-label="Servidores salvos"></ul>
+      <p class="muted" id="ssh-empty" hidden></p>
+    </section>
     <div class="term-area">
       <div class="terminal" id="screen" tabindex="0" aria-label="Terminal" aria-roledescription="terminal"><span class="measure" id="measure" aria-hidden="true">WWWWWWWWWW</span></div>
       <div class="find-bar" id="find" role="search" hidden>
@@ -76,6 +89,26 @@
     <label>Comandos extras <input id="ai-args" placeholder="--model opus"></label>
     <label><input type="checkbox" id="ai-def"> Salvar como padrão</label>
     <div class="actions"><button type="button" id="ai-cancel">Cancelar</button><button type="button" class="btn-primary" id="ai-ok">Iniciar</button></div>
+  </dialog>
+</div>
+<div class="dialog-scrim" id="ssh-scrim" hidden>
+  <dialog open aria-modal="true" aria-labelledby="ssh-t" id="ssh-dlg">
+    <h3 id="ssh-t">Adicionar servidor</h3>
+    <label for="ssh-name">Nome</label>
+    <input type="text" id="ssh-name" maxlength="40" autocomplete="off" placeholder="Produção">
+    <label for="ssh-user" class="gap">Usuário</label>
+    <input type="text" class="mono" id="ssh-user" maxlength="64" autocomplete="off" spellcheck="false" placeholder="deploy">
+    <div class="ssh-row gap">
+      <div><label for="ssh-host">Host</label>
+      <input type="text" class="mono" id="ssh-host" maxlength="253" autocomplete="off" spellcheck="false" placeholder="srv.exemplo.com"></div>
+      <div class="ssh-port"><label for="ssh-port">Porta</label>
+      <input type="number" id="ssh-port" min="1" max="65535" value="22"></div>
+    </div>
+    <label for="ssh-key" class="gap">Chave privada (opcional)</label>
+    <div class="inline"><input type="text" class="mono" id="ssh-key" autocomplete="off" spellcheck="false" placeholder="C:\Users\voce\.ssh\id_ed25519">
+      <button type="button" id="ssh-key-pick">Procurar…</button></div>
+    <div class="alert alert-danger" role="alert" id="ssh-err" hidden><p></p></div>
+    <div class="actions"><button type="button" id="ssh-cancel">Cancelar</button><button type="button" class="btn-primary" id="ssh-ok">Salvar</button></div>
   </dialog>
 </div>
 <div class="dialog-scrim" id="ask-scrim" hidden>
