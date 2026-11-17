@@ -74,6 +74,8 @@ impl Store {
     #[cfg(test)]
     pub fn entries(&self) -> &[Entry] { &self.entries }
 
+    pub fn get(&self, id: u64) -> Option<&Entry> { self.entries.iter().rev().find(|e| e.id == id) }
+
     fn append(&mut self, line: &str) -> std::io::Result<()> {
         if let Some(d) = self.path.parent() { std::fs::create_dir_all(d)?; }
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;

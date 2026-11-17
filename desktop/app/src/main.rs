@@ -6,6 +6,7 @@ mod agents;
 mod clip;
 mod hist;
 mod host;
+mod mobile;
 mod settings;
 mod ssh;
 mod term;
@@ -346,6 +347,8 @@ fn main() {
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
+            // Telas do celular (Agentes, SSH, Histórico) leem os mesmos arquivos das telas desktop.
+            live_cmd_echo::extras::set_provider(std::sync::Arc::new(mobile::AppProvider::new(dir.clone())));
             let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: host::room_id(&dir)? })?;
             a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });
             a.manage(term::Term::default());
