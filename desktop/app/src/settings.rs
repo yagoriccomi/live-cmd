@@ -153,6 +153,69 @@ pub mod autostart {
     }
 }
 
+/// Servidor da tela "Servidores SSH" em `ssh.json`. Nunca guarda senha: só o caminho da chave.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SshServer {
+    #[serde(default)] pub id: String,
+    pub name: String,
+    pub user: String,
+    pub host: String,
+    pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub key: Option<String>,
+}
+
+const SSH_FILE: &str = "ssh.json";
+
+impl SshServer {
+    pub fn target(&self) -> live_cmd_echo::ssh::Ssh {
+        live_cmd_echo::ssh::Ssh { user: self.user.clone(), host: self.host.clone(), port: self.port, key: self.key.clone() }
+    }
+}
+
+/// Lista salva; sem arquivo = vazia.
+pub fn ssh_servers(dir: &Path) -> Result<Vec<SshServer>, String> {
+    match std::fs::read(dir.join(SSH_FILE)) {
+        Ok(b) => serde_json::from_slice(&b).map_err(|_| "IO_ERROR".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+        Err(_) => Err("IO_ERROR".into()),
+    }
+}
+
+fn store_ssh(dir: &Path, list: &[SshServer]) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|_| "IO_ERROR")?;
+    let tmp = dir.join("ssh.json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(list).unwrap()).map_err(|_| "IO_ERROR")?;
+    std::fs::rename(&tmp, dir.join(SSH_FILE)).map_err(|_| "IO_ERROR".into())
+}
+
+/// Valida (nome 1..=40, destino pelas regras do host), apara espaços e grava; `id` vazio = novo.
+pub fn save_ssh_server(dir: &Path, mut s: SshServer) -> Result<SshServer, String> {
+    s.name = s.name.trim().into();
+    s.user = s.user.trim().into();
+    s.host = s.host.trim().into();
+    s.key = s.key.map(|k| k.trim().to_owned()).filter(|k| !k.is_empty());
+    let n = s.name.chars().count();
+    if n == 0 || n > 40 || s.name.chars().any(char::is_control) { return Err("INVALID_SSH_NAME".into()); }
+    s.target().check()?;
+    let mut list = ssh_servers(dir)?;
+    if s.id.is_empty() {
+        if list.len() >= 200 { return Err("LIMIT_EXCEEDED".into()); }
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        s.id = (0..).map(|i| format!("{:x}", t + i)).find(|id| !list.iter().any(|x| &x.id == id)).unwrap();
+        list.push(s.clone());
+    } else {
+        *list.iter_mut().find(|x| x.id == s.id).ok_or("NOT_FOUND")? = s.clone();
+    }
+    store_ssh(dir, &list)?;
+    Ok(s)
+}
+
+pub fn remove_ssh_server(dir: &Path, id: &str) -> Result<(), String> {
+    let mut list = ssh_servers(dir)?;
+    list.retain(|x| x.id != id);
+    store_ssh(dir, &list)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +279,33 @@ mod tests {
         assert!(save_profiles(&d, vec![]).is_err());
         assert!(save_profiles(&d, vec![p("", &"é".repeat(40), "x")]).is_ok());
         assert!(detect_shells().iter().any(|s| s.1 == "cmd.exe"));
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn servidores_ssh() {
+        let d = tmp("ssh");
+        let srv = |id: &str, name: &str, user: &str, host: &str, port: u16, key: Option<&str>| SshServer {
+            id: id.into(), name: name.into(), user: user.into(), host: host.into(), port, key: key.map(Into::into) };
+        assert_eq!(ssh_servers(&d).unwrap(), vec![]);
+        let a = save_ssh_server(&d, srv("", " Produção ", " deploy ", "srv.exemplo.com", 22, Some(" "))).unwrap();
+        assert!(!a.id.is_empty());
+        assert_eq!((a.name.as_str(), a.user.as_str(), a.key.clone()), ("Produção", "deploy", None), "aparado; chave vazia vira None");
+        let b = save_ssh_server(&d, srv("", "NAS", "root", "10.0.0.5", 2222, Some(r"C:\k\id"))).unwrap();
+        assert_ne!(a.id, b.id);
+        save_ssh_server(&d, SshServer { port: 2200, ..a.clone() }).unwrap();
+        let l = ssh_servers(&d).unwrap();
+        assert_eq!((l.len(), l[0].port), (2, 2200), "editar troca no lugar");
+        let txt = std::fs::read_to_string(d.join("ssh.json")).unwrap();
+        assert!(!txt.contains("password") && !txt.contains("senha"));
+        for (bad, code) in [(srv("", "", "u", "h", 22, None), "INVALID_SSH_NAME"), (srv("", "x", "u;rm", "h", 22, None), "INVALID_SSH_USER"),
+            (srv("", "x", "u", "h h", 22, None), "INVALID_SSH_HOST"), (srv("", "x", "u", "h", 0, None), "INVALID_SSH_PORT"),
+            (srv("", "x", "u", "h", 22, Some("id_rsa")), "INVALID_SSH_KEY"), (srv("nao-existe", "x", "u", "h", 22, None), "NOT_FOUND")] {
+            assert_eq!(save_ssh_server(&d, bad).unwrap_err(), code);
+        }
+        assert!(serde_json::from_str::<SshServer>(r#"{"name":"x","user":"u","host":"h","port":22,"password":"p"}"#).map(|s| serde_json::to_string(&s).unwrap()).unwrap().find("password").is_none(), "senha nunca é regravada");
+        remove_ssh_server(&d, &a.id).unwrap();
+        assert_eq!(ssh_servers(&d).unwrap(), vec![b]);
         std::fs::remove_dir_all(&d).unwrap();
     }
 

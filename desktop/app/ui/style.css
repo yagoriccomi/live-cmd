@@ -196,6 +196,102 @@ select { font:inherit; padding:6px 10px; border-radius:var(--radius); border:1px
 .conn-q { margin-left:auto; }
 input.rename { font:inherit; padding:0 4px; width:12em; }
 .term-tabs [role=tab][draggable=true] { cursor:grab; }
+
+/* Tema Glass Aurora (mockup V1, canvas de design): padrão do app, só escuro.
+   Claro e alto contraste continuam disponíveis por data-theme. */
+:root, :root[data-theme=dark] {
+  --bg:#140b2e; --surface:rgb(255 255 255 / .08); --surface-2:rgb(255 255 255 / .14); --text:#f4efff; --text-muted:#c8b8ff;
+  --border:rgb(206 170 255 / .5); --accent:#8b5cf6; --on-accent:#fff;
+  --ok:#5ef2b0; --warn:#ffd35c; --danger:#ff5c8a;
+  --scrim:rgb(10 4 30 / .6); --shadow:0 0 28px rgb(168 85 247 / .35);
+  --radius:14px;
+  --term-bg:rgb(10 4 30 / .72); --term-fg:#e6dcff; --term-sel:#5b2fb0;
+  --glow:0 0 28px rgb(168 85 247 / .35), inset 0 1px 0 rgb(255 255 255 / .3);
+  --font:"Sora","Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+  --font-mono:"Fira Code","Cascadia Mono",Consolas,monospace;
+  color-scheme: dark;
+}
+:root:not([data-theme=light]):not([data-theme=contrast]) body {
+  background:
+    radial-gradient(600px 600px at 0% 0%, rgb(139 92 246 / .75), transparent 70%),
+    radial-gradient(520px 520px at 100% 100%, rgb(255 79 216 / .45), transparent 70%),
+    radial-gradient(480px 480px at 100% 0%, rgb(60 108 255 / .35), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+}
+:root:not([data-theme=light]):not([data-theme=contrast]) :is(.sidebar, .menu, dialog, .find-bar, .status-banner, .device-row, [role=tablist]) {
+  backdrop-filter: blur(30px); box-shadow: var(--glow);
+}
+:root:not([data-theme=light]):not([data-theme=contrast]) .btn-primary { background:linear-gradient(135deg, var(--accent), #ff4fd8); border-color:transparent; box-shadow:0 0 20px rgb(255 79 216 / .45); }
+:root:not([data-theme=light]):not([data-theme=contrast]) .sidebar li > button[aria-current=true],
+:root:not([data-theme=light]):not([data-theme=contrast]) .palette li[aria-selected=true] { background:#fff; color:#2a1460; border-radius:10px; }
+:root:not([data-theme=light]):not([data-theme=contrast]) [role=tab][aria-selected=true] { border-bottom-color:#ff4fd8; }
+:root:not([data-theme=light]):not([data-theme=contrast]) .term-empty { background:transparent; }
+:root:not([data-theme=light]):not([data-theme=contrast]) .toast { background:#fff; color:#2a1460; }
+
+/* Tela Agentes de IA (painel sobre a área do terminal, aberto pela barra lateral). */
+.sidebar .nav-tool { margin-top:var(--space); border-top:1px solid var(--border); border-radius:0; padding-top:calc(var(--space)*1.25); }
+.sidebar .nav-tool[aria-current=true] { font-weight:600; color:var(--accent); }
+.tool-panel { position:absolute; inset:0; overflow:auto; background:var(--bg); padding:calc(var(--space)*2.5); display:flex; flex-direction:column; gap:var(--space); }
+.tool-head { display:flex; align-items:center; gap:calc(var(--space)*1.5); flex-wrap:wrap; }
+.tool-head h2 { margin:0; margin-right:auto; }
+.tool-conn { display:flex; align-items:center; gap:6px; color:var(--text-muted); }
+.tool-conn select { font:inherit; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:4px 8px; }
+.ag-list { display:flex; flex-direction:column; gap:calc(var(--space)*2); }
+.ag-group { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:calc(var(--space)*1.5) calc(var(--space)*2); }
+.ag-group h3 { font-size:.95rem; margin:0; }
+.ag-path { margin:2px 0 var(--space); overflow-wrap:anywhere; user-select:text; }
+.ag-rows { list-style:none; margin:0; padding:0; }
+.ag-row { display:flex; align-items:center; gap:calc(var(--space)*1.5); padding:var(--space) 0; border-top:1px solid var(--border); }
+.ag-dot { width:1.2em; text-align:center; }
+.ag-info { display:flex; flex-direction:column; min-width:0; flex:1; }
+.ag-label { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ag-info .small { margin:0; }
+.ag-empty { display:grid; place-items:center; text-align:center; padding:calc(var(--space)*4); color:var(--text-muted); }
+:root:not([data-theme=light]):not([data-theme=contrast]) .tool-panel { background:var(--scrim); backdrop-filter:blur(30px); }
+:root:not([data-theme=light]):not([data-theme=contrast]) .ag-group { backdrop-filter:blur(30px); box-shadow:var(--glow); }
+/* Servidores SSH (painel no lugar da área do terminal). */
+.ssh-panel { flex:1; min-height:0; overflow:auto; padding:calc(var(--space)*2); }
+.ssh-head { display:flex; gap:var(--space); align-items:center; margin-bottom:var(--space); }
+.ssh-head h2 { margin:0 auto 0 0; }
+.ssh-head input[type=search] { font:inherit; width:260px; padding:6px 10px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--text); user-select:text; }
+.ssh-list { list-style:none; margin:var(--space) 0 0; padding:0; display:grid; gap:var(--space); }
+.ssh-list li { display:flex; align-items:center; gap:calc(var(--space)*1.5); padding:var(--space) calc(var(--space)*1.5); border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); box-shadow:var(--glow, none); }
+.ssh-list .ssh-info { min-width:0; flex:1; }
+.ssh-list .ssh-name { font-weight:600; }
+.ssh-list .ssh-dest { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ssh-list .ssh-st { min-width:7em; text-align:right; }
+.ssh-list .ssh-acts { display:flex; gap:4px; }
+.ssh-row { display:flex; gap:var(--space); }
+.ssh-row > div:first-child { flex:1; }
+.ssh-port { width:96px; }
+/* Tela Histórico (fatia C): painel sobre a área do terminal. Cores só pelas variáveis. */
+.sidebar > .nav-hist { margin-top:calc(var(--space)*2); border-top:1px solid var(--border); border-radius:0; padding-top:var(--space); }
+.sidebar > .nav-hist[aria-expanded=true] { background:var(--surface-2); font-weight:600; }
+.hist-panel { position:absolute; inset:0; z-index:1; display:flex; flex-direction:column; gap:var(--space); padding:calc(var(--space)*2); background:var(--bg); overflow:hidden; user-select:text; }
+.hist-head { display:flex; align-items:center; gap:var(--space); }
+.hist-head h2 { margin:0; flex:1; }
+.hist-filters { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space); }
+.hist-filters input[type=text] { flex:1 1 220px; width:auto; }
+.hist-chk { display:flex; align-items:center; gap:4px; margin:0; white-space:nowrap; }
+.hist-list { flex:1; overflow:auto; min-height:0; }
+.hist-day { font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin:calc(var(--space)*1.5) 0 4px; }
+.hist-ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; }
+.hist-item { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:6px 10px; display:flex; flex-direction:column; gap:2px; }
+.hist-item:hover { background:var(--surface-2); }
+.hist-row { display:flex; align-items:center; gap:var(--space); min-width:0; }
+.hist-cmd { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); }
+.hist-meta { flex:1; min-width:0; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.hist-kind, .hist-code { font-size:.7rem; border:1px solid var(--border); border-radius:999px; padding:0 8px; white-space:nowrap; }
+.hist-code.ok { color:var(--ok); border-color:currentColor; }
+.hist-code.err { color:var(--danger); border-color:currentColor; }
+.hist-run { padding:2px 10px; font-size:.8rem; flex:none; }
+.hist-item mark { background:var(--accent); color:var(--on-accent); border-radius:3px; padding:0 1px; }
+.hist-empty { text-align:center; margin-top:calc(var(--space)*4); }
+.hist-note { margin:0; }
+:root:not([data-theme=light]):not([data-theme=contrast]) .hist-panel { background:transparent; backdrop-filter:blur(30px); }
+:root:not([data-theme=light]):not([data-theme=contrast]) .hist-item { box-shadow:var(--glow); }
+:root:not([data-theme=light]):not([data-theme=contrast]) .hist-item mark { background:linear-gradient(135deg, var(--accent), #ff4fd8); }
 .ai-dirs { max-height:12em; overflow:auto; display:flex; flex-direction:column; border:1px solid var(--border, #444); margin:4px 0; }
 .ai-dirs button { text-align:left; background:none; border:0; padding:2px 6px; color:inherit; font:inherit; cursor:pointer; }
 .ai-dirs button:hover, .ai-dirs button:focus { background:rgba(127,127,127,.2); }

@@ -14,9 +14,9 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::host::{Client, ClientEvent, RemotePin, parse_pair_link};
-use crate::{App, clip, settings};
+use crate::{App, agents, clip, settings};
 
-const LOCAL: &str = "local";
+pub(crate) const LOCAL: &str = "local";
 const WIN: &str = "terminal";
 const FILE: &str = "remotes.json";
 
@@ -181,10 +181,12 @@ fn on_event(app: &AppHandle, conn: &str, e: ClientEvent) {
         ClientEvent::Control(c) if c["type"] == "command_completed" => {
             let k = key(conn, c["session_id"].as_str().unwrap_or_default());
             if let Some(v) = t.views.lock().unwrap().get_mut(&k) { v.osc = true; v.busy = false; }
+            crate::hist::record_done(app, &k, c["exit_code"].as_i64());
             let _ = app.emit_to(WIN, "term-cmd-done", json!({ "key": k, "code": c["exit_code"] }));
         }
         // F4: pasta atual (OSC 7 no host) para "Nova sessão aqui".
         ClientEvent::Control(c) if c["type"] == "cwd_changed" => {
+            crate::hist::record_cwd(app, &key(conn, c["session_id"].as_str().unwrap_or_default()), c["cwd"].as_str());
             let _ = app.emit_to(WIN, "term-cwd", json!({ "key": key(conn, c["session_id"].as_str().unwrap_or_default()), "cwd": c["cwd"] }));
         }
         ClientEvent::Control(_) => {}
@@ -230,7 +232,7 @@ pub fn shutdown(app: &AppHandle) {
     t.views.lock().unwrap().clear();
 }
 
-fn client(app: &AppHandle, conn: &str) -> Result<Arc<Client>, String> {
+pub(crate) fn client(app: &AppHandle, conn: &str) -> Result<Arc<Client>, String> {
     let t = app.state::<Term>();
     if conn == LOCAL {
         let mut l = t.local.lock().unwrap();
@@ -264,13 +266,21 @@ pub fn term_list(app: AppHandle, conn: String) -> Result<Value, String> {
 }
 
 #[tauri::command(async)]
-pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: String, cols: u16, rows: u16, cwd: Option<String>, agent: Option<String>, args: Option<String>) -> Result<String, String> {
+pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: String, cols: u16, rows: u16, cwd: Option<String>, agent: Option<String>, args: Option<String>, resume_id: Option<String>) -> Result<String, String> {
     let label: String = label.chars().take(64).collect();
     let mut req = json!({ "type": "session_create", "profile_id": profile_id, "label": label, "cols": cols, "rows": rows });
-    if let Some(d) = cwd { req["cwd"] = d.into(); }
-    if let Some(a) = agent { req["agent"] = a.into(); req["args"] = args.unwrap_or_default().into(); }
+    if let Some(d) = &cwd { req["cwd"] = d.clone().into(); }
+    if let Some(a) = &agent { req["agent"] = a.clone().into(); req["args"] = args.clone().unwrap_or_default().into(); }
+    if let Some(r) = resume_id { req["resume_id"] = r.into(); }
     let v = client(&app, &conn)?.request(req)?;
-    Ok(v["session_id"].as_str().unwrap_or_default().to_owned())
+    let sid = v["session_id"].as_str().unwrap_or_default().to_owned();
+    // Tela Agentes: lembra a sessão para retomar depois do close. Falha ao gravar não desfaz a sessão criada.
+    // Neste PC quem grava é o host (`mobile::AppProvider::agent_started`), para valer também para o celular;
+    // aqui só as sessões em PC remoto, que o host de lá não registra neste app.
+    if let (Some(agent), Ok(dir), false) = (agent, settings::data_dir(), conn == LOCAL) {
+        let _ = agents::record(&dir, agents::Agent { conn, session_id: sid.clone(), profile_id, agent, args: args.unwrap_or_default(), cwd, label, used_ms: 0 });
+    }
+    Ok(sid)
 }
 
 /// Anexa do começo do buffer numa tela nova (também ao reconectar).
@@ -298,7 +308,14 @@ pub fn term_close(app: AppHandle, conn: String, session_id: String) -> Result<()
 
 #[tauri::command(async)]
 pub fn term_input(app: AppHandle, conn: String, session_id: String, data: String) -> Result<(), String> {
-    with_view(&app, &conn, &session_id, |v| { v.vt.screen_mut().set_scrollback(0); v.busy |= data.contains('\r'); });
+    // Histórico: linha do cursor antes do envio (tela alternativa, como vim, não grava).
+    let mut line = None;
+    with_view(&app, &conn, &session_id, |v| {
+        v.vt.screen_mut().set_scrollback(0);
+        v.busy |= data.contains('\r');
+        if data.contains('\r') && !v.vt.screen().alternate_screen() { line = Some(crate::hist::cursor_line(&v.vt)); }
+    });
+    crate::hist::record_input(&app, &key(&conn, &session_id), &conn, &data, line);
     client(&app, &conn)?.input(&session_id, data.as_bytes())
 }
 

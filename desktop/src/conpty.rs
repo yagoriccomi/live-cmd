@@ -116,10 +116,32 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    /// Lê até `needle` e devolve o texto consumido; `Err(code)` se o processo saiu antes.
+    /// Tira sequências OSC completas (`ESC ]` … `BEL` ou `ESC \`). O ConPTY injeta o título da janela
+    /// (o caminho do executável) no meio da saída; em caminho longo ele cai antes do `\r\n` esperado.
+    /// OSC ainda sem terminador fica, para completar no próximo pedaço.
+    fn strip_osc(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut rest = s;
+        while let Some(i) = rest.find("\x1b]") {
+            out.push_str(&rest[..i]);
+            let body = &rest[i + 2..];
+            match body.find(['\x07', '\x1b']) {
+                Some(j) if body.as_bytes()[j] == 0x07 => rest = &body[j + 1..],
+                Some(j) if body[j..].starts_with("\x1b\\") => rest = &body[j + 2..],
+                Some(j) => { out.push_str(&rest[i..i + 2 + j]); rest = &body[j..]; }
+                None => { out.push_str(&rest[i..]); rest = ""; }
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// Lê até `needle` (ignorando OSC) e devolve o texto consumido; `Err(code)` se o processo saiu antes.
     fn wait(rx: &mpsc::Receiver<Ev>, acc: &mut String, needle: &str) -> Result<String, i32> {
         let end = Instant::now() + Duration::from_secs(15);
-        while !acc.contains(needle) {
+        loop {
+            *acc = strip_osc(acc);
+            if acc.contains(needle) { break; }
             match rx.recv_timeout(end.saturating_duration_since(Instant::now())) {
                 Ok(Ev::Output(d)) => acc.push_str(&String::from_utf8_lossy(&d)),
                 Ok(Ev::Exit(c)) => return Err(c),
@@ -127,6 +149,15 @@ mod tests {
             }
         }
         Ok(acc.drain(..acc.find(needle).unwrap() + needle.len()).collect())
+    }
+
+    #[test]
+    fn strip_osc_tira_titulo_e_mantem_o_resto() {
+        assert_eq!(strip_osc("live-cmd-ok\x1b]0;C:\\caminho\\longo\\cmd.exe\x07\r\n"), "live-cmd-ok\r\n");
+        assert_eq!(strip_osc("a\x1b]0;t\x1b\\b"), "ab");
+        assert_eq!(strip_osc("a\x1b]0;incomple"), "a\x1b]0;incomple", "sem terminador: espera o resto");
+        assert_eq!(strip_osc("a\x1b]0;x\x1b[1mb"), "a\x1b]0;x\x1b[1mb", "ESC que não fecha a OSC não some");
+        assert_eq!(strip_osc("\x1b[2Jx"), "\x1b[2Jx", "CSI fica");
     }
 
     #[test]
