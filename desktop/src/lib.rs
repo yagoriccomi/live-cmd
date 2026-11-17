@@ -210,6 +210,7 @@ impl Hub {
             Req::Close(sid) => { let ok = self.s.close(sid)?; self.forget(&[sid]); self.dirty = true; ok }
             Req::Focus(_) => unreachable!("tratado na conexão"),
             Req::Rename { session_id, label } => { self.dirty = true; self.s.rename(session_id, label)? }
+            Req::Dirs(path) => json!({"type":"dir_list_ok","dirs":list_dirs(&path)}),
         })
     }
 }
@@ -221,6 +222,15 @@ struct Saved { id: String, profile: String, label: String, cwd: Option<PathBuf>,
     #[serde(default)] agent: Option<String>, #[serde(default)] args: String }
 /// O CLI só grava a conversa após a primeira mensagem; sem ela `--resume` falha ("Nenhuma conversa encontrada").
 /// Arquivo: `~/.<agente>/projects/<pasta>/<id>.jsonl` (procura em todas: a pasta da aba pode ter mudado).
+/// Até 500 subpastas, ordem alfabética; vazio lista as unidades. Erro de leitura: lista vazia.
+fn list_dirs(path: &str) -> Vec<String> {
+    if path.is_empty() { return ('A'..='Z').map(|c| format!("{c}:\\")).filter(|d| Path::new(d).is_dir()).collect(); }
+    let Ok(rd) = std::fs::read_dir(path) else { return vec![] };
+    let mut v: Vec<String> = rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).filter_map(|e| e.file_name().into_string().ok()).take(500).collect();
+    v.sort_by_key(|n| n.to_lowercase());
+    v
+}
+
 fn conversation_exists(agent: &str, id: &str) -> bool {
     let Some(home) = std::env::var_os("USERPROFILE") else { return false };
     let Ok(dirs) = std::fs::read_dir(PathBuf::from(home).join(format!(".{agent}")).join("projects")) else { return false };

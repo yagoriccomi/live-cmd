@@ -75,6 +75,8 @@ pub enum Req {
     Close([u8; 16]),
     Focus(Focus),
     Rename { session_id: [u8; 16], label: String },
+    /// Subpastas de `path` (vazio: unidades) para escolher a pasta do agente.
+    Dirs(String),
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Control {
@@ -116,6 +118,12 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
             Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label, cwd, agent, args }
         }
         "session_list" => { fields(&[], &[])?; Req::List }
+        "dir_list" => {
+            fields(&["path"], &[])?;
+            let p = s("path")?;
+            if p.len() > 1024 { return Err(InvalidMessage); }
+            Req::Dirs(p.into())
+        }
         "session_attach" => {
             fields(&["session_id", "from_offset"], &["cols", "rows"])?;
             let from_offset = match &o["from_offset"] { Value::Null => None, v => Some(parse_u64(v)?) };

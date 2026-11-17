@@ -444,10 +444,27 @@ function profileMenu(anchor, conn) {
   menu(anchor, p.length ? [...p.map((x) => [x.label, () => newSession(conn, x)]), ["Agente de IA…", () => newAi(conn)]] : [["Nenhum perfil disponível."]]);
 }
 
+const AI_SUG = {
+  claude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
+  openclaude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
+  codex: ["--model gpt-5", "--full-auto", "--search", "--sandbox read-only", "--sandbox workspace-write", "--ask-for-approval on-request"],
+};
 // Agente de IA: pergunta agente, pasta e args; o host salva e retoma pelo id da sessão.
 async function newAi(conn) {
   const d = JSON.parse(localStorage.getItem("ai-default") || "{}");
   $("ai-agent").value = d.agent || "claude"; $("ai-cwd").value = d.cwd || ""; $("ai-args").value = d.args || ""; $("ai-def").checked = false;
+  const sug = () => $("ai-sug").replaceChildren(...(AI_SUG[$("ai-agent").value] || []).map((v) => { const o = el("option"); o.value = v; return o; }));
+  $("ai-agent").onchange = sug; sug();
+  // Navegação: subpastas no PC da conexão; clique entra, ".." sobe, raiz lista as unidades.
+  const browse = async (path) => {
+    let dirs = [];
+    try { dirs = await invoke("term_dirs", { conn, path }); } catch (e) { banner(msg(e), "err"); }
+    const base = path.replace(/[\/]+$/, ""), up = base.includes("\\") ? base.slice(0, base.lastIndexOf("\\") + 1) : "";
+    const item = (name, to) => { const b = el("button", null, name); b.type = "button"; b.onclick = () => { $("ai-cwd").value = to; browse(to); }; return b; };
+    $("ai-dirs").replaceChildren(...(path ? [item("..", up)] : []), ...dirs.map((d) => item(d, path ? base + "\\" + d : d)));
+  };
+  $("ai-cwd").onchange = () => browse($("ai-cwd").value.trim());
+  browse($("ai-cwd").value.trim());
   $("ai-scrim").hidden = false; $("ai-cwd").focus();
   const ok = await new Promise((done) => {
     const end = (v) => { $("ai-scrim").hidden = true; done(v); };

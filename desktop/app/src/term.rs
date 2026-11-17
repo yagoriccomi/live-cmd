@@ -437,6 +437,12 @@ pub fn term_rename(app: AppHandle, conn: String, session_id: String, label: Stri
     client(&app, &conn)?.request(json!({ "type": "session_rename", "session_id": session_id, "label": label })).map(drop)
 }
 
+/// Subpastas no PC da conexão (vazio: unidades).
+#[tauri::command(async)]
+pub fn term_dirs(app: AppHandle, conn: String, path: String) -> Result<Value, String> {
+    client(&app, &conn)?.request(json!({ "type": "dir_list", "path": path })).map(|v| v["dirs"].clone())
+}
+
 #[tauri::command]
 pub fn remote_rename(app: AppHandle, id: String, name: String) -> Result<(), String> {
     let name: String = name.trim().chars().take(40).collect();

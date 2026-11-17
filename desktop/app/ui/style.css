@@ -196,3 +196,6 @@ select { font:inherit; padding:6px 10px; border-radius:var(--radius); border:1px
 .conn-q { margin-left:auto; }
 input.rename { font:inherit; padding:0 4px; width:12em; }
 .term-tabs [role=tab][draggable=true] { cursor:grab; }
+.ai-dirs { max-height:12em; overflow:auto; display:flex; flex-direction:column; border:1px solid var(--border, #444); margin:4px 0; }
+.ai-dirs button { text-align:left; background:none; border:0; padding:2px 6px; color:inherit; font:inherit; cursor:pointer; }
+.ai-dirs button:hover, .ai-dirs button:focus { background:rgba(127,127,127,.2); }
