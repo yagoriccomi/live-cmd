@@ -90,6 +90,7 @@ export class Conn {
         try {
           const m = parseMsg(e.data, this.id);
           if (m.type === 'error') throw Object.assign(new Error(m.code), { code: m.code });
+          if (m.type === 'auth_ok') this.caps = m.caps ?? [];
           const r = off.handle(m, Date.now());
           if (r) this.dc.send(toJson(r, this.id)); else ok();
         } catch (err) { ko(err); }
@@ -106,6 +107,9 @@ export class Conn {
     this.seq = BigInt(att.last_input_seq);
     this.h.status('conectado');
   }
+
+  /** Telas extras anunciadas pelo host em `auth_ok.caps`; vazio = host antigo (abas pedem atualização). */
+  caps: string[] = [];
 
   /** Pedido das abas Agentes/SSH/Histórico (corpo de `extras.ts`); resposta já validada. */
   extra(body: Record<string, unknown>): Promise<any> {

@@ -118,7 +118,7 @@ export type Msg =
   | { type: 'auth_hello'; mode: Mode; clientPk: Bytes; nonceO: Bytes }
   | { type: 'auth_challenge'; hostPk: Bytes; nonceA: Bytes; sigA: Bytes; macA?: Bytes }
   | { type: 'auth_proof'; sigO: Bytes; macO?: Bytes }
-  | { type: 'auth_ok' }
+  | { type: 'auth_ok'; caps?: string[] }
   | { type: 'error'; code: Code };
 
 export function toJson(m: Msg, connectionId: string): string {
@@ -155,7 +155,14 @@ export function parseMsg(text: string, connectionId: string): Msg {
     case 'auth_proof':
       fields(['sig_o'], 'mac_o');
       return { type: 'auth_proof', sigO: b64d(o.sig_o, 64), macO: opt('mac_o', 32) };
-    case 'auth_ok': fields([]); return { type: 'auth_ok' };
+    case 'auth_ok': {
+      // `caps` opcional: telas extras que o host entende (desktop/src/extras.rs CAPS); host antigo não manda.
+      fields([], 'caps');
+      if (!('caps' in o)) return { type: 'auth_ok' };
+      const c = o.caps;
+      if (!Array.isArray(c) || c.length > 32 || !c.every((x: unknown) => typeof x === 'string' && /^[a-z0-9_.:-]{1,32}$/.test(x))) fail('INVALID_MESSAGE');
+      return { type: 'auth_ok', caps: c };
+    }
     case 'error':
       fields(['code']);
       return { type: 'error', code: CODES.includes(o.code) ? o.code : fail('INVALID_MESSAGE') };

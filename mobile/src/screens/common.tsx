@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native';
 import { C, errText } from './theme.ts';
 
 export function Glass({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
@@ -55,6 +55,26 @@ export function useRemote<T>(load: (() => Promise<T>) | null) {
 }
 
 export const OFFLINE = 'Conecte ao PC na aba Sessões para ver esta lista.';
+/** Host conectado mas sem a tela (`auth_ok.caps` sem ela): versão antiga do live-cmd no PC. */
+export const OLD_HOST = 'Atualize o live-cmd no PC para usar esta aba.';
+
+/** Campo de texto com rótulo, no estilo das telas. */
+export function Field({ label, ...p }: { label: string } & TextInputProps) {
+  return (
+    <View style={{ marginBottom: 10 }}>
+      <Text style={s.meta}>{label}</Text>
+      <TextInput placeholderTextColor={C.muted} autoCapitalize="none" autoCorrect={false} accessibilityLabel={label} {...p} style={s.input} />
+    </View>
+  );
+}
+
+/** Confirmação destrutiva (mesmo texto da tela desktop). */
+export function confirm(title: string, text: string, ok: string): Promise<boolean> {
+  return new Promise(r => Alert.alert(title, text, [
+    { text: 'Cancelar', style: 'cancel', onPress: () => r(false) },
+    { text: ok, style: 'destructive', onPress: () => r(true) },
+  ], { cancelable: true, onDismiss: () => r(false) }));
+}
 
 export const s = StyleSheet.create({
   glass: { backgroundColor: C.glass, borderColor: C.border, borderWidth: 1, borderRadius: 18, padding: 12, marginBottom: 10 },
@@ -72,5 +92,7 @@ export const s = StyleSheet.create({
   name: { color: C.text, fontSize: 16, fontWeight: '600' },
   meta: { color: C.muted, fontSize: 12 },
   mono: { fontFamily: 'monospace', color: '#e6dcff', fontSize: 13 },
+  input: { borderWidth: 1, borderColor: C.border, borderRadius: 14, backgroundColor: C.glass, color: C.text, paddingHorizontal: 12, minHeight: 44, marginTop: 4 },
+  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
   group: { color: C.accent2, fontSize: 13, fontWeight: '700', marginTop: 6, marginBottom: 6, letterSpacing: 0.5 },
 });

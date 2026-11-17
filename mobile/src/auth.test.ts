@@ -126,3 +126,12 @@ test('N16 e QR: parse, allowlist, duplicado, desconhecido, > 512 bytes', () => {
   ]) assert.throws(() => parseQr(bad, allow), code('INVALID_MESSAGE'), bad.slice(0, 80));
   assert.ok(good.length <= 512);
 });
+
+test('auth_ok: caps opcional (host novo anuncia, host antigo não manda)', () => {
+  const caps = JSON.parse(readFileSync(new URL('../../desktop/tests/fixtures/c3-extras.json', import.meta.url), 'utf8')).caps;
+  const ok = (extra: Record<string, unknown>) => parseMsg(JSON.stringify({ type: 'auth_ok', v: 1, connection_id: CID, ...extra }), CID);
+  assert.deepEqual(ok({ caps }), { type: 'auth_ok', caps: ['agents', 'ssh', 'history'] });
+  assert.deepEqual(ok({}), { type: 'auth_ok' });
+  for (const bad of ['ssh', [1], ['SSH'], [''], { a: 1 }]) assert.throws(() => ok({ caps: bad }), code('INVALID_MESSAGE'), JSON.stringify(bad));
+  assert.throws(() => ok({ x: 1 }), code('INVALID_MESSAGE'));
+});

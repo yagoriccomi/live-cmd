@@ -1,35 +1,62 @@
 // Controles extras do pty-channel para as abas Agentes, SSH e Histórico.
 // Espelha desktop/src/extras.rs; a fixture desktop/tests/fixtures/c3-extras.json prova a paridade. Puro: sem RN, sem rede.
 // Todo pedido e resposta leva `api` (hoje 1); `api` numérico diferente na resposta é VERSION_UNSUPPORTED.
+// O host anuncia as telas em `auth_ok.caps` (CAPS); sem a tela, a aba pede para atualizar o live-cmd no PC.
 import { AuthError, uuidBytes, type Bytes, type Code } from './auth.ts';
 import { parseU64 } from './pty.ts';
 
 export const API = 1;
+export type Cap = 'agents' | 'ssh' | 'history';
 const MAX_MSG = 65536;
 const fail = (c: Code): never => { throw new AuthError(c); };
 const bad = (): never => fail('INVALID_MESSAGE');
 
+/** Agentes aceitos pelo host (desktop/src/proto.rs AGENTS). */
+export const AGENTS = ['claude', 'openclaude', 'codex'] as const;
+/** Tipos de sessão do histórico e o nome exibido (mesmos da tela desktop, historico.js). */
+export const HISTORY_KINDS: Record<string, string> = { pwsh: 'PowerShell', cmd: 'Prompt de Comando', wsl: 'WSL / bash', ssh: 'SSH', outro: 'Outra' };
+
 // ---- pedidos (app → host) ----
+export interface HistoryFilter { query?: string; limit?: number; days?: number | null; kind?: string | null; errors?: boolean }
+export interface SshForm { serverId?: string; label: string; user: string; host: string; port: number; key: string | null }
 export const agentList = () => ({ type: 'agent_list', api: API });
 export const agentResume = (sessionId: string, cols: number, rows: number) => ({ type: 'agent_resume', api: API, session_id: sessionId, cols, rows });
+export const agentCreate = (agent: string, cwd: string | null, args: string, cols: number, rows: number) =>
+  ({ type: 'agent_create', api: API, agent, ...(cwd && { cwd }), ...(args && { args }), cols, rows });
+export const agentRemove = (sessionId: string) => ({ type: 'agent_remove', api: API, session_id: sessionId });
 export const sshList = () => ({ type: 'ssh_list', api: API });
 export const sshConnect = (serverId: string, cols: number, rows: number) => ({ type: 'ssh_connect', api: API, server_id: serverId, cols, rows });
-export const historyQuery = (query = '', limit = 50) => ({ type: 'history_query', api: API, ...(query && { query }), limit });
+/** Nunca leva senha: o host recusa qualquer campo além destes. */
+export const sshSave = (f: SshForm) => ({ type: 'ssh_save', api: API, ...(f.serverId && { server_id: f.serverId }), label: f.label, user: f.user, host: f.host, port: f.port, key: f.key });
+export const sshRemove = (serverId: string) => ({ type: 'ssh_remove', api: API, server_id: serverId });
+export const sshProbe = (serverId: string) => ({ type: 'ssh_probe', api: API, server_id: serverId });
+export const sshReconnect = (sessionId: string, cols: number, rows: number) => ({ type: 'ssh_reconnect', api: API, session_id: sessionId, cols, rows });
+export const historyQuery = (f: HistoryFilter = {}) => ({
+  type: 'history_query', api: API, ...(f.query && { query: f.query }), limit: f.limit ?? 50,
+  ...(f.days && { days: f.days }), ...(f.kind && { kind: f.kind }), ...(f.errors && { errors: true }),
+});
 export const historyRun = (entryId: string, sessionId: string) => ({ type: 'history_run', api: API, entry_id: entryId, session_id: sessionId });
+export const historyClear = () => ({ type: 'history_clear', api: API });
 
 // ---- respostas (host → app) ----
 export type AgentState = 'running' | 'exited' | 'saved';
-export interface Agent { sessionId: string; agent: string; label: string; cwd: string | null; state: AgentState; lastActivityMs: bigint }
-export interface SshServer { serverId: string; label: string; host: string; user: string; port: number; latencyMs: number | null }
-export interface HistoryEntry { entryId: string; command: string; cwd: string | null; atMs: bigint; exitCode: number | null }
+export type SshStatus = 'unknown' | 'testing' | 'ok' | 'dns' | 'timeout' | 'offline';
+export interface Agent { sessionId: string; agent: string; args: string; label: string; cwd: string | null; state: AgentState; lastActivityMs: bigint }
+export interface SshServer { serverId: string; label: string; host: string; user: string; port: number; key: string | null; latencyMs: number | null; status: SshStatus }
+export interface SshSession { sessionId: string; label: string; connected: boolean }
+export interface HistoryEntry { entryId: string; command: string; cwd: string | null; atMs: bigint; exitCode: number | null; kind: string; label: string; pc: string }
 export type ExtraMsg =
   | { t: 'agent_list_ok'; requestId: string; agents: Agent[] }
-  | { t: 'agent_resume_ok' | 'ssh_connect_ok'; requestId: string; sessionId: string }
-  | { t: 'ssh_list_ok'; requestId: string; servers: SshServer[] }
+  | { t: 'agent_resume_ok' | 'agent_create_ok' | 'ssh_connect_ok' | 'ssh_reconnect_ok'; requestId: string; sessionId: string }
+  | { t: 'ssh_list_ok'; requestId: string; servers: SshServer[]; sessions: SshSession[] }
+  | { t: 'ssh_save_ok'; requestId: string; serverId: string }
   | { t: 'history_query_ok'; requestId: string; entries: HistoryEntry[] }
-  | { t: 'history_run_ok'; requestId: string };
+  | { t: 'history_run_ok' | 'history_clear_ok' | 'agent_remove_ok' | 'ssh_remove_ok' | 'ssh_probe_ok'; requestId: string };
 
-const REPLIES = ['agent_list_ok', 'agent_resume_ok', 'ssh_list_ok', 'ssh_connect_ok', 'history_query_ok', 'history_run_ok'];
+const SESSION_REPLIES = ['agent_resume_ok', 'agent_create_ok', 'ssh_connect_ok', 'ssh_reconnect_ok'];
+const EMPTY_REPLIES = ['history_run_ok', 'history_clear_ok', 'agent_remove_ok', 'ssh_remove_ok', 'ssh_probe_ok'];
+const REPLIES = ['agent_list_ok', 'ssh_list_ok', 'ssh_save_ok', 'history_query_ok', ...SESSION_REPLIES, ...EMPTY_REPLIES];
+const SSH_STATUS: SshStatus[] = ['unknown', 'testing', 'ok', 'dns', 'timeout', 'offline'];
 const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const isObj = (x: unknown): x is Record<string, any> => typeof x === 'object' && x !== null && !Array.isArray(x);
 const keys = (o: Record<string, unknown>, req: string[], opt: string[] = []) => {
@@ -59,33 +86,38 @@ export function parseExtraReply(text: string, connectionId: string): ExtraMsg {
   if (o.api !== API) fail(typeof o.api === 'number' ? 'VERSION_UNSUPPORTED' : 'INVALID_MESSAGE');
   const E = ['v', 'type', 'connection_id', 'request_id', 'api'];
   const reply = (f: string[]): string => { keys(o, [...E, ...f]); return uuid(o.request_id); };
+  if (SESSION_REPLIES.includes(t)) { const requestId = reply(['session_id']); return { t: t as any, requestId, sessionId: uuid(o.session_id) }; }
+  if (EMPTY_REPLIES.includes(t)) return { t: t as any, requestId: reply([]) };
   switch (t) {
     case 'agent_list_ok': {
       const requestId = reply(['agents']);
       return { t, requestId, agents: list(o.agents, a => {
-        keys(a, ['session_id', 'agent', 'label', 'cwd', 'state', 'last_activity_ms']);
+        keys(a, ['session_id', 'agent', 'args', 'label', 'cwd', 'state', 'last_activity_ms']);
         const state = a.state === 'running' || a.state === 'exited' || a.state === 'saved' ? a.state as AgentState : bad();
-        return { sessionId: uuid(a.session_id), agent: str(a.agent), label: str(a.label), cwd: strOrNull(a.cwd), state, lastActivityMs: parseU64(a.last_activity_ms) };
+        return { sessionId: uuid(a.session_id), agent: str(a.agent), args: str(a.args), label: str(a.label), cwd: strOrNull(a.cwd), state, lastActivityMs: parseU64(a.last_activity_ms) };
       }) };
     }
-    case 'agent_resume_ok': case 'ssh_connect_ok': { const requestId = reply(['session_id']); return { t, requestId, sessionId: uuid(o.session_id) }; }
     case 'ssh_list_ok': {
-      const requestId = reply(['servers']);
+      const requestId = reply(['servers', 'sessions']);
       return { t, requestId, servers: list(o.servers, s => {
-        keys(s, ['server_id', 'label', 'host', 'user', 'port', 'latency_ms']);
-        return { serverId: str(s.server_id), label: str(s.label), host: str(s.host), user: str(s.user), port: int(s.port, 1, 65535),
-          latencyMs: s.latency_ms === null ? null : int(s.latency_ms, 0, 2 ** 32 - 1) };
+        keys(s, ['server_id', 'label', 'host', 'user', 'port', 'key', 'latency_ms', 'status']);
+        return { serverId: str(s.server_id), label: str(s.label), host: str(s.host), user: str(s.user), port: int(s.port, 1, 65535), key: strOrNull(s.key),
+          latencyMs: s.latency_ms === null ? null : int(s.latency_ms, 0, 2 ** 32 - 1), status: SSH_STATUS.includes(s.status) ? s.status : bad() };
+      }), sessions: list(o.sessions, s => {
+        keys(s, ['session_id', 'label', 'state']);
+        const connected = s.state === 'connected' ? true : s.state === 'disconnected' ? false : bad();
+        return { sessionId: uuid(s.session_id), label: str(s.label), connected };
       }) };
     }
-    case 'history_query_ok': {
+    case 'ssh_save_ok': { const requestId = reply(['server_id']); return { t, requestId, serverId: str(o.server_id) }; }
+    default: {
       const requestId = reply(['entries']);
-      return { t, requestId, entries: list(o.entries, e => {
-        keys(e, ['entry_id', 'command', 'cwd', 'at_ms', 'exit_code']);
+      return { t: 'history_query_ok', requestId, entries: list(o.entries, e => {
+        keys(e, ['entry_id', 'command', 'cwd', 'at_ms', 'exit_code', 'kind', 'label', 'pc']);
         return { entryId: str(e.entry_id), command: str(e.command), cwd: strOrNull(e.cwd), atMs: parseU64(e.at_ms),
-          exitCode: e.exit_code === null ? null : int(e.exit_code, -(2 ** 31), 2 ** 31 - 1) };
+          exitCode: e.exit_code === null ? null : int(e.exit_code, -(2 ** 31), 2 ** 31 - 1), kind: str(e.kind), label: str(e.label), pc: str(e.pc) };
       }) };
     }
-    default: return { t: 'history_run_ok', requestId: reply([]) };
   }
 }
 
@@ -98,6 +130,47 @@ export function groupByFolder(agents: Agent[]): { folder: string; agents: Agent[
   }
   return [...m].map(([folder, agents]) => ({ folder, agents }));
 }
+
+/** Comandos agrupados por dia, como a tela desktop: "Hoje", "Ontem" ou a data por extenso. */
+export function groupByDay(entries: HistoryEntry[], now = new Date()): { day: string; entries: HistoryEntry[] }[] {
+  const key = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  const name = (ms: bigint) => {
+    const d = new Date(Number(ms));
+    if (key(d) === key(now)) return 'Hoje';
+    if (key(d) === key(y)) return 'Ontem';
+    return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+  };
+  const out: { day: string; entries: HistoryEntry[] }[] = [];
+  for (const e of entries) {
+    const d = name(e.atMs);
+    if (out[out.length - 1]?.day === d) out[out.length - 1].entries.push(e); else out.push({ day: d, entries: [e] });
+  }
+  return out;
+}
+
+/** Erro do formulário SSH com as mesmas regras da tela desktop (ssh.js) e do host (desktop/src/ssh.rs); `null` se ok. */
+export function sshFormError(f: SshForm): string | null {
+  const name = f.label.trim();
+  if (!name || [...name].length > 40) return 'INVALID_SSH_NAME';
+  if (!/^(?!-)[A-Za-z0-9._-]{1,64}$/.test(f.user.trim())) return 'INVALID_SSH_USER';
+  if (!/^(?!-)[A-Za-z0-9._:-]{1,253}$/.test(f.host.trim())) return 'INVALID_SSH_HOST';
+  if (!Number.isInteger(f.port) || f.port < 1 || f.port > 65535) return 'INVALID_SSH_PORT';
+  const k = f.key?.trim();
+  if (k && (!/^([A-Za-z]:[\\/]|\\\\.)/.test(k) || /["\u0000-\u001f\u007f]/.test(k))) return 'INVALID_SSH_KEY';
+  return null;
+}
+export const SSH_MSG: Record<string, string> = {
+  INVALID_SSH_NAME: 'Dê um nome de 1 a 40 caracteres.',
+  INVALID_SSH_USER: 'Usuário inválido: use só letras, números, ponto, hífen ou sublinhado, sem espaços.',
+  INVALID_SSH_HOST: 'Host inválido: use um nome ou IP, sem espaços nem caracteres especiais.',
+  INVALID_SSH_PORT: 'Porta inválida: use um número de 1 a 65535.',
+  INVALID_SSH_KEY: 'Chave inválida: informe o caminho completo do arquivo no PC (ex.: C:\\Users\\voce\\.ssh\\id_ed25519).',
+  LIMIT_EXCEEDED: 'Limite de 200 servidores atingido.',
+};
+
+/** Args extras do agente: mesma regra do host (desktop/src/proto.rs valid_args). */
+export const validArgs = (a: string) => a.length <= 512 && /^[A-Za-z0-9 ._=/:,-]*$/.test(a);
 
 /** Último trecho do caminho, para títulos curtos. */
 export const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
