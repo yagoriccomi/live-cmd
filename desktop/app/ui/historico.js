@@ -40,7 +40,7 @@
     cmd.title = e.cmd;
     const time = new Date(e.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     const meta = el("span", "hist-meta muted small");
-    meta.append(highlight(`${time} · ${e.pc} · ${e.label}`, q));
+    meta.append(highlight(`${time} · ${e.pc} · ${e.label}${e.cwd ? ` · ${e.cwd}` : ""}`, q));
     const badge = el("span", "hist-kind", KIND[e.kind] || e.kind);
     const code = e.code == null ? null : el("span", e.code === 0 ? "hist-code ok" : "hist-code err", e.code === 0 ? "ok" : `erro ${e.code}`);
     if (code) code.setAttribute("aria-label", e.code === 0 ? "terminou sem erro" : `terminou com código ${e.code}`);

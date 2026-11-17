@@ -45,6 +45,47 @@
     try { list = await invoke("ssh_list"); } catch (e) { list = []; banner(sshMsg(e), "err"); }
     render();
     probeAll();
+    loadSessions();
+  }
+
+  // ---------- Sessões SSH (conectadas e desconectadas) ----------
+  async function loadSessions() {
+    let sess = [];
+    try { sess = await invoke("ssh_sessions"); } catch { sess = []; }
+    $("ssh-sess-box").hidden = !sess.length;
+    $("ssh-sess").replaceChildren(...sess.map((x) => {
+      const li = el("li");
+      const on = x.state === "connected";
+      const d = el("span", on ? "dot-ok" : "dot-warn", on ? "●" : "○");
+      d.setAttribute("aria-hidden", "true");
+      const info = el("div", "ssh-info");
+      info.append(el("div", "ssh-name", x.label || "SSH"), el("div", "muted small", on ? "conectada" : "desconectada"));
+      const b = el("button", on ? null : "btn-primary", on ? "Abrir" : "Reconectar");
+      b.type = "button";
+      b.setAttribute("aria-label", `${b.textContent} ${x.label || "SSH"}`);
+      b.onclick = () => (on ? open(x) : reconnect(x, b));
+      const acts = el("div", "ssh-acts");
+      acts.append(b);
+      li.append(d, info, acts);
+      return li;
+    }));
+  }
+  async function open(x) {
+    closePanel(false);
+    await openSession(LOCAL, { session_id: x.session_id, label: x.label, state: "running" });
+  }
+  async function reconnect(x, b) {
+    b.disabled = true;
+    const { cols, rows } = size();
+    try {
+      await invoke("ssh_reconnect", { sessionId: x.session_id, cols, rows });
+      // A aba antiga mostrava a sessão encerrada: anexa de novo do começo.
+      const key = LOCAL + "/" + x.session_id;
+      if (tabs.some((t) => t.key === key)) await closeTab(key);
+      closePanel(false);
+      await openSession(LOCAL, { session_id: x.session_id, label: x.label, state: "running" });
+      refresh(LOCAL);
+    } catch (e) { banner(sshMsg(e), "err"); b.disabled = false; }
   }
 
   function statusText(id) {

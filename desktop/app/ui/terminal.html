@@ -49,6 +49,11 @@
       <p class="muted small">Conectar abre uma aba com o ssh.exe do Windows. A senha é pedida no terminal e nunca é salva.</p>
       <ul class="ssh-list" id="ssh-list" aria-label="Servidores salvos"></ul>
       <p class="muted" id="ssh-empty" hidden></p>
+      <section id="ssh-sess-box" aria-labelledby="ssh-sess-h" hidden>
+        <h3 id="ssh-sess-h">Sessões SSH neste PC</h3>
+        <p class="muted small">Sessões restauradas ao reiniciar voltam desconectadas: Reconectar abre o ssh.exe de novo na mesma aba.</p>
+        <ul class="ssh-list" id="ssh-sess" aria-label="Sessões SSH"></ul>
+      </section>
     </section>
     <div class="term-area">
       <div class="terminal" id="screen" tabindex="0" aria-label="Terminal" aria-roledescription="terminal"><span class="measure" id="measure" aria-hidden="true">WWWWWWWWWW</span></div>
