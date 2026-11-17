@@ -790,7 +790,7 @@ function paste() {
   // Remoto com print: o app envia a imagem ao outro PC e cola o caminho (claude/codex anexam pelo caminho).
   invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir }).then((name) => {
     if (!name) return;
-    send(dir ? `"${dir.replace(/[\/]+$/, "")}\${name}"` : name);
+    send(dir ? `"${dir.replace(/[\\/]+$/, "")}\\${name}"` : name);
     banner(`Print enviado: ${name} em ${dir ?? "pasta padrão do outro PC"}.`);
   }).catch((err) => banner(msg(err), "err"));
   $("screen").focus();
