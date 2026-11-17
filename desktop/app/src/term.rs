@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::host::{Client, ClientEvent, RemotePin, parse_pair_link};
-use crate::{App, clip, settings};
+use crate::{App, agents, clip, settings};
 
 const LOCAL: &str = "local";
 const WIN: &str = "terminal";
@@ -264,13 +264,19 @@ pub fn term_list(app: AppHandle, conn: String) -> Result<Value, String> {
 }
 
 #[tauri::command(async)]
-pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: String, cols: u16, rows: u16, cwd: Option<String>, agent: Option<String>, args: Option<String>) -> Result<String, String> {
+pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: String, cols: u16, rows: u16, cwd: Option<String>, agent: Option<String>, args: Option<String>, resume_id: Option<String>) -> Result<String, String> {
     let label: String = label.chars().take(64).collect();
     let mut req = json!({ "type": "session_create", "profile_id": profile_id, "label": label, "cols": cols, "rows": rows });
-    if let Some(d) = cwd { req["cwd"] = d.into(); }
-    if let Some(a) = agent { req["agent"] = a.into(); req["args"] = args.unwrap_or_default().into(); }
+    if let Some(d) = &cwd { req["cwd"] = d.clone().into(); }
+    if let Some(a) = &agent { req["agent"] = a.clone().into(); req["args"] = args.clone().unwrap_or_default().into(); }
+    if let Some(r) = resume_id { req["resume_id"] = r.into(); }
     let v = client(&app, &conn)?.request(req)?;
-    Ok(v["session_id"].as_str().unwrap_or_default().to_owned())
+    let sid = v["session_id"].as_str().unwrap_or_default().to_owned();
+    // Tela Agentes: lembra a sessão para retomar depois do close. Falha ao gravar não desfaz a sessão criada.
+    if let (Some(agent), Ok(dir)) = (agent, settings::data_dir()) {
+        let _ = agents::record(&dir, agents::Agent { conn, session_id: sid.clone(), profile_id, agent, args: args.unwrap_or_default(), cwd, label, used_ms: 0 });
+    }
+    Ok(sid)
 }
 
 /// Anexa do começo do buffer numa tela nova (também ao reconectar).
