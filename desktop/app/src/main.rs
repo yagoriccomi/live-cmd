@@ -229,6 +229,16 @@ fn open_terminal(app: &AppHandle) {
         .title("Terminal Desktop — live-cmd").inner_size(960.0, 600.0).min_inner_size(560.0, 360.0).center().build();
 }
 
+/// Menu ☰ do terminal: abre Parear/Aparelhos/Configurações ou sai.
+#[tauri::command]
+fn tray_action(app: AppHandle, id: String) {
+    match id.as_str() {
+        "pair" | "devices" | "settings" => open_window(&app, &id),
+        "quit" => quit(&app),
+        _ => {}
+    }
+}
+
 fn ask(text: &str, flags: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE) -> bool {
     unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from("live-cmd"), flags | MB_SETFOREGROUND) == IDOK }
 }
@@ -295,6 +305,7 @@ fn tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
     TrayIconBuilder::with_id("main")
         .icon(Image::from_bytes(include_bytes!("../icons/tray-connecting.png"))?)
         .show_menu_on_left_click(true)
+        .on_tray_icon_event(|t, e| if let tauri::tray::TrayIconEvent::DoubleClick { .. } = e { open_terminal(t.app_handle()) })
         .on_menu_event(|app, e| match e.id().as_ref() {
             "terminal" => open_terminal(app),
             "pair" => open_window(app, "pair"),
@@ -320,7 +331,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_window(app, "devices")))
-        .invoke_handler(tauri::generate_handler![status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, get_profiles, save_profiles, set_scrollback, check_update, install_update,
+        .invoke_handler(tauri::generate_handler![tray_action, status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, get_profiles, save_profiles, set_scrollback, check_update, install_update,
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove,
