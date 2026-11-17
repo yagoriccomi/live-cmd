@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Linking, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Linking, SafeAreaView, StyleSheet, View } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { getRandomBytes } from 'expo-crypto';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { b64d, b64e, parseQr } from './src/auth.ts';
 import { Conn, type Pin } from './src/conn.ts';
+import { Pill } from './src/screens/common.tsx';
+import { TabBar, type Tab } from './src/screens/TabBar.tsx';
+import { SessionsScreen } from './src/screens/SessionsScreen.tsx';
+import { AgentsScreen } from './src/screens/AgentsScreen.tsx';
+import { SshScreen } from './src/screens/SshScreen.tsx';
+import { HistoryScreen } from './src/screens/HistoryScreen.tsx';
+import { C, errText } from './src/screens/theme.ts';
 
 // Mesmo servidor padrão do desktop (desktop/app/src/settings.rs DEFAULT_SERVER).
 const ALLOW = ['live-cmd-signaling.yago-riccomi-s.workers.dev'];
@@ -27,9 +34,10 @@ export default function App() {
   const [pin, setPin] = useState<Pin | null>(null);
   const [status, setStatus] = useState('desconectado');
   const [out, setOut] = useState('');
-  const [line, setLine] = useState('');
   const conn = useRef<Conn | null>(null);
-  const scroll = useRef<any>(null);
+  /** Conexão autenticada (já com sessão): as abas remotas só pedem dados com ela. */
+  const [live, setLive] = useState<Conn | null>(null);
+  const [tab, setTab] = useState<Tab>('sessoes');
   const [scan, setScan] = useState(false);
   const [, askCam] = useCameraPermissions();
 
@@ -55,57 +63,48 @@ export default function App() {
       const c = new Conn(p, await seed(), otk, {
         status: s => {
           setStatus(s);
+          if (s === 'conectado') setLive(c);
           if (s === 'conectado' && pair) { SecureStore.setItemAsync('pin', JSON.stringify(p)); setPin(p); setLink(''); }
         },
         output: b => setOut(o => (o + strip(dec.decode(b, { stream: true }))).slice(-MAX_OUT)),
-        closed: code => { setStatus(code ? `fechado: ${code}` : 'desconectado'); conn.current = null; },
+        reset: () => setOut(''),
+        closed: code => { setStatus(code ? `fechado: ${code}` : 'desconectado'); conn.current = null; setLive(null); },
       });
       conn.current = c;
       c.start();
     } catch (e: any) { setStatus(`erro: ${e?.code ?? e?.message}`); }
   }
 
+  /** Agente retomado ou SSH aberto: mostra a sessão no terminal. */
+  async function open(sessionId: string) {
+    try { await live?.switchTo(sessionId); setTab('sessoes'); } catch (e) { setStatus(errText(e)); }
+  }
+
   const send = (s: string) => conn.current?.input(enc.encode(s));
-  const on = !!conn.current;
 
   if (scan) return (
     <SafeAreaView style={st.root}>
       <CameraView style={{ flex: 1 }} barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         onBarcodeScanned={({ data }) => { if (!data.includes('remoteterm://pair?')) return; setScan(false); setLink(data); connect(true, data); }} />
-      <Button title="Cancelar" onPress={() => setScan(false)} />
+      <View style={{ padding: 12 }}><Pill title="Cancelar" onPress={() => setScan(false)} label="Cancelar leitura do QR code" /></View>
     </SafeAreaView>
   );
 
   return (
     <SafeAreaView style={st.root}>
-      <Text style={st.status}>{status}</Text>
-      {!on && (
-        <View>
-          <TextInput style={st.input} value={link} onChangeText={setLink} placeholder="Cole o link remoteterm://pair?..." autoCapitalize="none" autoCorrect={false} />
-          <Button title="Parear" onPress={() => connect(true)} disabled={!link} />
-          <Button title="Ler QR code" onPress={async () => { if ((await askCam()).granted) setScan(true); }} />
-          {pin && <Button title="Conectar ao PC pareado" onPress={() => connect(false)} />}
-        </View>
+      {tab === 'sessoes' && (
+        <SessionsScreen status={status} on={!!conn.current} pin={pin} out={out} link={link} setLink={setLink}
+          onPair={() => connect(true)} onScan={async () => { if ((await askCam()).granted) setScan(true); }}
+          onReconnect={() => connect(false)} onDisconnect={() => conn.current?.close()} send={send} />
       )}
-      {on && <Button title="Desconectar" onPress={() => conn.current?.close()} />}
-      <ScrollView ref={scroll} style={st.term} onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })}>
-        <Text style={st.mono} selectable>{out}</Text>
-      </ScrollView>
-      <View style={st.row}>
-        <TextInput style={[st.input, { flex: 1 }]} value={line} onChangeText={setLine} autoCapitalize="none" autoCorrect={false}
-          placeholder="comando" onSubmitEditing={() => { send(line + '\r'); setLine(''); }} blurOnSubmit={false} editable={on} />
-        <Button title="Enviar" onPress={() => { send(line + '\r'); setLine(''); }} disabled={!on} />
-        <Button title="Ctrl+C" onPress={() => send('\x03')} disabled={!on} />
-      </View>
+      {tab === 'agentes' && <AgentsScreen conn={live} onOpen={open} />}
+      {tab === 'ssh' && <SshScreen conn={live} onOpen={open} />}
+      {tab === 'historico' && <HistoryScreen conn={live} onRan={() => setTab('sessoes')} />}
+      <TabBar tab={tab} onChange={setTab} />
     </SafeAreaView>
   );
 }
 
 const st = StyleSheet.create({
-  root: { flex: 1, padding: 8, paddingTop: 32, backgroundColor: '#140b2e' },
-  status: { color: '#c8b8ff', marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: 'rgba(206,170,255,0.5)', borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)', color: '#f4efff', padding: 6, marginVertical: 4 },
-  term: { flex: 1, backgroundColor: 'rgba(10,4,30,0.85)', borderRadius: 14, marginVertical: 6 },
-  mono: { fontFamily: 'monospace', color: '#e6dcff', fontSize: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  root: { flex: 1, backgroundColor: C.bg },
 });
