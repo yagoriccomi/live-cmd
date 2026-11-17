@@ -228,3 +228,25 @@ input.rename { font:inherit; padding:0 4px; width:12em; }
 :root:not([data-theme=light]):not([data-theme=contrast]) [role=tab][aria-selected=true] { border-bottom-color:#ff4fd8; }
 :root:not([data-theme=light]):not([data-theme=contrast]) .term-empty { background:transparent; }
 :root:not([data-theme=light]):not([data-theme=contrast]) .toast { background:#fff; color:#2a1460; }
+
+/* Tela Agentes de IA (painel sobre a área do terminal, aberto pela barra lateral). */
+.sidebar .nav-tool { margin-top:var(--space); border-top:1px solid var(--border); border-radius:0; padding-top:calc(var(--space)*1.25); }
+.sidebar .nav-tool[aria-current=true] { font-weight:600; color:var(--accent); }
+.tool-panel { position:absolute; inset:0; overflow:auto; background:var(--bg); padding:calc(var(--space)*2.5); display:flex; flex-direction:column; gap:var(--space); }
+.tool-head { display:flex; align-items:center; gap:calc(var(--space)*1.5); flex-wrap:wrap; }
+.tool-head h2 { margin:0; margin-right:auto; }
+.tool-conn { display:flex; align-items:center; gap:6px; color:var(--text-muted); }
+.tool-conn select { font:inherit; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:4px 8px; }
+.ag-list { display:flex; flex-direction:column; gap:calc(var(--space)*2); }
+.ag-group { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:calc(var(--space)*1.5) calc(var(--space)*2); }
+.ag-group h3 { font-size:.95rem; margin:0; }
+.ag-path { margin:2px 0 var(--space); overflow-wrap:anywhere; user-select:text; }
+.ag-rows { list-style:none; margin:0; padding:0; }
+.ag-row { display:flex; align-items:center; gap:calc(var(--space)*1.5); padding:var(--space) 0; border-top:1px solid var(--border); }
+.ag-dot { width:1.2em; text-align:center; }
+.ag-info { display:flex; flex-direction:column; min-width:0; flex:1; }
+.ag-label { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ag-info .small { margin:0; }
+.ag-empty { display:grid; place-items:center; text-align:center; padding:calc(var(--space)*4); color:var(--text-muted); }
+:root:not([data-theme=light]):not([data-theme=contrast]) .tool-panel { background:var(--scrim); backdrop-filter:blur(30px); }
+:root:not([data-theme=light]):not([data-theme=contrast]) .ag-group { backdrop-filter:blur(30px); box-shadow:var(--glow); }
