@@ -172,7 +172,7 @@ function renameSession(conn, sid, span, label) {
   const cur = conns[conn]?.sessions.find((s) => s.session_id === sid)?.label || label || "Terminal";
   editInline(span, cur, async (v) => {
     await invoke("term_rename", { conn, sessionId: sid, label: v });
-    for (const t of tabs) if (t.conn === conn && t.sid === sid) { t.label = v; t.title = titleOf(conn, { label: v }); }
+    for (const t of tabs) if (t.conn === conn && t.sid === sid) { t.label = v; t.title = titleOf(conn, { label: v }); window.histMeta?.(conn, { session_id: sid, label: v }); }
     await refresh(conn);
     renderTabs();
   });
@@ -210,6 +210,7 @@ async function split(t, conn, sid) {
   const key = conn + "/" + sid, { cols, rows } = size();
   if (!tabs.some((x) => x.key === key)) {
     try { await invoke("term_attach", { conn, sessionId: sid, cols, rows }); } catch (e) { return banner(msg(e), "err"); }
+    window.histMeta?.(conn, conns[conn]?.sessions.find((s) => s.session_id === sid) || { session_id: sid });
   }
   if (t.split) unsplit(t, false);
   t.split = { key, conn, sid };
@@ -270,6 +271,7 @@ async function openSession(conn, s) {
     try { ok = await invoke("term_attach", { conn, sessionId: s.session_id, cols, rows }); }
     catch (e) { return banner(msg(e), "err"); }
     tabs.push({ key, conn, sid: s.session_id, label: s.label, title: titleOf(conn, s), exited: ok.state === "exited" ? ok.exit_code ?? 0 : null });
+    window.histMeta?.(conn, s);
   }
   activate(key);
 }

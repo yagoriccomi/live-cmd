@@ -4,6 +4,7 @@
 
 mod agents;
 mod clip;
+mod hist;
 mod host;
 mod settings;
 mod ssh;
@@ -340,13 +341,15 @@ fn main() {
             term::remote_disconnect, term::remote_remove,
             term::term_export, term::term_export_file, term::term_clear, term::term_upload, term::term_conn_stats, term::term_busy, term::term_rename, term::remote_rename,
             agents::agent_list, agents::agent_resume, agents::agent_remove,
-            ssh::ssh_list, ssh::ssh_save, ssh::ssh_remove, ssh::ssh_probe, ssh::ssh_connect])
+            ssh::ssh_list, ssh::ssh_save, ssh::ssh_remove, ssh::ssh_probe, ssh::ssh_connect,
+            hist::hist_meta, hist::hist_list, hist::hist_clear])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
             let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: host::room_id(&dir)? })?;
             a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });
             a.manage(term::Term::default());
+            a.manage(hist::History::default());
             term::start(a.handle());
             tray(a.handle())?;
             refresh_tray(a.handle(), true);
