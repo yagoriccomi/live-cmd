@@ -68,8 +68,9 @@ fn parse_known(ty: &str, o: &Map<String, Value>) -> R<Req> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AgentState { Running, Exited, Saved }
 /// Sessão de IA. `session_id` é também o id da conversa (`--resume <id>`).
+/// `profile_id`: perfil em que a sessão foi criada (retomar usa o mesmo; ausente ou apagado = o primeiro).
 #[derive(Debug, Clone, PartialEq)]
-pub struct Agent { pub session_id: [u8; 16], pub agent: String, pub args: String, pub label: String, pub cwd: Option<String>, pub state: AgentState, pub last_activity_ms: u64 }
+pub struct Agent { pub session_id: [u8; 16], pub agent: String, pub args: String, pub label: String, pub cwd: Option<String>, pub state: AgentState, pub last_activity_ms: u64, pub profile_id: Option<String> }
 #[derive(Debug, Clone, PartialEq)]
 pub struct SshServer { pub server_id: String, pub label: String, pub host: String, pub user: String, pub port: u16, pub latency_ms: Option<u32> }
 #[derive(Debug, Clone, PartialEq)]
@@ -81,8 +82,8 @@ pub trait Provider: Send + Sync {
     /// Agentes gravados que não estão vivos agora (ex.: fechados, de outra execução). Retomar abre sessão com o mesmo id.
     fn saved_agents(&self) -> Vec<Agent> { vec![] }
     fn ssh_servers(&self) -> Vec<SshServer> { vec![] }
-    /// Linha digitada no shell para conectar (ex.: `ssh.exe -p 22 user@host`). Quem implementa valida os campos.
-    fn ssh_command(&self, _server_id: &str) -> Option<String> { None }
+    /// Destino do servidor para abrir a sessão com o `ssh.exe` direto (sem shell). O hub confere `check()` de novo.
+    fn ssh_target(&self, _server_id: &str) -> Option<crate::ssh::Ssh> { None }
     fn history(&self, _query: &str, _limit: usize) -> Vec<HistoryEntry> { vec![] }
     fn history_command(&self, _entry_id: &str) -> Option<String> { None }
 }
@@ -170,8 +171,8 @@ mod tests {
 
     fn agents() -> Vec<Agent> {
         vec![
-            Agent { session_id: sid(), agent: "claude".into(), args: String::new(), label: "api".into(), cwd: Some("C:/proj/api".into()), state: AgentState::Running, last_activity_ms: 1_700_000_000_000 },
-            Agent { session_id: uuid_v4_lower("2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e").unwrap(), agent: "codex".into(), args: String::new(), label: String::new(), cwd: None, state: AgentState::Saved, last_activity_ms: 5 },
+            Agent { session_id: sid(), agent: "claude".into(), args: String::new(), label: "api".into(), cwd: Some("C:/proj/api".into()), state: AgentState::Running, last_activity_ms: 1_700_000_000_000, profile_id: None },
+            Agent { session_id: uuid_v4_lower("2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e").unwrap(), agent: "codex".into(), args: String::new(), label: String::new(), cwd: None, state: AgentState::Saved, last_activity_ms: 5, profile_id: None },
         ]
     }
 
@@ -251,7 +252,7 @@ mod tests {
     fn provedor_padrao_vazio() {
         let p = Empty;
         assert!(p.ssh_servers().is_empty() && p.history("", 10).is_empty() && p.saved_agents().is_empty());
-        assert_eq!(p.ssh_command("srv-1"), None);
+        assert_eq!(p.ssh_target("srv-1"), None);
     }
 
     fn fixture(v: Value) {

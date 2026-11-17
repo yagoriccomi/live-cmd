@@ -243,9 +243,8 @@ impl Hub {
     fn extra(&mut self, r: extras::Req, now: u64) -> std::result::Result<Value, auth::Error> {
         use extras::Req as X;
         let p = extras::provider();
-        // Sessão nova no primeiro perfil, com uma linha digitada no shell (agente ou ssh).
-        let profile = self.profiles.first().map(|p| p.0.clone());
-        let first = || profile.clone().ok_or(auth::Error::NotFound);
+        // Agente retomado: o perfil gravado, se ainda existe; senão o primeiro (como a tela desktop).
+        let pick = |want: Option<&str>| self.profiles.iter().find(|p| Some(p.0.as_str()) == want).or(self.profiles.first()).map(|p| p.0.clone()).ok_or(auth::Error::NotFound);
         Ok(match r {
             X::Unsupported => return Err(auth::Error::VersionUnsupported),
             X::AgentList => extras::agent_list_ok(&extras::merge_agents(self.live_agents(), p.saved_agents())),
@@ -254,7 +253,9 @@ impl Hub {
                     let a = p.saved_agents().into_iter().find(|a| a.session_id == session_id).ok_or(auth::Error::NotFound)?;
                     let cwd = a.cwd.map(PathBuf::from).filter(|d| d.is_dir());
                     let label = Some(a.label).filter(|l| !l.is_empty());
-                    let sid = self.open(Some(session_id), &first()?, cwd, label, cols, rows, now)?;
+                    let profile = pick(a.profile_id.as_deref())?;
+                    // Mesmo caminho do `session_create` com `resume_id`: mesmo id, CLI com `--resume` se a conversa existe.
+                    let sid = self.open(Some(session_id), &profile, cwd, label, cols, rows, now)?;
                     self.start_ai(sid, a.agent, a.args, true);
                     self.save();
                 }
@@ -262,10 +263,12 @@ impl Hub {
             }
             X::SshList => extras::ssh_list_ok(&p.ssh_servers()),
             X::SshConnect { server_id, cols, rows } => {
-                let cmd = p.ssh_command(&server_id).ok_or(auth::Error::NotFound)?;
-                let label = p.ssh_servers().into_iter().find(|s| s.server_id == server_id).map(|s| s.label).filter(|l| !l.is_empty() && l.chars().count() <= 64);
-                let sid = self.open(None, &first()?, None, label, cols, rows, now)?;
-                self.s.type_in(&sid, format!("{cmd}\r").as_bytes());
+                // Como a tela desktop: o PTY roda o ssh.exe com o destino validado; nada é digitado num shell.
+                let target = p.ssh_target(&server_id).ok_or(auth::Error::NotFound)?;
+                if target.check().is_err() { return Err(auth::Error::InvalidMessage); }
+                let label = p.ssh_servers().into_iter().find(|s| s.server_id == server_id).map(|s| s.label).filter(|l| !l.is_empty()).map(|l| l.chars().take(64).collect());
+                let sid = self.open_ssh(None, target, None, label, cols, rows, now)?;
+                self.save();
                 extras::session_ok("ssh_connect_ok", &sid)
             }
             X::HistoryQuery { query, limit } => extras::history_query_ok(&p.history(&query, limit)),
@@ -288,6 +291,7 @@ impl Hub {
                 cwd: self.cwds.get(sid).map(|d| d.to_string_lossy().into_owned()),
                 state: if x["state"] == "exited" { extras::AgentState::Exited } else { extras::AgentState::Running },
                 last_activity_ms: x["last_activity_ms"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0),
+                profile_id: self.prof.get(sid).cloned(),
             })
         }).collect()
     }
@@ -1016,6 +1020,35 @@ mod tests {
         assert_eq!(h.ai.get(&id).map(|a| a.0.as_str()), Some("claude"));
         assert!(h.request(1, [0; 32], req(), now_ms()).is_err(), "id ainda vivo");
         let _ = h.s.close(id);
+    }
+    /// Celular: `ssh_connect` abre o ssh.exe direto com o destino do provedor (revalidado); `agent_resume` usa o perfil gravado.
+    #[test]
+    fn extras_usa_provedor() {
+        use extras::Req as X;
+        struct P;
+        impl extras::Provider for P {
+            fn ssh_servers(&self) -> Vec<extras::SshServer> { vec![extras::SshServer { server_id: "s1".into(), label: "srv".into(), host: "127.0.0.1".into(), user: "u".into(), port: 1, latency_ms: None }] }
+            fn ssh_target(&self, id: &str) -> Option<ssh::Ssh> {
+                let t = |user: &str| ssh::Ssh { user: user.into(), host: "127.0.0.1".into(), port: 1, key: None };
+                match id { "s1" => Some(t("u")), "bad" => Some(t("u;calc")), _ => None }
+            }
+            fn saved_agents(&self) -> Vec<extras::Agent> {
+                vec![extras::Agent { session_id: [0x6b; 16], agent: "claude".into(), args: String::new(), label: "app".into(), cwd: None, state: extras::AgentState::Saved, last_activity_ms: 1, profile_id: Some("test-b".into()) }]
+            }
+        }
+        extras::set_provider(Arc::new(P));
+        let prof = |id: &str| (id.to_string(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false });
+        let mut h = Hub { profiles: vec![prof("test-a"), prof("test-b")], ..Default::default() };
+        let v = h.extra(X::SshConnect { server_id: "s1".into(), cols: 80, rows: 24 }, now_ms()).unwrap();
+        let sid = auth::uuid_bytes(v["session_id"].as_str().unwrap()).unwrap();
+        assert_eq!((h.ssh.get(&sid).map(|t| t.port), h.prof.get(&sid).map(String::as_str)), (Some(1), Some(SSH_PROFILE)));
+        assert!(matches!(h.extra(X::SshConnect { server_id: "bad".into(), cols: 80, rows: 24 }, now_ms()), Err(auth::Error::InvalidMessage)), "destino inválido não abre");
+        assert!(matches!(h.extra(X::SshConnect { server_id: "x".into(), cols: 80, rows: 24 }, now_ms()), Err(auth::Error::NotFound)));
+        let v = h.extra(X::AgentResume { session_id: [0x6b; 16], cols: 80, rows: 24 }, now_ms()).unwrap();
+        assert_eq!(v["session_id"], proto::uuid_str(&[0x6b; 16]));
+        assert_eq!(h.prof.get(&[0x6b; 16]).map(String::as_str), Some("test-b"), "perfil gravado, não o primeiro");
+        let _ = h.s.close(sid);
+        let _ = h.s.close([0x6b; 16]);
     }
     fn text(data: &[u8], is_string: bool) -> Result<&str> {
         if !is_string || data.len()>16384 { return Err("message limit/type".into()); }
