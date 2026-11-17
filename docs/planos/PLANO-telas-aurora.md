@@ -30,8 +30,8 @@
 | Agentes | Nova sessão (agente, pasta, comandos extras) | sim | sim | `term_create` com agente / `agent_create` |
 | Agentes | Remover (encerra se aberta) com confirmação | sim | sim | `agent_remove` |
 | Agentes | Registro em `agents.json` com `used_ms` | sim | sim | `Provider::agent_started` (ponto único no host) |
-| Agentes | "Salvar como padrão" do agente | sim | não | só configuração local do desktop |
-| Agentes | Escolher outro PC pareado | sim | não | o celular fala com um PC por vez |
+| Agentes | "Salvar como padrão" do agente | sim | sim | `agent_default_get` / `agent_default_set` (`agent-default.json` no PC) |
+| Agentes | Escolher outro PC pareado | sim | não (por design) | o celular fala com um PC por vez |
 | SSH | Listar servidores com busca | sim | sim | `ssh_list` |
 | SSH | Status de alcance (testando, ms, host não encontrado, sem resposta, offline) | sim | sim | `ssh_list.status` / `ssh_probe` |
 | SSH | Testar alcance agora | sim | sim | `ssh_probe` |
@@ -39,7 +39,7 @@
 | SSH | Remover servidor com confirmação | sim | sim | `ssh_remove` |
 | SSH | Conectar (abre `ssh.exe` no PC) | sim | sim | `ssh_connect` |
 | SSH | Sessões SSH: abrir conectada, Reconectar desconectada | sim | sim | `ssh_list.sessions` / `ssh_reconnect` |
-| SSH | Procurar arquivo da chave | sim | não | seletor de arquivo do PC; no celular digita o caminho |
+| SSH | Procurar arquivo da chave | sim | sim | seletor de arquivo do PC / `ssh_key_list` (só em `%USERPROFILE%\.ssh`) |
 | Histórico | Busca por texto | sim | sim | `history_query.query` |
 | Histórico | Filtros últimos 7 dias, tipo de sessão, só erros | sim | sim | `history_query.days/kind/errors` |
 | Histórico | Agrupar por dia; hora, PC, rótulo, tipo, pasta, código de saída | sim | sim | `history_query_ok` |
