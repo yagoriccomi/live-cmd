@@ -189,11 +189,12 @@ impl Hub {
     }
     fn request(&mut self, conn: ConnId, pk: Pk, req: Req, now: u64) -> std::result::Result<Value, auth::Error> {
         Ok(match req {
-            Req::Create { profile_id, cols, rows, label, cwd, agent, args } => {
+            Req::Create { profile_id, cols, rows, label, cwd, agent, args, resume_id } => {
                 let cwd = cwd.map(PathBuf::from);
                 if cwd.as_ref().is_some_and(|d| !d.is_absolute() || !d.is_dir()) { return Err(auth::Error::NotFound); }
-                let sid = self.open(None, &profile_id, cwd, label, cols, rows, now)?;
-                if let Some(a) = agent { self.start_ai(sid, a, args.unwrap_or_default(), false); self.save(); }
+                // `resume_id`: mesmo id da sessão encerrada; o CLI retoma a conversa (`--resume`). Id ainda vivo é INVALID_MESSAGE.
+                let sid = self.open(resume_id, &profile_id, cwd, label, cols, rows, now)?;
+                if let Some(a) = agent { self.start_ai(sid, a, args.unwrap_or_default(), resume_id.is_some()); self.save(); }
                 json!({"type":"session_create_ok","session_id":proto::uuid_str(&sid)})
             }
             Req::List => json!({"type":"session_list_ok","sessions":self.s.list(),
@@ -914,6 +915,18 @@ mod tests {
         assert!(t.contains("marca-persist") && t.contains("sessão restaurada"), "{t}");
         let _ = b.s.close(keep);
         let _ = std::fs::remove_dir_all(dir);
+    }
+    /// Retomar agente encerrado: `session_create` com `resume_id` recria a sessão com o mesmo id; id vivo é recusado.
+    #[test]
+    fn create_resume_keeps_id() {
+        let mut h = Hub { profiles: vec![("test-cmd".to_string(), Profile { label: "cmd".into(), command: "cmd.exe".into(), osc: false })], ..Default::default() };
+        let id = [0x5au8; 16];
+        let req = || Req::Create { profile_id: "test-cmd".into(), cols: 80, rows: 24, label: Some("app · claude".into()), cwd: None, agent: Some("claude".into()), args: None, resume_id: Some(id) };
+        let v = h.request(1, [0; 32], req(), now_ms()).unwrap();
+        assert_eq!(v["session_id"], proto::uuid_str(&id));
+        assert_eq!(h.ai.get(&id).map(|a| a.0.as_str()), Some("claude"));
+        assert!(h.request(1, [0; 32], req(), now_ms()).is_err(), "id ainda vivo");
+        let _ = h.s.close(id);
     }
     fn text(data: &[u8], is_string: bool) -> Result<&str> {
         if !is_string || data.len()>16384 { return Err("message limit/type".into()); }

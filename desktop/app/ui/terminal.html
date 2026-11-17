@@ -7,6 +7,7 @@
 <script src="links.js" defer></script>
 <script src="terminal.js" defer></script>
 <script src="extras.js" defer></script>
+<script src="agents.js" defer></script>
 </head>
 <body class="term-body">
 <div class="term-layout" id="layout">
@@ -17,6 +18,7 @@
     <h3 id="h-remote">Outros PCs</h3>
     <ul id="remote-ul" aria-labelledby="h-remote"></ul>
     <button type="button" class="add" id="remote-add">+ Adicionar PC</button>
+    <button type="button" class="nav-tool" id="nav-agents" aria-controls="agents-panel" aria-expanded="false">Agentes de IA</button>
   </nav>
   <main class="term-main">
     <div class="term-bar">
@@ -46,6 +48,19 @@
         <div><p>Nenhum terminal aberto. Escolha uma sessão à esquerda ou crie uma nova.</p>
         <div class="actions center"><button type="button" class="btn-primary" id="empty-new">Nova sessão</button></div></div>
       </div>
+      <section class="tool-panel" id="agents-panel" aria-labelledby="ag-t" hidden>
+        <header class="tool-head">
+          <h2 id="ag-t">Agentes de IA</h2>
+          <label class="tool-conn">PC <select id="ag-conn"></select></label>
+          <span class="inline">
+            <button type="button" id="ag-reload">Atualizar</button>
+            <button type="button" class="btn-primary" id="ag-new">Nova sessão de agente</button>
+            <button type="button" id="ag-x" aria-label="Fechar Agentes (Esc)">×</button>
+          </span>
+        </header>
+        <p class="muted small" role="status" id="ag-state"></p>
+        <div class="ag-list" id="ag-list"></div>
+      </section>
     </div>
   </main>
 </div>
