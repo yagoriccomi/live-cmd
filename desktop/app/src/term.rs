@@ -306,6 +306,9 @@ pub fn term_input(app: AppHandle, conn: String, session_id: String, data: String
 #[tauri::command(async)]
 pub fn term_paste(app: AppHandle, conn: String, session_id: String) -> Result<(), String> {
     let text = clip::read_text()?.replace("\r\n", "\r").replace('\n', "\r");
+    // Sem texto (print/imagem): manda Ctrl+V cru; o programa (claude, codex…) lê a imagem do clipboard.
+    // ponytail: remoto lê o clipboard do outro PC; enviar a imagem pela conexão fica para quando pedirem.
+    if text.is_empty() { return client(&app, &conn)?.input(&session_id, b""); }
     let mut bracketed = false;
     with_view(&app, &conn, &session_id, |v| { bracketed = v.vt.screen().bracketed_paste(); v.vt.screen_mut().set_scrollback(0); });
     let data = if bracketed { format!("\x1b[200~{text}\x1b[201~") } else { text };

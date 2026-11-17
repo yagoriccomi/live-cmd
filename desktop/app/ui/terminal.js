@@ -166,6 +166,7 @@ function editInline(span, value, save) {
   const end = async (ok) => {
     if (done) return;
     done = true;
+    document.removeEventListener("pointerdown", down, true);
     const v = inp.value.trim();
     inp.replaceWith(span);
     if (tabsLater) { tabsLater = false; renderTabs(); }
@@ -174,7 +175,11 @@ function editInline(span, value, save) {
   inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") end(true); else if (e.key === "Escape") end(false); };
   inp.onkeyup = (e) => { e.stopPropagation(); e.preventDefault(); };
   inp.onclick = inp.ondblclick = inp.onmousedown = (e) => e.stopPropagation();
-  inp.onblur = () => end(false);
+  // Foco roubado (redesenho, atualização) não cancela: volta ao campo. Clique fora salva.
+  let out = false;
+  const down = (e) => { if (e.target !== inp) out = true; };
+  document.addEventListener("pointerdown", down, true);
+  inp.onblur = () => { if (done) return; if (out || !document.hasFocus()) { document.removeEventListener("pointerdown", down, true); end(true); } else setTimeout(() => inp.isConnected && inp.focus()); };
   span.replaceWith(inp);
   inp.focus();
   inp.select();
@@ -373,6 +378,7 @@ function newButton(conn) {
 }
 
 function renderSidebar() {
+  if ($("sidebar").querySelector("input.rename")) { tabsLater = true; return; }
   $("local-ul").replaceChildren(...conns[LOCAL].sessions.map((s) => sessionItem(LOCAL, s)));
   $("remote-ul").replaceChildren(...remoteOrder.map((id) => {
     const c = conns[id], st = c.status.state, li = el("li"), b = el("button");
@@ -682,8 +688,8 @@ function send(data) {
 const termKey = (e) => {
   if (e.isComposing || e.key === "Process" || e.key === "Dead") return;
   if (screenKey(e)) return;
-  if (e.ctrlKey && e.shiftKey && ["C", "V", "T", "W", "F6"].includes(e.key.length === 1 ? e.key.toUpperCase() : e.key)) return;
-  if (e.ctrlKey && (e.key === "Tab" || (!e.shiftKey && !e.altKey && e.key.toLowerCase() === "b"))) return;
+  if (e.ctrlKey && e.shiftKey && ["C", "V", "T", "W", "F6", "B"].includes(e.key.length === 1 ? e.key.toUpperCase() : e.key)) return;
+  if (e.ctrlKey && e.key === "Tab") return;
   const b = keyBytes(e);
   if (b == null) return;
   e.preventDefault();
@@ -728,7 +734,7 @@ document.addEventListener("keydown", (e) => {
     const i = tabs.findIndex((t) => t.key === active);
     if (tabs.length) activate(tabs[(i + (e.shiftKey ? tabs.length - 1 : 1)) % tabs.length].key);
   }
-  else if (e.ctrlKey && !e.shiftKey && !e.altKey && k === "B") {
+  else if (e.ctrlKey && e.shiftKey && !e.altKey && k === "B") {
     e.preventDefault();
     const c = $("layout").classList.toggle("collapsed");
     if (c && $("sidebar").contains(document.activeElement)) $("screen").focus();
@@ -797,7 +803,6 @@ function screenKey(e) {
   let done = true;
   const hit = Object.keys(SHORTCUTS).find((a) => keyName(e) === binds[a]);
   if (plain && k === "c" && hasSel()) copySel();
-  else if (plain && k === "+") zoom(1);
   else if (hit) SHORTCUTS[hit][1]();
   else if (k === "ContextMenu" || (e.shiftKey && k === "F10")) { const r = $("screen").getBoundingClientRect(); ctxMenu(r.left + 20, r.top + 20); }
   else done = false;
@@ -809,10 +814,10 @@ function screenKey(e) {
 function ctxMenu(x, y) {
   const at = { getBoundingClientRect: () => ({ left: x, bottom: y }), focus: () => $("screen").focus() };
   menu(at, [
-    ["Copiar   Ctrl+C", hasSel() ? copySel : null], ["Colar   Ctrl+V", paste], ["Selecionar tudo", selectAll], ["Buscar   Ctrl+F", openFind],
+    ["Copiar   Ctrl+C", hasSel() ? copySel : null], ["Colar   Ctrl+V", paste], ["Selecionar tudo", selectAll], ["Buscar   Ctrl+Shift+F", openFind],
     ["Nova sessão   Ctrl+Shift+T", action("new")], ["Nova sessão nesta pasta", action("new-here")], ["Reabrir aba fechada   Ctrl+Alt+T", reopen],["Renomear aba", action("rename")], ["Fechar aba   Ctrl+Shift+W", action("close")],
     ["Exportar saída", action("export")], ["Dividir painel", action("split")], ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
-    ["Aumentar fonte   Ctrl+=", () => zoom(1)], ["Diminuir fonte   Ctrl+-", () => zoom(-1)], ["Redefinir fonte   Ctrl+0", () => zoom(0)],
+    ["Aumentar fonte", () => zoom(1)], ["Diminuir fonte", () => zoom(-1)], ["Redefinir fonte", () => zoom(0)],
     ["Limpar", clearTab], ["Atalhos e ajuda   F1", () => help()],
   ].filter(([, fn]) => fn));
 }
@@ -936,17 +941,19 @@ window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload })
 
 // Ajuda (F1).
 const KEYS = [["Ctrl+C", "Copiar seleção (sem seleção: interrompe, ^C)"], ["Ctrl+V / Ctrl+Shift+V", "Colar"], ["Ctrl+Shift+C", "Copiar seleção"],
-  ["Ctrl+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba"],
-  ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
-  ["Ctrl+= / Ctrl+- / Ctrl+0", "Aumentar / diminuir / redefinir fonte"], ["Ctrl+roda do mouse", "Zoom da fonte"], ["Roda do mouse", "Rolar histórico"],
+  ["Ctrl+Shift+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba"],
+  ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+Shift+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
+  ["Ctrl+roda do mouse", "Zoom da fonte"], ["Roda do mouse", "Rolar histórico"],
   ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito", "Colar (com seleção: copiar)"], ["Shift+botão direito / Shift+F10 / ☰", "Menu do terminal"], ["Arrastar arquivo", "Local: cola o caminho · Remoto: envia ao outro PC"]];
 // Atalhos remapeáveis: ação fixa, tecla editável no F1 (clique na tecla e pressione a nova). Salvos no localStorage.
 const SHORTCUTS = {
-  paste: ["Colar", () => paste(), "Ctrl+V"], find: ["Buscar", () => openFind(), "Ctrl+F"], clear: ["Limpar", () => clearTab(), "Ctrl+Shift+K"],
-  zin: ["Aumentar fonte", () => zoom(1), "Ctrl+="], zout: ["Diminuir fonte", () => zoom(-1), "Ctrl+-"], z0: ["Redefinir fonte", () => zoom(0), "Ctrl+0"],
+  paste: ["Colar", () => paste(), "Ctrl+V"], find: ["Buscar", () => openFind(), "Ctrl+Shift+F"], clear: ["Limpar", () => clearTab(), "Ctrl+Shift+K"],
+  zin: ["Aumentar fonte", () => zoom(1), ""], zout: ["Diminuir fonte", () => zoom(-1), ""], z0: ["Redefinir fonte", () => zoom(0), ""],
   help: ["Esta ajuda", () => help(), "F1"],
 };
-const binds = { ...Object.fromEntries(Object.entries(SHORTCUTS).map(([a, s]) => [a, s[2]])), ...(() => { try { return JSON.parse(localStorage.getItem("term-keys") || "{}"); } catch { return {}; } })() };
+// Atalhos antigos (Ctrl+F, Ctrl+=…) iam contra programas do terminal: descartados se salvos.
+const OLD_KEYS = ["Ctrl+F", "Ctrl+=", "Ctrl+-", "Ctrl+0"];
+const binds = { ...Object.fromEntries(Object.entries(SHORTCUTS).map(([a, s]) => [a, s[2]])), ...(() => { try { return Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem("term-keys") || "{}")).filter(([, k]) => !OLD_KEYS.includes(k))); } catch { return {}; } })() };
 function keyName(e) {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
   return [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
