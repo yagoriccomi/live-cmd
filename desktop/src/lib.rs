@@ -137,6 +137,7 @@ impl Hub {
     /// Inicia (ou retoma) o CLI de IA dentro do shell da sessão; o id da conversa é o id da sessão.
     fn start_ai(&mut self, sid: Sid, agent: String, args: String, resume: bool) {
         let id = proto::uuid_str(&sid);
+        let resume = resume && (agent == "codex" || conversation_exists(&agent, &id));
         self.s.type_in(&sid, format!("{}\r", ai_cmd(&agent, &args, &id, resume)).as_bytes());
         self.ai.insert(sid, (agent, args));
         self.dirty = true;
@@ -300,6 +301,13 @@ struct Saved { id: String, profile: String, label: String, cwd: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")] ssh: Option<ssh::Ssh> }
 /// Perfil gravado das sessões SSH (o comando sai de `Saved::ssh`, não de `profiles.json`).
 const SSH_PROFILE: &str = "ssh";
+/// O CLI só grava a conversa após a primeira mensagem; sem ela `--resume` falha ("Nenhuma conversa encontrada").
+/// Arquivo: `~/.<agente>/projects/<pasta>/<id>.jsonl` (procura em todas: a pasta da aba pode ter mudado).
+fn conversation_exists(agent: &str, id: &str) -> bool {
+    let Some(home) = std::env::var_os("USERPROFILE") else { return false };
+    let Ok(dirs) = std::fs::read_dir(PathBuf::from(home).join(format!(".{agent}")).join("projects")) else { return false };
+    dirs.flatten().any(|d| d.path().join(format!("{id}.jsonl")).is_file())
+}
 /// Linha digitada no shell para iniciar/retomar o agente. `args` já validado no proto (sem metacaracteres de shell).
 // ponytail: codex não aceita id na criação; retoma a última conversa da pasta (`resume --last`).
 fn ai_cmd(agent: &str, args: &str, id: &str, resume: bool) -> String {
