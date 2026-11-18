@@ -92,7 +92,9 @@
   const gb = (b) => (b / 2 ** 30).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " GB";
   async function sysStats() {
     if (document.hidden) return;
-    const v = await invoke("sys_stats").catch(() => null);
+    const conn = activeTab()?.conn || LOCAL;
+    if (conns[conn]?.status?.state !== "ready") return;
+    const v = await invoke("sys_stats", { conn }).catch(() => null);
     if (!v) return;
     if (v.cpu != null) setStat(1, Math.round(v.cpu) + "%", v.cores ? plural(v.cores, "núcleo", "núcleos") : "");
     if (v.mem_total) setStat(2, gb(v.mem_used), "de " + Math.round(v.mem_total / 2 ** 30) + " GB");

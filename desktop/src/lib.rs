@@ -7,6 +7,7 @@ mod files;
 mod proto;
 mod screen;
 mod session;
+pub mod stats;
 pub mod ssh;
 pub use client::{Client, ClientEvent, RemotePin, parse_pair_link};
 pub use screen::cursor_line;
@@ -392,6 +393,7 @@ impl Hub {
                 self.extra(r, now)?
             }
             Req::Dirs(path) => json!({"type":"dir_list_ok","dirs":list_dirs(&path)}),
+            Req::Stats => { let mut v = stats::sys_stats(); v["type"] = "sys_stats_ok".into(); v }
         })
     }
     /// Telas do celular (`extras.rs`). Dados das fatias desktop vêm de `extras::provider()`.
@@ -1085,6 +1087,8 @@ async fn negotiate(id: &str, rid: [u8; 16], host: Arc<Host>, mut stop: tokio::sy
                             ended=c.is_empty(); if !ended { candidates+=1; if candidates>256 { return Err("ice limit".into()); } }
                             pc.add_ice_candidate(serde_json::from_value(p.clone())?).await?;
                         }
+                        // O Worker derruba o cliente na sala aos 300 s; com o canal já aberto a sessão segue só pelo WebRTC.
+                        Some("close") if live.is_some() && matches!(p["reason"].as_str(), Some("timeout" | "peer_left")) => { inbox_closed = true; }
                         Some("close") if matches!(p["reason"].as_str(), Some("done" | "timeout" | "peer_left" | "protocol_error")) => return Ok(()),
                         Some("error") if p["code"] == "INVALID_MESSAGE" && p["message"].is_string() => return Err("signaling error".into()),
                         _ => return Err("signal phase".into())

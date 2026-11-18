@@ -83,6 +83,7 @@ pub enum Req {
     Extra(crate::extras::Req),
     /// Subpastas de `path` (vazio: unidades) para escolher a pasta do agente.
     Dirs(String),
+    Stats,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Control {
@@ -128,6 +129,7 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
             Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label, cwd, agent, args, resume_id, ssh }
         }
         "session_list" => { fields(&[], &[])?; Req::List }
+        "sys_stats" => { fields(&[], &[])?; Req::Stats }
         "dir_list" => {
             fields(&["path"], &[])?;
             let p = s("path")?;

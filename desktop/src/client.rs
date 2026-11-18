@@ -318,6 +318,8 @@ async fn attempt_once(pin: &RemotePin, otk: Option<[u8; 32]>, sk: &SigningKey, s
         let mut attached = std::collections::HashSet::new();
         let (utx, urx) = mpsc::unbounded_channel();
         let pump = tokio::spawn(file_pump(fc.clone(), id.clone(), urx));
+        // O Worker fecha o WS do cliente aos 300 s (room.ts); depois disso a sessão vive só pelo WebRTC.
+        let mut ws_open = true;
         let r: std::result::Result<(), Stop> = async { loop {
             tokio::select! {
                 o = rx.recv() => match o {
@@ -346,7 +348,7 @@ async fn attempt_once(pin: &RemotePin, otk: Option<[u8; 32]>, sk: &SigningKey, s
                     _ => {}
                 },
                 e = erx.recv() => if matches!(e, Some(Event::Failed) | None) { return Err(Stop::Net) },
-                f = ws.next() => if !matches!(f, Some(Ok(tokio_tungstenite::tungstenite::Message::Text(_)))) { return Err(Stop::Net) },
+                f = ws.next(), if ws_open => if !matches!(f, Some(Ok(tokio_tungstenite::tungstenite::Message::Text(_)))) { ws_open = false },
             }
         } }.await;
         pump.abort();
