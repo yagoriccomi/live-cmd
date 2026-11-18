@@ -8,7 +8,7 @@ import { C, TAB_SPACE, ago, errText } from './theme.ts';
 
 const STATE: Record<AgentState, { color: string; text: string }> = {
   running: { color: C.ok, text: 'em execução' },
-  saved: { color: C.warn, text: 'gravado' },
+  saved: { color: C.ok, text: 'gravado' },
   exited: { color: C.err, text: 'encerrado' },
 };
 

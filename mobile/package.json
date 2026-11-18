@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --require ../desktop/scripts/hidden-processes.cjs --experimental-strip-types --test src/auth.test.ts src/pty.test.ts src/extras.test.ts",
+    "test": "node --require ../desktop/scripts/hidden-processes.cjs --experimental-strip-types --test src/auth.test.ts src/pty.test.ts src/extras.test.ts src/keys.test.ts",
     "typecheck": "tsc --noEmit",
     "android": "expo run:android"
   },
