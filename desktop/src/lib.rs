@@ -190,16 +190,21 @@ impl Hub {
     #[cfg(test)]
     fn handle_close_for_test(&mut self, sid: Sid) { let _ = self.s.close(sid); self.forget(&[sid]); self.dirty = true; }
     /// Grava `sessions.json` (tmp + rename) se algo mudou.
+    /// Sob o lock do hub só copia os dados; cifrar (DPAPI) e escrever no disco vão para a thread de gravação,
+    /// senão o terminal (saída e digitação) parava a cada gravação.
     fn save(&mut self) {
-        let Some(path) = self.store.clone().filter(|_| self.dirty) else { return };
+        if let Some((path, list)) = self.snapshot() { save_later(path, list); }
+    }
+    /// Cópia do que gravar (sem cifrar), com o número de ordem; `None` se nada mudou.
+    fn snapshot(&mut self) -> Option<(PathBuf, Job)> {
+        let path = self.store.clone().filter(|_| self.dirty)?;
         self.dirty = false;
-        let list: Vec<Saved> = self.s.saved(SAVED_TAIL).into_iter().filter_map(|(sid, label, cols, rows, tail)| Some(Saved {
-            id: proto::uuid_str(&sid), profile: self.prof.get(&sid)?.clone(), label, cwd: self.cwds.get(&sid).cloned(), cols, rows, tail: B64.encode(dpapi(&tail, true).unwrap_or_default()),
+        let list: Vec<(Saved, Vec<u8>)> = self.s.saved(SAVED_TAIL).into_iter().filter_map(|(sid, label, cols, rows, tail)| Some((Saved {
+            id: proto::uuid_str(&sid), profile: self.prof.get(&sid)?.clone(), label, cwd: self.cwds.get(&sid).cloned(), cols, rows, tail: String::new(),
             agent: self.ai.get(&sid).map(|a| a.0.clone()), args: self.ai.get(&sid).map(|a| a.1.clone()).unwrap_or_default(),
             ssh: self.ssh.get(&sid).cloned(),
-        })).collect();
-        // ponytail: falha ao gravar é silenciosa (sem console no app); tenta de novo no próximo save.
-        let _ = write_saved(&path, &list);
+        }, tail))).collect();
+        Some((path, (SAVE_SEQ.fetch_add(1, Relaxed) + 1, list)))
     }
     /// Recria as sessões do disco: mesmo id, perfil, rótulo e pasta; a saída salva volta como histórico.
     fn restore(&mut self, list: Vec<Saved>) {
@@ -574,6 +579,39 @@ fn ai_cmd_resume() {
     assert_eq!(ai_cmd("codex", "", "u1", true), "codex resume --last");
     let s: Saved = serde_json::from_str(r#"{"id":"a","profile":"p","label":"","cwd":null,"cols":1,"rows":1,"tail":""}"#).unwrap();
     assert_eq!((s.agent, s.args), (None, String::new()));
+}
+/// Pedido de gravação: número de ordem e sessões com a saída ainda sem cifrar.
+type Job = (u64, Vec<(Saved, Vec<u8>)>);
+static SAVE_SEQ: AtomicU64 = AtomicU64::new(0);
+/// Último número gravado; o lock também impede duas gravações ao mesmo tempo.
+static SAVE_DONE: Mutex<u64> = Mutex::new(0);
+/// Cifra as saídas e grava, fora do lock do hub; pedido mais velho que o já gravado é descartado.
+/// Falha é silenciosa (sem console no app) e o próximo save tenta de novo.
+fn write_pending(path: &Path, (seq, list): Job) {
+    let mut done = SAVE_DONE.lock().unwrap();
+    if seq <= *done { return; }
+    let list: Vec<Saved> = list.into_iter().map(|(mut s, tail)| { s.tail = B64.encode(dpapi(&tail, true).unwrap_or_default()); s }).collect();
+    if write_saved(path, &list).is_ok() { *done = seq; }
+}
+/// Testes: grava na hora (leem o arquivo logo depois).
+#[cfg(test)]
+fn save_later(path: PathBuf, job: Job) { write_pending(&path, job); }
+/// Uma thread de gravação; se chegarem vários pedidos enquanto grava, só o mais novo é escrito.
+#[cfg(not(test))]
+fn save_later(path: PathBuf, job: Job) {
+    use std::sync::mpsc;
+    static TX: OnceLock<Mutex<mpsc::Sender<(PathBuf, Job)>>> = OnceLock::new();
+    let tx = TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<(PathBuf, Job)>();
+        std::thread::Builder::new().name("live-cmd-save".into()).spawn(move || {
+            while let Ok(mut job) = rx.recv() {
+                while let Ok(newer) = rx.try_recv() { job = newer; }
+                write_pending(&job.0, job.1);
+            }
+        }).expect("thread de gravação");
+        Mutex::new(tx)
+    });
+    let _ = tx.lock().unwrap().send((path, job));
 }
 fn write_saved(path: &Path, list: &[Saved]) -> std::io::Result<()> {
     let tmp = path.with_extension("json.tmp");
@@ -1213,7 +1251,9 @@ impl Service {
     }
     /// Encerra a tentativa atual e o laço; espera a thread (a PeerConnection fecha em até 2 s).
     pub fn stop(&self) {
-        hub().save();
+        // Ao sair, grava já (síncrono, fora do lock do hub): o app vai fechar.
+        let snap = { let mut h = hub(); h.dirty = true; h.snapshot() };
+        if let Some((path, job)) = snap { write_pending(&path, job); }
         self.0.stop.send_replace(true);
         let t = self.0.thread.lock().unwrap().take();
         if let Some(t) = t { let _ = t.join(); }
