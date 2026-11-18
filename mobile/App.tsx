@@ -18,6 +18,7 @@ import { DEFAULT_PREFS, loadPrefs, savePrefs, type Prefs } from './src/prefs.ts'
 import { C, errText } from './src/screens/theme.ts';
 import { Banner, Shell } from './src/screens/aurora.tsx';
 import { agentList } from './src/extras.ts';
+import { longRun } from './src/done.ts';
 import { FONTS } from './src/screens/fonts.ts';
 
 // Mesmo servidor padrão do desktop (desktop/app/src/settings.rs DEFAULT_SERVER).
@@ -62,7 +63,8 @@ export default function App() {
   // "Vibrar ao concluir": comando terminou (OSC 133 `command_completed`) ou agente pediu confirmação.
   useEffect(() => {
     if (!live) { setWaiting(null); return; }
-    live.onCommandDone = () => { if (prefsRef.current.vibrate) Vibration.vibrate(40); };
+    // Só comando que durou mais de 10 s (do último Enter ao OSC 133;D).
+    live.onCommandDone = () => { if (prefsRef.current.vibrate && longRun(live.lastEnterMs, Date.now())) Vibration.vibrate(40); };
     live.onAgentWaiting = e => {
       setAgentsRev(n => n + 1);
       if (e.waiting) {

@@ -45,6 +45,8 @@ export class Conn {
   onAgentWaiting?: (e: Extract<ExtraMsg, { t: 'agent_waiting' }>) => void;
   /** `command_completed` (OSC 133;D) da sessão exibida: o host já repassa às conexões anexadas. */
   onCommandDone?: (exitCode?: number) => void;
+  /** Hora (ms) do último Enter enviado: mede a duração do comando para "Vibrar ao concluir". */
+  lastEnterMs?: number;
   private done = false;
 
   constructor(private pin: Pin, private seed: Bytes, private otk: Bytes | undefined, private h: Handlers) {}
@@ -172,6 +174,7 @@ export class Conn {
 
   input(data: Bytes) {
     if (!this.sid || this.done) return;
+    if (data.includes(13)) this.lastEnterMs = Date.now();
     for (let i = 0; i < data.length; i += 16384) {
       this.seq += 1n;
       this.dc.send(encodeFrame({ sessionId: this.sid, seq: this.seq, op: { t: 'input', data: data.slice(i, i + 16384) } }));
