@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Conn } from '../conn.ts';
-import { HISTORY_KINDS, groupByDay, historyClear, historyQuery, historyRun, summarizeSessions, type HistoryEntry } from '../extras.ts';
+import { HISTORY_KINDS, groupByDay, historyClear, historyQuery, historyRun, summarizeSessions, type HistoryEntry, type HistorySession } from '../extras.ts';
 import { Dot, Notice, OFFLINE, OLD_HOST, confirm, useRemote } from './common.tsx';
 import { Chip, GroupLabel, Hero, HeroBtn, IconBtn, ListPanel, Panel, Row, Section, TopBar, screen, tl as t } from './aurora.tsx';
 import { C, F, TAB_SPACE, errText } from './theme.ts';
@@ -21,9 +21,16 @@ export function HistoryScreen({ conn, onRan }: { conn: Conn | null; onRan: () =>
   const [week, setWeek] = useState(false);
   const [kind, setKind] = useState<string | null>(null);
   const [errors, setErrors] = useState(false);
-  const load = useCallback(() => conn!.extra(historyQuery({ query: applied, limit: LIMIT, days: week ? 7 : null, kind, errors }))
-    .then(r => r.entries as HistoryEntry[]), [conn, applied, week, kind, errors]);
-  const { data, err, busy, reload } = useRemote(ok ? load : null);
+  // Com o cap `history_sessions` o resumo "Sessões" vem do host (por sessão, PC e dia, sobre o histórico inteiro do filtro);
+  // sem ele, é calculado aqui sobre os comandos recebidos.
+  const ext = !!conn && conn.caps.includes('history_sessions');
+  const load = useCallback(() => conn!.extra(historyQuery({ query: applied, limit: LIMIT, days: week ? 7 : null, kind, errors, ext }))
+    .then(r => ({ entries: r.entries as HistoryEntry[], sessions: r.sessions as HistorySession[] | undefined })), [conn, applied, week, kind, errors, ext]);
+  const { data: res, err, busy, reload } = useRemote(ok ? load : null);
+  const data = res?.entries;
+  const sessions = !data ? [] : res?.sessions
+    ? res.sessions.map(x => ({ key: `${x.kind}|${x.label}|${x.pc}|${x.day}`, label: x.label || x.kind, kind: x.kind, count: x.count, errors: x.errors, lastMs: x.lastMs }))
+    : summarizeSessions(data).map(x => ({ key: `${x.kind}|${x.label}`, ...x, errors: 0 }));
   const [msg, setMsg] = useState('');
   const filtered = !!(applied || week || kind || errors);
 
@@ -52,18 +59,18 @@ export function HistoryScreen({ conn, onRan }: { conn: Conn | null; onRan: () =>
         {ok && <HeroBtn title="Filtrar" primary onPress={() => setApplied(query.trim())} label="Buscar no histórico" />}
         {ok && <HeroBtn title="Limpar histórico" disabled={!data?.length && !filtered} onPress={clear} />}
       </Hero>
-      {ok && !!data?.length && (
+      {ok && !!data?.length && sessions.length > 0 && (
         <>
           <Section text="Sessões" />
           <ListPanel style={{ maxHeight: 132 }}>
             <ScrollView nestedScrollEnabled contentContainerStyle={{ gap: 4 }}>
-              {summarizeSessions(data).map(x => {
+              {sessions.map(x => {
                 const when = `${groupByDay([{ ...data[0], atMs: x.lastMs }])[0].day.toLowerCase()} ${new Date(Number(x.lastMs)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
                 const on = kind === x.kind;
                 return (
-                  <Row key={x.kind + x.label} icon={x.kind === 'ssh' ? '⇄' : '›_'} title={x.label} sub={when} selected={on}
-                    status={{ color: C.ok, text: String(x.count) }} onPress={() => setKind(on ? null : x.kind)}
-                    label={`${x.label}: ${x.count} comando${x.count > 1 ? 's' : ''}, último ${when}. ${on ? 'Mostrar todas' : `Só ${HISTORY_KINDS[x.kind] ?? x.kind}`}`} />
+                  <Row key={x.key} icon={x.kind === 'ssh' ? '⇄' : '›_'} title={x.label} sub={when} selected={on}
+                    status={{ color: x.errors ? C.err : C.ok, text: String(x.count) }} onPress={() => setKind(on ? null : x.kind)}
+                    label={`${x.label}: ${x.count} comando${x.count > 1 ? 's' : ''}${x.errors ? `, ${x.errors} com erro` : ''}, último ${when}. ${on ? 'Mostrar todas' : `Só ${HISTORY_KINDS[x.kind] ?? x.kind}`}`} />
                 );
               })}
             </ScrollView>
