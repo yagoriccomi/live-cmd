@@ -20,6 +20,8 @@
   let list = [];
   const status = {}; // id → { ok, ms?, code? } | "testing"
   let opener = null;
+  let selected = null; // id do servidor em destaque (lista à esquerda, cartão e Configuração à direita)
+  let filter = "all";  // all | on | off
 
   // ---------- Painel ----------
   function openPanel() {
@@ -94,25 +96,65 @@
     if (!s) return ["muted", "○", "não testado"];
     if (s === "testing") return ["dot-warn", "◌", "testando…"];
     if (s.ok) return ["dot-ok", "●", `${s.ms} ms`];
+    if (s.code === "OFFLINE") return ["muted", "○", "offline"];
     return ["dot-err", "⚠", s.code === "DNS" ? "host não encontrado" : s.code === "TIMEOUT" ? "sem resposta" : s.code === "OFFLINE" ? "offline" : "erro"];
   }
 
   function render() {
     const q = $("ssh-q").value.trim().toLowerCase();
-    const shown = list.filter((s) => !q || `${s.name} ${s.user}@${s.host}:${s.port}`.toLowerCase().includes(q));
+    const isOn = (s) => status[s.id]?.ok === true;
+    const shown = list.filter((s) => (!q || `${s.name} ${s.user}@${s.host}:${s.port}`.toLowerCase().includes(q))
+      && (filter === "all" || (filter === "on" ? isOn(s) : !isOn(s))));
+    if (!shown.some((s) => s.id === selected)) selected = shown[0]?.id ?? null;
+    $("ssh-q").hidden = list.length < 8;
+    $("ssh-sub").textContent = `${list.length === 1 ? "1 servidor" : `${list.length} servidores`} · ${list.filter(isOn).length} online`;
     $("ssh-list").replaceChildren(...shown.map(row));
+    cfgRows(list.find((s) => s.id === selected));
     $("ssh-empty").hidden = shown.length > 0;
     $("ssh-empty").textContent = list.length ? "Nenhum servidor encontrado para essa busca." : "Nenhum servidor salvo. Clique em “+ Adicionar servidor”.";
   }
   $("ssh-q").oninput = render;
+  $("ssh-chips").addEventListener("click", (e) => {
+    const c = e.target.closest("button.chip[data-f]");
+    if (!c) return;
+    filter = c.dataset.f;
+    for (const x of $("ssh-chips").querySelectorAll("[data-f]")) x.setAttribute("aria-pressed", String(x === c));
+    render();
+  });
+
+  // Cartão "Configuração" do servidor em destaque: as mesmas opções do diálogo Editar, ao alcance de um toque.
+  function cfgRows(s) {
+    const box = $("ssh-cfg");
+    $("ssh-cfg-t").hidden = box.hidden = !s;
+    if (!s) return box.replaceChildren();
+    const li = (...kids) => { const x = el("li", "cfg-row"); x.append(...kids); return x; };
+    const retry = el("input"); retry.type = "checkbox"; retry.setAttribute("role", "switch"); retry.checked = !!s.auto_reconnect;
+    const rl = el("label", "check toggle"); rl.append(retry, el("span", null, "Reconectar ao cair"));
+    retry.onchange = async () => {
+      try { await invoke("ssh_save", { server: { ...s, auto_reconnect: retry.checked } }); s.auto_reconnect = retry.checked; }
+      catch (e) { retry.checked = !retry.checked; banner(sshMsg(e), "err"); }
+    };
+    const more = (label, value, fn) => { const b = el("button", "cfg-link", ""); b.type = "button"; b.append(el("span", null, label), el("span", "cfg-v", value + " ›")); b.onclick = fn; return li(b); };
+    const del = el("button", "cfg-link danger", ""); del.type = "button"; del.append(el("span", null, "Excluir servidor"), el("span", "cfg-v", "›")); del.onclick = () => remove(s);
+    box.replaceChildren(li(rl), more("Manter vivo", s.keepalive_s ? `${s.keepalive_s} s` : "desligado", () => edit(s)),
+      more("Chave privada", s.key ? s.key.split(/[\/]/).pop() : "padrão", () => edit(s)), li(del));
+  }
+  // Comando equivalente para colar em outro terminal (sem senha: ela nunca é guardada).
+  window.sshCommand = (s) => `ssh${s.key ? ` -i "${s.key}"` : ""}${s.port !== 22 ? ` -p ${s.port}` : ""} ${s.user}@${s.host}`;
 
   function row(s) {
     const li = el("li");
+    li.dataset.id = s.id;
+    if (s.id === selected) { li.classList.add("on"); li.setAttribute("aria-current", "true"); }
+    li.addEventListener("click", (e) => { if (e.target.closest("button")) return; selected = s.id; render(); });
     const [cls, dot, label] = statusText(s.id);
     const d = el("span", cls, dot);
     d.setAttribute("aria-hidden", "true");
     const info = el("div", "ssh-info");
-    info.append(el("div", "ssh-name", s.name), el("div", "muted small mono ssh-dest", `${s.user}@${s.host}:${s.port}` + (s.key ? " · chave" : "") + (s.keepalive_s ? ` · vivo ${s.keepalive_s}s` : "") + (s.auto_reconnect ? " · reconecta" : "")));
+    info.append(el("div", "ssh-name", s.name), el("div", "muted small mono ssh-dest", `${s.user}@${s.host}` + (s.port !== 22 ? `:${s.port}` : "")));
+    li.dataset.sub = `${s.user}@${s.host} : ${s.port}`;
+    li.dataset.ms = status[s.id]?.ok ? String(status[s.id].ms) : "";
+    li.dataset.key = s.key || "";
     const st = el("span", "muted small ssh-st", label);
     st.setAttribute("role", "status");
     const acts = el("div", "ssh-acts");
@@ -121,6 +163,7 @@
       btn("Conectar", "btn-primary", () => connect(s), `Conectar a ${s.name}`),
       btn("Testar", null, () => probe(s), `Testar alcance de ${s.name}`),
       btn("Editar", null, () => edit(s), `Editar ${s.name}`),
+      btn("Copiar comando", null, () => copyCmd(s), `Copiar comando ssh de ${s.name}`),
       btn("Remover", null, () => remove(s), `Remover ${s.name}`));
     li.append(d, info, st, acts);
     return li;
@@ -145,6 +188,11 @@
       await openSession(LOCAL, { session_id: sid, label: s.name, state: "running" });
       refresh(LOCAL);
     } catch (e) { banner(sshMsg(e), "err"); }
+  }
+
+  async function copyCmd(s) {
+    try { await navigator.clipboard.writeText(window.sshCommand(s)); banner("Comando copiado. A senha não faz parte dele.", "ok"); }
+    catch { banner("Não foi possível copiar o comando.", "err"); }
   }
 
   // ---------- Remover ----------

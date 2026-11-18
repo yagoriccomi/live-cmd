@@ -76,9 +76,12 @@
           <h2 id="ssh-h">Servidores</h2>
           <button type="button" class="btn-primary" id="ssh-add">+ Servidor</button>
         </div>
-        <p class="side-sub">Conectar abre uma aba com o ssh.exe do Windows. A senha é pedida no terminal e nunca é salva.</p>
-        <div class="chips">
-          <input type="search" id="ssh-q" aria-label="Buscar servidor" placeholder="Buscar por nome, usuário ou host" autocomplete="off" spellcheck="false">
+        <p class="side-sub" id="ssh-sub" role="status">Servidores salvos neste PC</p>
+        <div class="chips" id="ssh-chips">
+          <button type="button" class="chip" data-f="all" aria-pressed="true">Todos</button>
+          <button type="button" class="chip" data-f="on" aria-pressed="false">Online</button>
+          <button type="button" class="chip" data-f="off" aria-pressed="false">Offline</button>
+          <input type="search" id="ssh-q" aria-label="Buscar servidor" placeholder="Buscar" autocomplete="off" spellcheck="false" hidden>
           <button type="button" class="chip pane-x" id="ssh-x" aria-label="Voltar ao terminal" title="Voltar ao terminal">×</button>
         </div>
         <ul class="ssh-list cards" id="ssh-list" aria-label="Servidores salvos"></ul>
@@ -88,8 +91,10 @@
         <div class="hero" id="ssh-hero"></div>
         <div class="stats" id="ssh-stats"></div>
         <div class="term-card pane-c">
+          <h3 class="card-t" id="ssh-cfg-t">Configuração</h3>
+          <ul class="cfg-rows" id="ssh-cfg" aria-label="Configuração do servidor"></ul>
           <h3 class="card-t" id="ssh-sess-t">Sessões SSH neste PC</h3>
-          <p class="muted small" id="ssh-sess-none">Nenhuma sessão SSH aberta.</p>
+          <p class="muted small" id="ssh-sess-none">Nenhuma sessão SSH aberta. Conectar abre uma aba com o ssh.exe do Windows; a senha é pedida no terminal e nunca é salva.</p>
           <section id="ssh-sess-box" aria-labelledby="ssh-sess-h" hidden>
             <h3 id="ssh-sess-h" class="sr-only">Sessões SSH neste PC</h3>
             <p class="muted small">Sessões restauradas ao reiniciar voltam desconectadas: Reconectar abre o ssh.exe de novo na mesma aba.</p>
@@ -120,38 +125,46 @@
             <button type="button" class="btn-primary" id="ag-new">+ Novo agente</button>
           </header>
           <p class="side-sub" role="status" id="ag-state"></p>
-          <div class="chips">
+          <div class="chips" id="ag-chips" role="group" aria-label="Filtro"></div>
+          <div class="chips tool-conn-row" id="ag-conn-row" hidden>
             <label class="tool-conn">PC <select id="ag-conn"></select></label>
             <button type="button" class="chip" id="ag-reload">Atualizar</button>
-            <button type="button" class="chip pane-x" id="ag-x" aria-label="Fechar Agentes (Esc)">×</button>
           </div>
+          <button type="button" class="chip pane-x" id="ag-x" aria-label="Fechar Agentes (Esc)">×</button>
           <div class="ag-list" id="ag-list"></div>
         </div>
         <div class="pane-r" aria-label="Resumo dos agentes">
           <div class="hero" id="ag-hero"></div>
           <div class="stats" id="ag-stats"></div>
-          <div class="term-card pane-c"><h3 class="card-t">Pastas</h3><ul class="tl" id="ag-dirs"></ul></div>
+          <div class="term-card pane-c"><h3 class="card-t">Retomar com --resume</h3><div id="ag-resume"></div></div>
         </div>
       </section>
       <section class="hist-panel aurora-pane" id="hist" aria-labelledby="hist-t" hidden>
         <div class="pane-l">
           <header class="hist-head side-head">
             <h2 id="hist-t">Histórico</h2>
-            <button type="button" class="btn-danger" id="hist-clear">Limpar histórico</button>
+            <button type="button" class="btn-primary" id="hist-export" title="Copia os comandos filtrados">+ Exportar</button>
           </header>
-          <p class="side-sub" id="hist-n" role="status"></p>
-          <div class="hist-filters chips" role="search">
-            <input type="text" id="hist-q" aria-label="Buscar comandos" placeholder="Buscar comandos" autocomplete="off" spellcheck="false">
-            <label class="hist-chk chip"><input type="checkbox" id="hist-7d"> 7 dias</label>
-            <select id="hist-kind" aria-label="Tipo de sessão">
-              <option value="">Todas as sessões</option><option value="pwsh">PowerShell</option><option value="cmd">Prompt de Comando</option>
+          <p class="side-sub" id="hist-n" role="button" tabindex="0" aria-label="Buscar comandos" aria-live="polite"></p>
+          <input type="text" id="hist-q" class="side-sub hist-q" aria-label="Buscar comandos" placeholder="Buscar comandos" autocomplete="off" spellcheck="false" hidden>
+          <div class="chips" id="hist-chips" role="search">
+            <button type="button" class="chip" data-h="7d" aria-pressed="false">7 dias</button>
+            <button type="button" class="chip" data-h="shell" aria-pressed="false">Shell</button>
+            <button type="button" class="chip" data-h="ssh" aria-pressed="false">SSH</button>
+            <button type="button" class="chip" data-h="err" aria-pressed="false">Só erros</button>
+            <button type="button" class="chip pane-x" id="hist-x" aria-label="Fechar histórico (Esc)">×</button>
+          </div>
+          <div class="sr-only">
+            <label class="hist-chk chip"><input type="checkbox" id="hist-7d" tabindex="-1"> 7 dias</label>
+            <select id="hist-kind" aria-label="Tipo de sessão" tabindex="-1">
+              <option value="">Todas as sessões</option><option value="shell">Shell</option><option value="pwsh">PowerShell</option><option value="cmd">Prompt de Comando</option>
               <option value="wsl">WSL / bash</option><option value="ssh">SSH</option><option value="outro">Outras</option>
             </select>
-            <label class="hist-chk chip"><input type="checkbox" id="hist-err"> Só erros</label>
-            <button type="button" class="chip pane-x" id="hist-x" aria-label="Fechar histórico (Esc)">×</button>
+            <label class="hist-chk chip"><input type="checkbox" id="hist-err" tabindex="-1"> Só erros</label>
           </div>
           <ul class="cards" id="hist-sess" aria-label="Sessões no histórico"></ul>
           <p class="muted small hist-note">Gravado só neste PC. Linhas digitadas em pedidos de senha não são gravadas.</p>
+          <button type="button" class="btn-danger hist-clear" id="hist-clear">Limpar histórico</button>
         </div>
         <div class="pane-r">
           <div class="hero" id="hist-hero"></div>
@@ -167,13 +180,18 @@
             <button type="button" class="btn-primary" data-act="pair">+ Novo código</button>
           </header>
           <p class="side-sub">Seus terminais no bolso</p>
-          <div class="chips"><button type="button" class="chip pane-x" id="pp-x" aria-label="Fechar pareamento (Esc)">×</button></div>
-          <ol class="cards pair-steps" aria-label="Como parear">
-            <li class="card on"><span class="tile" aria-hidden="true">1</span><span class="card-txt"><span class="card-t">Instale o app</span><span class="card-s">live-cmd no celular</span></span></li>
-            <li class="card"><span class="tile" aria-hidden="true">2</span><span class="card-txt"><span class="card-t">Leia o código</span><span class="card-s">câmera do app</span></span></li>
-            <li class="card"><span class="tile" aria-hidden="true">3</span><span class="card-txt"><span class="card-t">Pronto</span><span class="card-s">o celular abre os terminais deste PC</span></span></li>
+          <div class="chips" id="pp-tabs" role="group" aria-label="Visões">
+            <button type="button" class="chip" data-v="qr" aria-pressed="true">QR code</button>
+            <button type="button" class="chip" data-v="code" aria-pressed="false">Código</button>
+            <button type="button" class="chip" data-v="devs" aria-pressed="false">Aparelhos</button>
+            <button type="button" class="chip pane-x" id="pp-x" aria-label="Fechar pareamento (Esc)">×</button>
+          </div>
+          <ol class="cards pair-steps" id="pp-steps" aria-label="Como parear">
+            <li class="card on"><span class="tile" aria-hidden="true">✓</span><span class="card-txt"><span class="card-t">Instale o app</span><span class="card-s mono">Android e iOS</span></span><span class="card-st ok">● feito</span></li>
+            <li class="card"><span class="tile" aria-hidden="true">2</span><span class="card-txt"><span class="card-t">Leia o código</span><span class="card-s mono">câmera do app</span></span><span class="card-st now">● agora</span></li>
+            <li class="card"><span class="tile" aria-hidden="true">3</span><span class="card-txt"><span class="card-t">Pronto</span><span class="card-s mono">celular abre os terminais</span></span><span class="card-st muted">● depois</span></li>
           </ol>
-          <h3 class="pane-h" id="dev-h">Aparelhos pareados</h3>
+          <h3 class="pane-h sr-only" id="dev-h">Aparelhos pareados</h3>
           <section id="devices" aria-labelledby="dev-h">
             <div id="dev-busy" aria-busy="true" aria-label="Carregando aparelhos"><div class="skeleton"></div><div class="skeleton"></div></div>
             <div id="dev-list" hidden><ul class="device-list cards" id="dev-ul"></ul></div>
@@ -184,7 +202,8 @@
         </div>
         <div class="pane-r">
           <div class="hero"><div class="hero-top"><span class="tile tile-lg" aria-hidden="true">▣</span><div class="hero-txt"><div class="hero-t" id="pp-host">Este PC</div><div class="hero-s mono" id="pp-state">gerando QR Code…</div></div><span class="badge" id="pp-badge">ESPERANDO</span></div>
-            <p class="hero-n">Conexão direta e criptografada entre os dois aparelhos.</p></div>
+            <p class="hero-n">Conexão direta e criptografada entre os dois aparelhos.</p>
+            <div class="term-tools"><button type="button" id="copy">Copiar link</button><button type="button" id="pp-cancel">Cancelar</button></div></div>
           <div class="stats">
             <div class="stat"><div class="stat-k">Expira em</div><div class="stat-v" id="pp-left">–</div><div class="stat-s">gera outro depois</div></div>
             <div class="stat"><div class="stat-k">Aparelhos</div><div class="stat-v" id="pp-devs">–</div><div class="stat-s">pareados com este PC</div></div>
@@ -200,15 +219,14 @@
               <div id="pair-show" hidden>
                 <div class="qr" id="qr-box"><img id="qr" alt="QR Code de pareamento"></div>
                 <p class="muted" id="pair-hint">Abra o live-cmd no celular e leia este código.</p>
+                <p class="muted code-only">Sem câmera? Use Copiar link e abra o link no live-cmd do outro aparelho.</p>
                 <div id="pair-live">
                   <div class="countdown" aria-hidden="true"><i id="bar"></i></div>
                   <p aria-live="off">Expira em <strong id="left">5:00</strong></p>
                   <p class="notice">🔒 Este código dá acesso aos terminais deste PC. Não compartilhe nem tire print. Ele vale uma vez e por 5 minutos.</p>
                 </div>
                 <p id="pair-expired" aria-live="polite" hidden>Este QR Code expirou.</p>
-                <div class="actions center"><button type="button" class="btn-primary" data-act="pair">Gerar novo QR</button>
-                <!-- Desvio de C2 §1 pendente de aprovação (P11); ver src/clip.rs para remover. -->
-                <button type="button" class="btn-link" id="copy">Copiar link para outro PC</button></div>
+                <!-- Desvio de C2 §1 pendente de aprovação (P11); ver src/clip.rs para remover. O botão #copy fica no cartão de destaque. -->
                 <p class="alert alert-ok" role="status" id="copied" hidden><span>Link copiado. Ele vale até o QR expirar.</span></p>
               </div>
               <div id="pair-done" role="status" hidden>
@@ -229,20 +247,28 @@
       <!-- Configurações (antes janela própria). -->
       <section class="aurora-pane cfg-pane" id="cfg-pane" aria-labelledby="cfg-t" hidden>
         <div class="pane-l">
-          <header class="side-head"><h2 id="cfg-t">Configurações</h2></header>
-          <p class="side-sub">Aparência e comportamento deste PC</p>
-          <div class="chips"><button type="button" class="chip pane-x" id="cfg-x" aria-label="Fechar configurações (Esc)">×</button></div>
+          <header class="side-head"><h2 id="cfg-t">Configurações</h2><button type="button" class="btn-primary" id="cfg-import" title="Aplica um tema copiado (JSON) da área de transferência">+ Importar tema</button></header>
+          <p class="side-sub">Aparência e comportamento</p>
+          <div class="chips" id="cfg-chips" role="group" aria-label="Atalhos para as seções">
+            <button type="button" class="chip" data-go="cfg-look" aria-pressed="true">Aparência</button>
+            <button type="button" class="chip" data-go="cfg-term" aria-pressed="false">Terminal</button>
+            <button type="button" class="chip" data-go="cfg-keys" aria-pressed="false">Atalhos</button>
+            <button type="button" class="chip" data-open="nav-agents">Agentes</button>
+            <button type="button" class="chip pane-x" id="cfg-x" aria-label="Fechar configurações (Esc)">×</button>
+          </div>
           <ul class="cards cfg-nav" aria-label="Seções">
-            <li><button type="button" class="card on" data-go="cfg-look" aria-current="true"><span class="tile" aria-hidden="true">◐</span><span class="card-txt"><span class="card-t">Aparência</span><span class="card-s">tema, vidro, fontes</span></span></button></li>
-            <li><button type="button" class="card" data-go="cfg-term"><span class="tile" aria-hidden="true">›_</span><span class="card-txt"><span class="card-t">Terminal</span><span class="card-s">rolagem e perfis</span></span></button></li>
-            <li><button type="button" class="card" data-go="cfg-about"><span class="tile" aria-hidden="true">↺</span><span class="card-txt"><span class="card-t">Sobre</span><span class="card-s">versão e atualizações</span></span></button></li>
-            <li><button type="button" class="card" data-open="nav-agents"><span class="tile" aria-hidden="true">✦</span><span class="card-txt"><span class="card-t">Agentes</span><span class="card-s">claude, codex</span></span></button></li>
-            <li><button type="button" class="card" data-open="ssh-open"><span class="tile" aria-hidden="true">⇄</span><span class="card-txt"><span class="card-t">SSH</span><span class="card-s">chaves e hosts</span></span></button></li>
-            <li><button type="button" class="card" data-go="cfg-srv"><span class="tile" aria-hidden="true">▣</span><span class="card-txt"><span class="card-t">Celular</span><span class="card-s">pareamento e servidor</span></span></button></li>
+            <li><button type="button" class="card on" data-go="cfg-look" aria-current="true"><span class="tile" aria-hidden="true">◐</span><span class="card-txt"><span class="card-t">Aparência</span><span class="card-s mono">tema, vidro, fontes</span></span><span class="card-st ok" id="cfg-look-st">● padrão</span></button></li>
+            <li><button type="button" class="card" data-go="cfg-term"><span class="tile" aria-hidden="true">›_</span><span class="card-txt"><span class="card-t">Terminal</span><span class="card-s mono">shell padrão, rolagem</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-go="cfg-keys"><span class="tile" aria-hidden="true">⌘</span><span class="card-txt"><span class="card-t">Atalhos</span><span class="card-s mono" id="cfg-keys-n">atalhos</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-open="nav-agents"><span class="tile" aria-hidden="true">✦</span><span class="card-txt"><span class="card-t">Agentes</span><span class="card-s mono">claude, codex</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-open="ssh-open"><span class="tile" aria-hidden="true">⇄</span><span class="card-txt"><span class="card-t">SSH</span><span class="card-s mono">chaves e hosts</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-go="cfg-srv"><span class="tile" aria-hidden="true">▣</span><span class="card-txt"><span class="card-t">Celular</span><span class="card-s mono">pareamento</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-go="cfg-about"><span class="tile" aria-hidden="true">↺</span><span class="card-txt"><span class="card-t">Sobre</span><span class="card-s mono">versão e atualizações</span></span><span class="card-st ok">● ok</span></button></li>
           </ul>
         </div>
         <div class="pane-r">
-          <div class="hero"><div class="hero-top"><span class="tile tile-lg" aria-hidden="true">◐</span><div class="hero-txt"><div class="hero-t" id="cfg-theme-t">Tema</div><div class="hero-s mono">vale para todas as janelas</div></div><span class="badge">ATIVO</span></div></div>
+          <div class="hero"><div class="hero-top"><span class="tile tile-lg" aria-hidden="true">◐</span><div class="hero-txt"><div class="hero-t" id="cfg-theme-t">Tema</div><div class="hero-s mono" id="cfg-theme-s">vale para todas as janelas</div></div><span class="badge">ATIVO</span></div>
+            <div class="term-tools"><button type="button" id="cfg-edit">Editar</button><button type="button" id="cfg-copy" title="Copia o tema (JSON) para a área de transferência">Copiar tema</button></div></div>
           <div class="stats">
             <div class="stat"><div class="stat-k">Fonte</div><div class="stat-v" id="cfg-font">–</div><div class="stat-s" id="cfg-font-s">terminal</div></div>
             <div class="stat"><div class="stat-k">Opacidade</div><div class="stat-v" id="cfg-op">–</div><div class="stat-s">janela</div></div>
@@ -273,6 +299,9 @@
                 <label for="ap-blur">Desfoque do vidro</label>
                 <div class="range"><input id="ap-blur" type="range" min="0" max="60" step="2"><output id="ap-blur-v" for="ap-blur"></output></div>
               </div>
+            </fieldset>
+            <fieldset id="cfg-keys"><legend>Atalhos</legend>
+              <ul class="keys" id="keys-list"><li><span>Nova sessão</span><kbd>Ctrl+Shift+T</kbd></li><li><span>Reabrir a última aba fechada</span><kbd>Ctrl+Alt+T</kbd></li><li><span>Fechar a aba</span><kbd>Ctrl+Shift+W</kbd></li><li><span>Próxima aba (com Shift, a anterior)</span><kbd>Ctrl+Tab</kbd></li><li><span>Recolher ou abrir a lista</span><kbd>Ctrl+Shift+B</kbd></li><li><span>Ir para a lista de sessões</span><kbd>Ctrl+Shift+F6</kbd></li><li><span>Copiar a seleção</span><kbd>Ctrl+Shift+C</kbd></li><li><span>Colar</span><kbd>Ctrl+Shift+V</kbd></li><li><span>Buscar no terminal</span><kbd>Ctrl+F</kbd></li><li><span>Buscar no histórico</span><kbd>Ctrl+Shift+F</kbd></li></ul>
             </fieldset>
             <fieldset id="cfg-srv"><legend>Servidor de sinalização</legend>
               <label for="srv">Endereço</label>
