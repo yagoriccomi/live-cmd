@@ -156,6 +156,17 @@ export function SettingRow({ title, value, onPress, label, danger, disabled, las
     : <View style={style} accessible accessibilityLabel={`${title}: ${value ?? ''}`}>{body}</View>;
 }
 
+/** Linha de ajuste com chave liga/desliga (44 px de altura, chave de 44×26 em degradê quando ligada). */
+export function ToggleRow({ title, value, onChange, disabled, last }: { title: string; value: boolean; onChange: (v: boolean) => void; disabled?: boolean; last?: boolean }) {
+  return (
+    <Pressable onPress={() => onChange(!value)} disabled={disabled} accessibilityRole="switch" accessibilityLabel={title} accessibilityState={{ checked: value, disabled: !!disabled }}
+      style={({ pressed }) => [a.setRow, !last && a.setLine, (pressed || disabled) && { opacity: disabled ? 0.45 : 0.75 }]}>
+      <Text style={a.setTitle} numberOfLines={1}>{title}</Text>
+      <View style={[a.sw, value && a.swOn]}><View style={[a.knob, value && { alignSelf: 'flex-end' }]} /></View>
+    </Pressable>
+  );
+}
+
 /** Tecla/filtro pequeno (Esc, Tab, Últimos 7 dias); `on` fica branco. */
 export function Chip({ title, onPress, on, disabled, label, style }: { title: string; onPress: () => void; on?: boolean; disabled?: boolean; label?: string; style?: StyleProp<ViewStyle> }) {
   return (
@@ -211,6 +222,9 @@ export const a = StyleSheet.create({
   setValue: { color: C.muted, fontFamily: F.regular, fontSize: 12, includeFontPadding: false },
   chip: { minHeight: 44, paddingHorizontal: 12, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   chipOn: { backgroundColor: '#fff' },
+  sw: { width: 44, height: 26, borderRadius: 13, padding: 3, backgroundColor: 'rgba(255,255,255,0.18)', justifyContent: 'center' },
+  swOn: { backgroundImage: GRAD },
+  knob: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff' },
   chipText: { color: C.text, fontFamily: F.regular, fontSize: 11, includeFontPadding: false },
   chipTextOn: { color: C.activeText, fontFamily: F.xbold },
 });

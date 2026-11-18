@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Conn } from '../conn.ts';
-import { HISTORY_KINDS, groupByDay, historyClear, historyQuery, historyRun, type HistoryEntry } from '../extras.ts';
+import { HISTORY_KINDS, groupByDay, historyClear, historyQuery, historyRun, summarizeSessions, type HistoryEntry } from '../extras.ts';
 import { Dot, Notice, OFFLINE, OLD_HOST, confirm, useRemote } from './common.tsx';
-import { Chip, GroupLabel, Hero, HeroBtn, IconBtn, Panel, Section, TopBar, screen, tl as t } from './aurora.tsx';
+import { Chip, GroupLabel, Hero, HeroBtn, IconBtn, ListPanel, Panel, Row, Section, TopBar, screen, tl as t } from './aurora.tsx';
 import { C, F, TAB_SPACE, errText } from './theme.ts';
 
 function exit(code: number | null): { color: string; text: string } {
@@ -52,6 +52,24 @@ export function HistoryScreen({ conn, onRan }: { conn: Conn | null; onRan: () =>
         {ok && <HeroBtn title="Filtrar" primary onPress={() => setApplied(query.trim())} label="Buscar no histórico" />}
         {ok && <HeroBtn title="Limpar histórico" disabled={!data?.length && !filtered} onPress={clear} />}
       </Hero>
+      {ok && !!data?.length && (
+        <>
+          <Section text="Sessões" />
+          <ListPanel style={{ maxHeight: 132 }}>
+            <ScrollView nestedScrollEnabled contentContainerStyle={{ gap: 4 }}>
+              {summarizeSessions(data).map(x => {
+                const when = `${groupByDay([{ ...data[0], atMs: x.lastMs }])[0].day.toLowerCase()} ${new Date(Number(x.lastMs)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+                const on = kind === x.kind;
+                return (
+                  <Row key={x.kind + x.label} icon={x.kind === 'ssh' ? '⇄' : '›_'} title={x.label} sub={when} selected={on}
+                    status={{ color: C.ok, text: String(x.count) }} onPress={() => setKind(on ? null : x.kind)}
+                    label={`${x.label}: ${x.count} comando${x.count > 1 ? 's' : ''}, último ${when}. ${on ? 'Mostrar todas' : `Só ${HISTORY_KINDS[x.kind] ?? x.kind}`}`} />
+                );
+              })}
+            </ScrollView>
+          </ListPanel>
+        </>
+      )}
       {ok && (
         <>
           <Section text="Filtros" />

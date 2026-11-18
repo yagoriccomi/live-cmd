@@ -1,12 +1,12 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { C, F } from './theme.ts';
 
-export type Tab = 'sessoes' | 'agentes' | 'ssh' | 'historico';
+export type Tab = 'sessoes' | 'agentes' | 'ssh' | 'ajustes' | 'historico';
 export const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'sessoes', label: 'Sessões', icon: '▣' },
   { id: 'agentes', label: 'Agentes', icon: '✦' },
   { id: 'ssh', label: 'SSH', icon: '⇄' },
-  { id: 'historico', label: 'Histórico', icon: '↺' },
+  { id: 'ajustes', label: 'Ajustes', icon: '⚙' },
 ];
 
 /** Barra de abas inferior flutuante (vidro), item ativo em branco. */
