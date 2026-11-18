@@ -368,7 +368,10 @@ fn scp(s: &settings::SshServer, file: &Path, name: &str) -> Result<(), String> {
     let mut c = std::process::Command::new(live_cmd_echo::ssh::exe().replace("ssh.exe", "scp.exe"));
     c.args(["-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-P", &s.port.to_string()]);
     if let Some(k) = &s.key { c.arg("-i").arg(k); }
-    let dest = if s.user.is_empty() { format!("{}:{name}", s.host) } else { format!("{}@{}:{name}", s.user, s.host) };
+    // Alias fixo + HostName: IPv6 (`::1`) e host de uma letra (`c:`) não viram caminho local no scp do Windows.
+    c.arg("-o").arg(format!("HostName={}", s.host));
+    if !s.user.is_empty() { c.arg("-o").arg(format!("User={}", s.user)); }
+    let dest = format!("lcmd:{name}");
     #[cfg(windows)] { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
     let out = c.arg(file).arg(dest).output().map_err(|_| "SCP_MISSING")?;
     if out.status.success() { Ok(()) } else { Err("SCP_FAILED".into()) }
