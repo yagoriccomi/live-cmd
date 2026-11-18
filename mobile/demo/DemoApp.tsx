@@ -14,9 +14,11 @@ import { SessionsScreen } from '../src/screens/SessionsScreen.tsx';
 import { AgentsScreen } from '../src/screens/AgentsScreen.tsx';
 import { SshScreen } from '../src/screens/SshScreen.tsx';
 import { HistoryScreen } from '../src/screens/HistoryScreen.tsx';
+import { SettingsScreen } from '../src/screens/SettingsScreen.tsx';
+import { DEFAULT_PREFS } from '../src/prefs.ts';
 
-export type DemoName = 'terminal' | 'pareamento' | 'erro' | 'agentes' | 'ssh' | 'historico';
-export const DEMOS: DemoName[] = ['terminal', 'pareamento', 'erro', 'agentes', 'ssh', 'historico'];
+export type DemoName = 'terminal' | 'pareamento' | 'erro' | 'agentes' | 'ssh' | 'historico' | 'ajustes';
+export const DEMOS: DemoName[] = ['terminal', 'pareamento', 'erro', 'agentes', 'ssh', 'historico', 'ajustes'];
 
 const NOW = new Date(2026, 10, 17, 23, 50).getTime();
 const at = (daysAgo: number, h: number, m: number) => {
@@ -37,6 +39,10 @@ const SERVERS: SshServer[] = [
   { serverId: 's2', label: 'staging', host: '10.0.0.12', user: 'deploy', port: 22, key: null, latencyMs: 18, status: 'ok' },
 ];
 const SSH_SESSIONS: SshSession[] = [];
+const HOST_SESSIONS = [
+  { session_id: 'demo', label: 'claude · live-cmd', state: 'running', last_activity_ms: 0 },
+  { session_id: 'pw', label: 'pwsh', state: 'running', last_activity_ms: 0 },
+];
 const HISTORY: HistoryEntry[] = [
   { entryId: 'h1', command: 'git push origin claude/mockups', cwd: 'S:\\Projetos\\live-cmd', atMs: at(0, 23, 41), exitCode: 0, kind: 'pwsh', label: 'pwsh', pc: 'DESKTOP-YAGO' },
   { entryId: 'h2', command: 'git push --tags', cwd: 'S:\\Projetos\\live-cmd', atMs: at(0, 22, 8), exitCode: 128, kind: 'pwsh', label: 'pwsh', pc: 'DESKTOP-YAGO' },
@@ -63,6 +69,7 @@ const fake = {
   extra: async (body: Record<string, unknown>) => {
     switch (body.type) {
       case 'agent_list': return { agents: AGENTS_DATA };
+      case 'session_list': return { sessions: HOST_SESSIONS, profiles: [] };
       case 'ssh_list': return { servers: SERVERS, sessions: SSH_SESSIONS };
       case 'history_query': {
         const q = String(body.query ?? '').toLowerCase();
@@ -73,14 +80,16 @@ const fake = {
   },
 } as unknown as Conn;
 
-const TAB_OF: Record<DemoName, Tab> = { terminal: 'sessoes', pareamento: 'sessoes', erro: 'sessoes', agentes: 'agentes', ssh: 'ssh', historico: 'historico' };
+const TAB_OF: Record<DemoName, Tab> = { terminal: 'sessoes', pareamento: 'sessoes', erro: 'sessoes', agentes: 'agentes', ssh: 'ssh', historico: 'sessoes', ajustes: 'ajustes' };
+const PIN = { hostPk: '', room: '', server: 'live-cmd-signaling' };
 const noop = () => {};
 
 export function DemoScreen({ name }: { name: DemoName }) {
   const tab = TAB_OF[name];
   const sessions = (status: string, on: boolean, out: string) => (
     <SessionsScreen status={status} on={on} pin={on ? null : { hostPk: '', room: '', server: '' }} out={out} link="" setLink={noop}
-      onPair={noop} onScan={noop} onReconnect={noop} onDisconnect={noop} send={noop} />
+      onPair={noop} onScan={noop} onReconnect={noop} onDisconnect={noop} send={noop}
+      conn={on ? fake : null} onOpen={async () => {}} onHistory={noop} />
   );
   return (
     <Shell bar={<TabBar tab={tab} onChange={noop} />}>
@@ -90,6 +99,7 @@ export function DemoScreen({ name }: { name: DemoName }) {
       {name === 'agentes' && <AgentsScreen conn={fake} onOpen={async () => {}} />}
       {name === 'ssh' && <SshScreen conn={fake} onOpen={async () => {}} />}
       {name === 'historico' && <HistoryScreen conn={fake} onRan={noop} />}
+      {name === 'ajustes' && <SettingsScreen conn={fake} pin={PIN} status="conectado" prefs={{ ...DEFAULT_PREFS, termFont: 13 }} setPrefs={noop} onOpenTerminals={noop} onUnpair={noop} />}
     </Shell>
   );
 }
