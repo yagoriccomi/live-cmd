@@ -102,17 +102,17 @@
   setInterval(sysStats, 3000);
 
   // ---------- Agentes ----------
-  const AG_BADGE = { "dot-ok": ["RODANDO", ""], "dot-warn": ["TERMINOU", "warn"], "dot-err": ["SEM RESPOSTA", "err"], muted: ["ENCERRADA", "off"] };
+  const AG_BADGE = { "dot-wait": ["ESPERANDO", "warn"], "dot-ok": ["RODANDO", ""], "dot-warn": ["TERMINOU", "warn"], "dot-err": ["SEM RESPOSTA", "err"], muted: ["ENCERRADA", "off"] };
   const dotOf = (row) => Object.keys(AG_BADGE).find((c) => row.querySelector(".ag-dot")?.classList.contains(c)) || "muted";
   function agents() {
     const rows = [...$("ag-list").querySelectorAll(".ag-row")], groups = [...$("ag-list").querySelectorAll(".ag-group")];
-    const pick = rows.find((r) => dotOf(r) === "dot-ok") || rows[0];
+    const pick = rows.find((r) => dotOf(r) === "dot-wait") || rows.find((r) => dotOf(r) === "dot-ok") || rows[0];
     const [badge, tone] = pick ? AG_BADGE[dotOf(pick)] : [];
     hero($("ag-hero"), pick ? {
       icon: "✦", title: txt(pick, ".ag-label"), sub: txt(pick.closest(".ag-group"), ".ag-path"), badge, tone,
       note: txt(pick, ".ag-info .small"), buttons: [...pick.querySelectorAll("button")],
     } : {});
-    const run = rows.filter((r) => dotOf(r) === "dot-ok").length;
+    const run = rows.filter((r) => ["dot-ok", "dot-wait"].includes(dotOf(r))).length;
     stats($("ag-stats"), [["Rodando", run, run ? "abertas agora" : "nenhuma aberta"], ["Sessões salvas", rows.length, "--resume"], ["Pastas", groups.length, "raiz dos projetos"]]);
     $("ag-dirs").replaceChildren(...groups.map((g) => {
       const li = el("li", "tl-row");
@@ -155,6 +155,7 @@
       badge: "CTRL+SHIFT+F", tone: "key", buttons: [first.querySelector(".hist-run")].filter(Boolean),
     } : {});
     stats($("hist-stats"), [["Sucesso", ok, items.length ? `${Math.round((ok * 100) / items.length)}%` : ""], ["Erros", err, "saída ≠ 0"], ["Sessões", by.size, "no histórico"]]);
+    if (window.histSessions) return histSessions();
     $("hist-sess").replaceChildren(...[...by].map(([label, g]) => {
       const li = el("li", "card"), k = sessionKind(label);
       li.dataset.kind = k;
@@ -168,6 +169,34 @@
       return li;
     }));
   }
+
+  // Uma linha por sessão e dia (hist_sessions), do dia mais recente para o mais antigo.
+  const dayName = (d) => {
+    const iso = (t) => new Date(t - new Date(t).getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const now = Date.now();
+    if (d === iso(now)) return "Hoje";
+    if (d === iso(now - 86400000)) return "Ontem";
+    const [y, m, dd] = d.split("-").map(Number);
+    return new Date(y, m - 1, dd).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+  };
+  function histSessions() {
+    const g = window.histSessions || [];
+    const s = $("hist-stats").querySelectorAll(".stat")[2];
+    if (s) { s.querySelector(".stat-v").textContent = new Set(g.map((x) => x.label)).size; s.querySelector(".stat-s").textContent = `${plural(g.length, "dia de uso", "dias de uso")}`; }
+    $("hist-sess").replaceChildren(...g.map((x) => {
+      const li = el("li", "card"), k = x.kind === "ssh" ? "ssh" : sessionKind(x.label);
+      li.dataset.kind = k;
+      const t = el("span", "card-txt");
+      t.append(el("span", "card-t", x.label), el("span", "card-s mono", `${dayName(x.day)} · ${x.pc}`));
+      const n = el("span", "card-st " + (x.errors ? "dot-err" : "dot-ok"), `● ${x.count}`);
+      n.setAttribute("aria-label", `${plural(x.count, "comando", "comandos")}${x.errors ? `, ${x.errors} com erro` : ""} em ${dayName(x.day)}`);
+      const i = el("span", "tile", KIND_ICON[k] || KIND_ICON.shell);
+      i.setAttribute("aria-hidden", "true");
+      li.append(i, t, n);
+      return li;
+    }));
+  }
+  document.addEventListener("hist-sessions", () => { if (window.histSessions) histSessions(); });
 
   const watch = (ids, fn) => { const o = new MutationObserver(fn); for (const id of ids) o.observe($(id), { childList: true, subtree: true, characterData: true }); };
   watch(["ag-list"], agents);

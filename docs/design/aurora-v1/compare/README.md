@@ -9,9 +9,9 @@ PNGs quantizados em 256 cores para caber no repositório; a medida foi feita nas
 | Terminal | 6,66% |
 | Agentes | 9,27% |
 | SSH | 4,71% |
-| Histórico | 6,16% |
+| Histórico | 6,26% |
 | Estados | 11,17% |
-| Config | 25,47% |
+| Config | 23,44% |
 | Pareamento | 15,23% |
 
 Rodar de novo: `python desktop/app/scripts/pixel/run.py <pasta-de-trabalho> [Tela ...]`.

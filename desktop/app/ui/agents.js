@@ -6,12 +6,22 @@
   // Estado → [classe, marcador, texto]; o texto vai por extenso (o marcador é só visual).
   const STATUS = {
     rodando: ["dot-ok", "●", "Rodando"],
+    esperando: ["dot-wait", "◆", "Esperando sua confirmação"],
     saiu: ["dot-warn", "◐", "Programa terminou"],
     encerrada: ["muted", "○", "Encerrada"],
     desconhecido: ["dot-err", "⚠", "PC sem resposta"],
   };
   const isLive = (x) => x.status === "rodando" || x.status === "saiu";
   let conn = LOCAL, opener = null;
+  // Agentes deste PC parados num pedido de confirmação (evento "agent-waiting" do host, o mesmo que vai ao celular).
+  const waiting = new Set();
+  window.__TAURI__.event.listen("agent-waiting", (e) => {
+    const { session_id: id, label, waiting: on } = e.payload;
+    if (on === waiting.has(id)) return;
+    on ? waiting.add(id) : waiting.delete(id);
+    if (on) banner(`${label || "Agente"} está esperando sua confirmação.`, "warn");
+    if (!panel.hidden && conn === LOCAL) load();
+  });
 
   const when = (ms) => {
     if (!ms) return "";
@@ -63,7 +73,8 @@
 
   function row(x) {
     const li = el("li", "ag-row");
-    const [cls, mark, label] = STATUS[x.status] || STATUS.desconhecido;
+    const st = x.status === "rodando" && conn === LOCAL && waiting.has(x.session_id) ? "esperando" : x.status;
+    const [cls, mark, label] = STATUS[st] || STATUS.desconhecido;
     const dot = el("span", `${cls} ag-dot`, mark);
     dot.setAttribute("aria-hidden", "true");
     const name = x.label || x.agent;

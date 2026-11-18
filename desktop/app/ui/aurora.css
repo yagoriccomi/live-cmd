@@ -227,7 +227,7 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .cfg-card fieldset { border-top:1px solid var(--glass-line); }
 .cfg-card fieldset:first-child { border-top:0; }
 .cfg-card legend { font-weight:800; font-size:14px; margin-bottom:8px; }
-.swatches { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin:0 0 14px; }
+.swatches { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; margin:0 0 14px; }
 .swatch { display:flex; flex-direction:column; gap:6px; cursor:pointer; font-size:12px; font-weight:700; }
 .swatch input { position:absolute; opacity:0; width:1px; height:1px; }
 .swatch i { display:block; height:70px; border-radius:10px; border:2px solid transparent; }
@@ -235,9 +235,33 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .swatch input:focus-visible + i { outline:2px solid var(--focus, #fff); outline-offset:2px; }
 .sw-dark i { background:linear-gradient(135deg, #8b5cf6, #ff4fd8); }
 .sw-light i { background:linear-gradient(135deg, #f5f3ff, #d8b4fe); }
+.sw-cosmo i { background:linear-gradient(135deg, #3c6cff, #22d3ee); }
 .sw-contrast i { background:linear-gradient(135deg, #000 50%, #ffff00 50%); }
 .toggle input[type=checkbox] { appearance:none; flex:none; width:38px; height:22px; border-radius:11px; background:var(--chip); border:1px solid var(--glass-line); position:relative; margin:2px 0 0; cursor:pointer; }
 .toggle input[type=checkbox]::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:var(--text-muted); transition:left .15s; }
 .toggle input[type=checkbox]:checked { background:var(--grad); }
 .toggle input[type=checkbox]:checked::after { left:18px; background:#fff; }
 @media (prefers-reduced-motion:reduce) { .toggle input[type=checkbox]::after { transition:none; } }
+
+/* Aparência (appearance.json, também lida e gravada pelo celular): Cosmo, vidro, brilho e animações. */
+.look-grid { display:grid; grid-template-columns:150px minmax(0, 1fr); gap:10px 14px; align-items:center; margin:0 0 14px; }
+.look-grid label { margin:0; }
+.look-grid .range { display:flex; gap:10px; align-items:center; }
+.look-grid .range input { flex:1; accent-color:var(--accent); }
+.look-grid output { min-width:44px; text-align:right; font-family:var(--font-mono); font-size:12px; color:var(--text-muted); }
+/* Tema Cosmo (4º do mockup): o mesmo vidro do Aurora em azul e ciano. Seletor reforçado para vencer o do Aurora. */
+:root[data-theme=cosmo][data-theme] {
+  --bg:#0a1430; --accent:#3c6cff; --text-muted:#c4d4ff; --border:rgb(150 190 255 / .5); --term-sel:#1f4fd0; --term-fg:#dce8ff;
+  --glass-line:rgb(150 200 255 / .5); --glass-glow:0 0 28px rgb(60 108 255 / .35), inset 0 1px 0 rgb(255 255 255 / .22);
+  --shadow:0 0 28px rgb(60 108 255 / .35); --glow:0 0 28px rgb(60 108 255 / .35), inset 0 1px 0 rgb(255 255 255 / .3);
+  --hero-bg:linear-gradient(135deg, color-mix(in srgb, #3c6cff 87%, transparent), #22d3eeaa); --hero-glow:0 0 40px #22d3ee66;
+  --grad:linear-gradient(135deg, #3c6cff, #22d3ee); --grad-glow:0 0 22px #22d3ee88;
+  --ink:#0a1f5c; --card-on-ink:#0a1f5c; --hero-btn-1-ink:#0a1f5c; --off:#7f93c8;
+}
+:root[data-theme=cosmo][data-theme] body { background:#0a1430; }
+:root[data-theme=cosmo] .aurora i:nth-child(2) { background:#22d3ee; }
+:root[data-theme=cosmo] .swatch input:checked + i { box-shadow:0 0 18px rgb(34 211 238 / .55); }
+/* "Animações" desligado: o mesmo efeito de prefers-reduced-motion. */
+:root[data-anim=off] *, :root[data-anim=off] *::before, :root[data-anim=off] *::after { animation:none !important; transition:none !important; }
+/* Agente esperando confirmação (detecção pelo texto da tela no host). */
+.dot-wait { color:var(--warn); }

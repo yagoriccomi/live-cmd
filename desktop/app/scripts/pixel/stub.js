@@ -9,6 +9,7 @@
   const now = Date.now(), H = 3600e3, D = 24 * H;
   const today = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return +d; };
   const daysAgo = (n, h, m) => today(h, m) - n * D;
+  const isoDay = (n) => { const t = daysAgo(n, 12, 0); return new Date(t - new Date(t).getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
   const sessions = screen === "estados" ? [] : [
     { session_id: sid(1), label: "claude · live-cmd", state: "running" },
     { session_id: sid(2), label: "pwsh", state: "running" },
@@ -57,6 +58,13 @@
     status: { state: "ready", pairing_expires_ms: now + 292e3 },
     devices: [{ id: "p8", label: "Pixel 8", connected: false, paired_at_ms: daysAgo(15, 10, 0) }],
     get_settings: { autostart: true, server: "wss://sinal.livecmd.dev", scrollback: 10000, version: "0.1.16" },
+    get_appearance: { theme: "dark", font_family: "Fira Code", font_size: 13, opacity: 100, blur: 30, glow: true, animations: true },
+    hist_sessions: [
+      { label: "pwsh · live-cmd", kind: "pwsh", pc: "Este PC", day: isoDay(0), count: 2, errors: 1, last_ms: String(today(23, 41)) },
+      { label: "prod-01", kind: "ssh", pc: "Este PC", day: isoDay(1), count: 1, errors: 0, last_ms: String(daysAgo(1, 18, 30)) },
+      { label: "pwsh · live-cmd", kind: "pwsh", pc: "Este PC", day: isoDay(1), count: 1, errors: 0, last_ms: String(daysAgo(1, 11, 2)) },
+      { label: "staging", kind: "ssh", pc: "Este PC", day: isoDay(2), count: 1, errors: 0, last_ms: String(daysAgo(2, 9, 47)) },
+    ],
     get_profiles: { profiles: null, shells: [{ label: "PowerShell", command: "pwsh.exe" }, { label: "WSL", command: "wsl.exe" }] },
   };
   const PROBE = { "prod-01.exemplo.com": { ok: true, ms: 42 }, "10.0.0.12": { ok: true, ms: 18 }, "192.168.1.40": { ok: false, code: "OFFLINE" },

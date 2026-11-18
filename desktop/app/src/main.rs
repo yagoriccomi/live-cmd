@@ -203,6 +203,10 @@ fn set_scrollback(app: State<App>, lines: usize) -> Result<(), String> {
     Ok(())
 }
 
+fn apply_opacity(app: &AppHandle, w: &tauri::WebviewWindow) {
+    sys::window_opacity(w, settings::appearance(&app.state::<App>().data_dir).opacity);
+}
+
 /// Aparência (tema, fonte, vidro, brilho, animações): a mesma que o celular lê e grava por `settings_get`/`settings_set`.
 #[tauri::command]
 fn get_appearance(app: State<App>) -> Value { settings::appearance(&app.data_dir).json() }
@@ -213,6 +217,7 @@ fn set_appearance(handle: AppHandle, app: State<App>, patch: serde_json::Map<Str
     let a = settings::appearance(&app.data_dir).patch(&patch).map_err(|e| e.code().to_owned())?;
     settings::save_appearance(&app.data_dir, &a)?;
     let _ = handle.emit("appearance", a.json());
+    for w in handle.webview_windows().values() { sys::window_opacity(w, a.opacity); }
     Ok(a.json())
 }
 
@@ -247,8 +252,9 @@ fn open_terminal(app: &AppHandle) {
 }
 
 fn build_terminal(app: &AppHandle, url: &str) {
-    let _ = WebviewWindowBuilder::new(app, "terminal", WebviewUrl::App(url.into()))
+    let w = WebviewWindowBuilder::new(app, "terminal", WebviewUrl::App(url.into()))
         .title("Terminal Desktop — live-cmd").inner_size(1280.0, 800.0).min_inner_size(560.0, 360.0).center().build();
+    if let Ok(w) = w { apply_opacity(app, &w); }
 }
 
 /// Menu ☰ do terminal: abre Parear/Aparelhos/Configurações ou sai.
@@ -370,7 +376,10 @@ fn main() {
             let history = hist::History::default();
             // Celular mudou a aparência ou um agente passou a esperar confirmação: as janelas desktop recebem o evento.
             let h = a.handle().clone();
-            let notify: mobile::Notify = std::sync::Arc::new(move |ev: &str, v: Value| { let _ = h.emit(ev, v); });
+            let notify: mobile::Notify = std::sync::Arc::new(move |ev: &str, v: Value| {
+                if ev == "appearance" && let Some(o) = v["opacity"].as_u64() { for w in h.webview_windows().values() { sys::window_opacity(w, o as u8); } }
+                let _ = h.emit(ev, v);
+            });
             live_cmd_echo::extras::set_provider(std::sync::Arc::new(mobile::AppProvider::new(dir.clone()).with_history(history.store.clone()).with_notify(notify)));
             let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: host::room_id(&dir)? })?;
             a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });

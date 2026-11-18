@@ -867,7 +867,8 @@ $("tb-pal").onclick = action("palette");
 $("tb-help").onclick = () => help();
 
 // Fonte: Ctrl+roda, Ctrl+=/-/0; salva por PC no localStorage e recalcula cols/rows.
-const FONT0 = 13; // V1 Aurora: Fira Code 13 px
+let FONT0 = 13; // V1 Aurora: Fira Code 13 px; a aparência (aparencia.js) troca o padrão
+window.setFontBase = (n) => { if (n === FONT0) return; FONT0 = n; font = 0; applyFont(); };
 const fontKey = () => "term-font:" + (curTab()?.conn ?? LOCAL);
 let font = FONT0;
 function applyFont() {

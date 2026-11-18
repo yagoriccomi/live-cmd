@@ -14,6 +14,7 @@
 <script src="historico.js" defer></script>
 <script src="aurora.js" defer></script>
 <script src="app.js" type="module"></script>
+<script src="aparencia.js" defer></script>
 </head>
 <body class="term-body">
 <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -241,18 +242,33 @@
         <div class="pane-r">
           <div class="hero"><div class="hero-top"><span class="tile tile-lg" aria-hidden="true">◐</span><div class="hero-txt"><div class="hero-t" id="cfg-theme-t">Tema</div><div class="hero-s mono">vale para todas as janelas</div></div><span class="badge">ATIVO</span></div></div>
           <div class="stats">
-            <div class="stat"><div class="stat-k">Versão</div><div class="stat-v" id="cfg-ver">–</div><div class="stat-s">live-cmd</div></div>
-            <div class="stat"><div class="stat-k">Rolagem</div><div class="stat-v" id="cfg-sb">–</div><div class="stat-s">linhas por aba</div></div>
-            <div class="stat"><div class="stat-k">Início</div><div class="stat-v" id="cfg-auto">–</div><div class="stat-s">com o Windows</div></div>
+            <div class="stat"><div class="stat-k">Fonte</div><div class="stat-v" id="cfg-font">–</div><div class="stat-s" id="cfg-font-s">terminal</div></div>
+            <div class="stat"><div class="stat-k">Opacidade</div><div class="stat-v" id="cfg-op">–</div><div class="stat-s">janela</div></div>
+            <div class="stat"><div class="stat-k">Desfoque</div><div class="stat-v" id="cfg-blur">–</div><div class="stat-s">vidro</div></div>
+            <span hidden id="cfg-ver"></span><span hidden id="cfg-sb"></span><span hidden id="cfg-auto"></span>
           </div>
           <form id="settings" class="term-card pane-c cfg-card">
             <fieldset id="cfg-look"><legend>Aparência</legend>
               <div class="swatches" role="radiogroup" aria-label="Tema">
                 <label class="swatch sw-dark"><input type="radio" name="theme-pick" value="dark"><i aria-hidden="true"></i><span>Aurora (escuro)</span></label>
+                <label class="swatch sw-cosmo"><input type="radio" name="theme-pick" value="cosmo"><i aria-hidden="true"></i><span>Cosmo</span></label>
                 <label class="swatch sw-light"><input type="radio" name="theme-pick" value="light"><i aria-hidden="true"></i><span>Claro</span></label>
                 <label class="swatch sw-contrast"><input type="radio" name="theme-pick" value="contrast"><i aria-hidden="true"></i><span>Alto contraste</span></label>
               </div>
-              <select id="theme" hidden><option value="dark">Escuro</option><option value="light">Claro</option><option value="contrast">Alto contraste</option></select>
+              <select id="theme" hidden><option value="dark">Escuro</option><option value="cosmo">Cosmo</option><option value="light">Claro</option><option value="contrast">Alto contraste</option></select>
+              <div class="look-grid">
+                <label for="ap-font">Fonte do terminal</label>
+                <select id="ap-font"><option>Fira Code</option><option>Cascadia Mono</option><option>Consolas</option><option>Courier New</option></select>
+                <label for="ap-size">Tamanho da fonte</label>
+                <div class="range"><input id="ap-size" type="range" min="10" max="24" step="1"><output id="ap-size-v" for="ap-size"></output></div>
+                <label for="ap-opacity">Opacidade da janela</label>
+                <div class="range"><input id="ap-opacity" type="range" min="60" max="100" step="1"><output id="ap-opacity-v" for="ap-opacity"></output></div>
+                <label for="ap-blur">Desfoque do vidro</label>
+                <div class="range"><input id="ap-blur" type="range" min="0" max="60" step="2"><output id="ap-blur-v" for="ap-blur"></output></div>
+              </div>
+              <label class="check toggle"><input type="checkbox" role="switch" id="ap-glow"> <span>Brilho nas bordas<br><span class="muted">Halo neon nos cartões e painéis de vidro.</span></span></label>
+              <label class="check toggle"><input type="checkbox" role="switch" id="ap-anim"> <span>Animações<br><span class="muted">Transições e movimentos da interface.</span></span></label>
+              <p class="field-error" role="alert" id="ap-err" hidden>Não foi possível salvar a aparência.</p>
               <label class="check toggle"><input type="checkbox" role="switch" id="autostart"> <span>Iniciar com o Windows<br><span class="muted">Abre o live-cmd na bandeja quando você entra no Windows.</span></span></label>
               <div class="alert alert-danger" role="alert" id="autostart-err" hidden><p>Não foi possível ativar o início com o Windows.</p></div>
             </fieldset>
@@ -342,6 +358,10 @@
     <label for="ssh-key" class="gap">Chave privada (opcional)</label>
     <div class="inline"><input type="text" class="mono" id="ssh-key" autocomplete="off" spellcheck="false" placeholder="C:\Users\voce\.ssh\id_ed25519">
       <button type="button" id="ssh-key-pick">Procurar…</button></div>
+    <label for="ssh-alive" class="gap">Manter vivo (segundos, 0 desliga)</label>
+    <input type="number" id="ssh-alive" min="0" max="3600" step="5" value="0" aria-describedby="ssh-alive-h">
+    <p class="muted" id="ssh-alive-h">Envia um sinal a cada N segundos (ServerAliveInterval) para a conexão não cair parada. De 5 a 3600.</p>
+    <label class="check toggle"><input type="checkbox" role="switch" id="ssh-retry"> <span>Reconectar ao cair<br><span class="muted">Tenta de novo sozinho, com espera crescente, se a conexão cair com erro.</span></span></label>
     <div class="alert alert-danger" role="alert" id="ssh-err" hidden><p></p></div>
     <div class="actions"><button type="button" id="ssh-cancel">Cancelar</button><button type="button" class="btn-primary" id="ssh-ok">Salvar</button></div>
   </dialog>

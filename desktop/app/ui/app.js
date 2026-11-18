@@ -197,7 +197,7 @@ $("rm-ok").onclick = async () => {
 };
 
 // ---------- Configurações ----------
-const THEME_NAME = { dark: "Tema Aurora", light: "Tema Claro", contrast: "Alto contraste" };
+const THEME_NAME = { dark: "Tema Aurora", cosmo: "Tema Cosmo", light: "Tema Claro", contrast: "Alto contraste" };
 function themePicked() {
   const v = document.documentElement.dataset.theme || "dark";
   for (const i of document.querySelectorAll("[name=theme-pick]")) i.checked = i.value === v;

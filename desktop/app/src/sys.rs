@@ -46,3 +46,20 @@ mod tests {
         assert!(v["mem_total"].as_u64().unwrap() >= v["mem_used"].as_u64().unwrap());
     }
 }
+
+/// "Opacidade" da aparência: a janela inteira fica translúcida (WS_EX_LAYERED + alfa). 100 = opaca, sem camada.
+pub fn window_opacity(w: &tauri::WebviewWindow, pct: u8) {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, GetWindowLongPtrW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW, WS_EX_LAYERED};
+    let Ok(h) = w.hwnd() else { return };
+    let pct = pct.clamp(60, 100);
+    unsafe {
+        let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+        if pct == 100 {
+            SetWindowLongPtrW(h, GWL_EXSTYLE, ex & !(WS_EX_LAYERED.0 as isize));
+        } else {
+            SetWindowLongPtrW(h, GWL_EXSTYLE, ex | WS_EX_LAYERED.0 as isize);
+            let _ = SetLayeredWindowAttributes(h, COLORREF(0), (pct as u32 * 255 / 100) as u8, LWA_ALPHA);
+        }
+    }
+}
