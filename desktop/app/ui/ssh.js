@@ -142,6 +142,7 @@
     const { cols, rows } = size();
     try {
       const sid = await invoke("ssh_connect", { id: s.id, cols, rows });
+      (window.sshTabs ??= {})[sid] = s.id; // Ctrl+V com print vai por scp para este servidor
       closePanel(false);
       await openSession(LOCAL, { session_id: sid, label: s.name, state: "running" });
       refresh(LOCAL);
