@@ -63,6 +63,8 @@
     const query = { q, days: $("hist-7d").checked ? 7 : null, kind: $("hist-kind").value || null, errors: $("hist-err").checked, limit: 1000 };
     let list;
     try { list = await invoke("hist_list", { query }); } catch (e) { $("hist-n").textContent = msg(e); return; }
+    // Resumo "Sessões": comandos por sessão e dia sobre todo o histórico do filtro (o mesmo que o celular recebe).
+    invoke("hist_sessions", { query }).then((g) => { window.histSessions = g; document.dispatchEvent(new Event("hist-sessions")); }).catch(() => {});
     const box = $("hist-list");
     box.replaceChildren();
     const filtered = q || query.days || query.kind || query.errors;

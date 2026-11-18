@@ -148,6 +148,8 @@ impl Screen {
     pub fn resize(&mut self, cols: u16, rows: u16) { self.vt.set_size(nz(rows), nz(cols)); }
     /// Linha lógica do cursor (histórico); `None` na tela alternativa (vim, less…), que não grava.
     pub fn cursor_line(&self) -> Option<String> { (!self.vt.screen().alternate_screen()).then(|| cursor_line(self.vt.screen())) }
+    /// Texto visível da tela (sem cores), para achar pedidos de confirmação do agente.
+    pub fn text(&self) -> String { self.vt.screen().contents() }
     /// Bytes ANSI (≤ `SNAP_MAX`) que reproduzem a tela atual num emulador limpo do mesmo tamanho, com região de rolagem,
     /// DECOM e cursor salvo. Se a tela formatada não couber, vai só o texto das linhas de baixo que couberem.
     /// ponytail: na tela alternativa (vim) só ela é reproduzida; a tela principal fica vazia ao sair. Ver E7.

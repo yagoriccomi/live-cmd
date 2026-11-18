@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use live_cmd_echo::extras::{Agent, AgentDefault, AgentState, HistoryEntry, HistoryFilter, Input, Provider, SshServer};
+use live_cmd_echo::extras::{Agent, AgentDefault, AgentState, Appearance, HistoryEntry, HistoryFilter, Input, Provider, SshServer};
 
 use crate::{agents, hist, settings, ssh, term};
 
@@ -18,6 +18,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// Teste de alcance: latência em ms ou o código da falha (`DNS`, `TIMEOUT`, `OFFLINE`, …), como `ssh::probe`.
 pub type Probe = Arc<dyn Fn(&str, u16) -> Result<u32, String> + Send + Sync>;
+/// Aviso para as janelas desktop: (evento, dados). Ex.: `appearance`, `agent-waiting`.
+pub type Notify = Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>;
 
 #[derive(Default)]
 struct Lat { r: Option<Result<u32, String>>, at: Option<Instant>, busy: bool }
@@ -32,6 +34,7 @@ pub struct AppProvider {
     /// Digitação desde o último Enter e último comando à espera do código, por sessão deste PC (`Provider::session_input`).
     typed: Mutex<HashMap<[u8; 16], hist::Typed>>,
     pending: Mutex<HashMap<[u8; 16], u64>>,
+    notify: Option<Notify>,
 }
 
 impl AppProvider {
@@ -44,8 +47,11 @@ impl AppProvider {
     }
 
     pub fn with_probe(dir: PathBuf, probe: Probe) -> AppProvider {
-        AppProvider { dir, probe, lat: Default::default(), hist: Default::default(), typed: Default::default(), pending: Default::default() }
+        AppProvider { dir, probe, lat: Default::default(), hist: Default::default(), typed: Default::default(), pending: Default::default(), notify: None }
     }
+
+    /// Avisa as janelas desktop quando o celular muda a aparência ou um agente passa a esperar confirmação.
+    pub fn with_notify(mut self, n: Notify) -> AppProvider { self.notify = Some(n); self }
 
     /// Usa o store da tela Histórico em vez de um próprio.
     pub fn with_history(mut self, h: hist::Shared) -> AppProvider { self.hist = h; self }
@@ -95,7 +101,7 @@ impl Provider for AppProvider {
     fn saved_agents(&self) -> Vec<Agent> {
         agents::read(&self.dir).into_iter().filter(|a| a.conn == term::LOCAL).filter_map(|a| Some(Agent {
             session_id: uuid_bytes(&a.session_id)?, agent: a.agent, args: a.args, label: a.label, cwd: a.cwd,
-            state: AgentState::Saved, last_activity_ms: a.used_ms, profile_id: Some(a.profile_id),
+            state: AgentState::Saved, last_activity_ms: a.used_ms, profile_id: Some(a.profile_id), waiting: false,
         })).collect()
     }
 
@@ -112,7 +118,7 @@ impl Provider for AppProvider {
     fn ssh_servers(&self) -> Vec<SshServer> {
         settings::ssh_servers(&self.dir).unwrap_or_default().into_iter().map(|s| {
             let (latency_ms, status) = self.latency(&s.host, s.port, false);
-            SshServer { latency_ms, status, server_id: s.id, label: s.name, host: s.host, user: s.user, port: s.port, key: s.key }
+            SshServer { latency_ms, status, server_id: s.id, label: s.name, host: s.host, user: s.user, port: s.port, key: s.key, keepalive_s: s.keepalive_s, auto_reconnect: s.auto_reconnect }
         }).collect()
     }
 
@@ -122,8 +128,22 @@ impl Provider for AppProvider {
 
     /// Mesma regra da tela desktop (`settings::save_ssh_server`): nome, destino validado, limite de 200.
     fn ssh_save(&self, server_id: Option<&str>, label: &str, t: &live_cmd_echo::ssh::Ssh) -> Result<String, String> {
-        let s = settings::SshServer { id: server_id.unwrap_or_default().into(), name: label.into(), user: t.user.clone(), host: t.host.clone(), port: t.port, key: t.key.clone() };
+        let s = settings::SshServer { id: server_id.unwrap_or_default().into(), name: label.into(), user: t.user.clone(), host: t.host.clone(), port: t.port, key: t.key.clone(),
+            keepalive_s: t.keepalive_s, auto_reconnect: t.auto_reconnect };
         settings::save_ssh_server(&self.dir, s).map(|s| s.id)
+    }
+
+    /// Mesma aparência da tela Configurações do desktop (`appearance.json`).
+    fn settings_get(&self) -> Option<Appearance> { Some(settings::appearance(&self.dir)) }
+
+    fn settings_set(&self, a: &Appearance) -> Result<(), String> {
+        settings::save_appearance(&self.dir, a)?;
+        if let Some(n) = &self.notify { n("appearance", a.json()); }
+        Ok(())
+    }
+
+    fn agent_waiting(&self, session_id: &[u8; 16], label: &str, waiting: bool) {
+        if let Some(n) = &self.notify { n("agent-waiting", serde_json::json!({ "session_id": uuid_str(session_id), "label": label, "waiting": waiting })); }
     }
 
     fn ssh_remove(&self, server_id: &str) -> Result<(), String> {
@@ -138,6 +158,12 @@ impl Provider for AppProvider {
     }
 
     /// Mesmos filtros da tela desktop (`hist::Query`).
+    /// Mesmo resumo da tela Histórico do desktop (`hist::sessions`), sobre o histórico inteiro do filtro.
+    fn history_sessions(&self, f: &HistoryFilter, _offset_min: i32) -> Vec<live_cmd_echo::extras::HistorySession> {
+        let q = hist::Query { q: f.query.clone(), days: f.days, kind: f.kind.clone(), errors: f.errors, limit: Some(usize::MAX) };
+        self.with_history_store(|s| hist::sessions(s, &q, crate::host::now_ms()))
+    }
+
     fn history(&self, f: &HistoryFilter) -> Vec<HistoryEntry> {
         let q = hist::Query { q: f.query.clone(), days: f.days, kind: f.kind.clone(), errors: f.errors, limit: Some(f.limit) };
         self.with_history_store(|s| s.search(&q, crate::host::now_ms())).into_iter().map(|e| HistoryEntry {
@@ -226,7 +252,7 @@ mod tests {
         let d = tmp("registro");
         let p = AppProvider::new(d.clone());
         let sid = uuid_bytes("2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e").unwrap();
-        let a = Agent { session_id: sid, agent: "codex".into(), args: String::new(), label: "api · codex".into(), cwd: Some(r"C:\api".into()), state: AgentState::Running, last_activity_ms: 0, profile_id: Some("pwsh".into()) };
+        let a = Agent { session_id: sid, agent: "codex".into(), args: String::new(), label: "api · codex".into(), cwd: Some(r"C:\api".into()), state: AgentState::Running, last_activity_ms: 0, profile_id: Some("pwsh".into()), waiting: false };
         p.agent_started(&a);
         let r = agents::read(&d);
         assert_eq!((r.len(), r[0].conn.as_str(), r[0].label.as_str(), r[0].profile_id.as_str()), (1, "local", "api · codex", "pwsh"));
@@ -244,7 +270,7 @@ mod tests {
     #[test]
     fn ssh_lista_sem_esperar_o_teste_e_destino_validado() {
         let d = tmp("ssh");
-        let srv = |name: &str, user: &str| settings::SshServer { id: String::new(), name: name.into(), user: user.into(), host: "10.0.0.5".into(), port: 2222, key: None };
+        let srv = |name: &str, user: &str| settings::SshServer { id: String::new(), name: name.into(), user: user.into(), host: "10.0.0.5".into(), port: 2222, key: None, ..Default::default() };
         let s = settings::save_ssh_server(&d, srv("prod", "deploy")).unwrap();
         let calls = Arc::new(Mutex::new(0));
         let c = calls.clone();
@@ -272,7 +298,7 @@ mod tests {
     #[test]
     fn ssh_falha_vira_status() {
         let d = tmp("ssh-falha");
-        settings::save_ssh_server(&d, settings::SshServer { id: String::new(), name: "x".into(), user: "u".into(), host: "nada.invalid".into(), port: 22, key: None }).unwrap();
+        settings::save_ssh_server(&d, settings::SshServer { id: String::new(), name: "x".into(), user: "u".into(), host: "nada.invalid".into(), port: 22, key: None, ..Default::default() }).unwrap();
         let p = AppProvider::with_probe(d.clone(), Arc::new(|_, _| Err("DNS".into())));
         assert_eq!(p.ssh_servers()[0].status, "testing");
         let t = Instant::now();
@@ -285,7 +311,7 @@ mod tests {
     fn ssh_cadastro_pelo_celular_usa_a_regra_do_desktop() {
         let d = tmp("ssh-save");
         let p = AppProvider::new(d.clone());
-        let t = |user: &str| live_cmd_echo::ssh::Ssh { user: user.into(), host: "h".into(), port: 22, key: Some(r"C:\k\id".into()) };
+        let t = |user: &str| live_cmd_echo::ssh::Ssh { user: user.into(), host: "h".into(), port: 22, key: Some(r"C:\k\id".into()), ..Default::default() };
         let id = p.ssh_save(None, "srv", &t("u")).unwrap();
         assert_eq!(p.ssh_save(Some(&id), "srv2", &t("u2")).unwrap(), id);
         let l = settings::ssh_servers(&d).unwrap();
@@ -369,8 +395,29 @@ mod tests {
         assert_eq!(p.history_command(&a.to_string()).as_deref(), Some("git status"));
         assert_eq!(p.history_command("123"), None);
         assert_eq!(p.history_command("abc"), None);
+        // Resumo "Sessões": o mesmo da tela desktop (`hist::sessions`), uma linha por sessão e dia.
+        let g = p.history_sessions(&f("", 1), 0);
+        assert_eq!(g.iter().map(|g| (g.label.as_str(), g.count, g.errors)).collect::<Vec<_>>(), vec![("srv", 1, 1), ("PowerShell", 1, 0)], "ignora o limite da lista");
         p.history_clear().unwrap();
         assert!(hist::with_shared(&shared, &d, |s| s.search(&hist::Query::default(), now)).is_empty(), "a tela desktop vê o histórico limpo");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// Celular grava a aparência no mesmo arquivo da tela desktop e as janelas recebem o evento.
+    #[test]
+    fn settings_do_celular() {
+        let d = tmp("aparencia");
+        let seen: Arc<Mutex<Vec<(String, serde_json::Value)>>> = Default::default();
+        let s2 = seen.clone();
+        let p = AppProvider::new(d.clone()).with_notify(Arc::new(move |e: &str, v| s2.lock().unwrap().push((e.into(), v))));
+        assert_eq!(p.settings_get(), Some(Appearance::default()), "sem arquivo: padrão");
+        let a = Appearance { theme: "cosmo".into(), blur: 12, ..Appearance::default() };
+        p.settings_set(&a).unwrap();
+        assert_eq!(settings::appearance(&d), a, "a tela desktop lê o mesmo valor");
+        assert_eq!(seen.lock().unwrap()[0], ("appearance".to_string(), a.json()));
+        p.agent_waiting(&[0x6b; 16], "api", true);
+        assert_eq!(seen.lock().unwrap()[1].1["waiting"], true);
+        assert!(p.settings_set(&Appearance { opacity: 10, ..a }).is_err(), "fora da faixa não grava");
         let _ = std::fs::remove_dir_all(d);
     }
 }

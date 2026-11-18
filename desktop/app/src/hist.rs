@@ -53,7 +53,7 @@ pub fn with_shared<R>(s: &Shared, dir: &std::path::Path, f: impl FnOnce(&mut Sto
 #[derive(Deserialize)]
 struct Patch { id: u64, code: Option<i64> }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 pub struct Query {
     #[serde(default)]
     pub q: String,
@@ -290,6 +290,24 @@ pub fn hist_meta(app: AppHandle, conn: String, session_id: String, label: String
 #[tauri::command(async)]
 pub fn hist_list(app: AppHandle, query: Query) -> Vec<Entry> {
     with_store(&app, |s| s.search(&query, now_ms()))
+}
+
+/// Resumo "Sessões": comandos por sessão e dia sobre todo o histórico guardado do filtro (sem o teto da lista).
+/// Mesma regra do pedido `history_query` com `ext` do celular (`extras::summarize`).
+pub fn sessions(s: &mut Store, query: &Query, now: u64) -> Vec<live_cmd_echo::extras::HistorySession> {
+    let all = Query { limit: Some(usize::MAX), ..query.clone() };
+    let entries: Vec<live_cmd_echo::extras::HistoryEntry> = s.search(&all, now).into_iter().map(|e| live_cmd_echo::extras::HistoryEntry {
+        entry_id: e.id.to_string(), command: String::new(), cwd: None, at_ms: e.ts, exit_code: e.code.and_then(|c| i32::try_from(c).ok()),
+        kind: e.kind, label: e.label, pc: e.pc,
+    }).collect();
+    live_cmd_echo::extras::summarize(&entries, live_cmd_echo::local_offset_min())
+}
+
+#[tauri::command(async)]
+pub fn hist_sessions(app: AppHandle, query: Query) -> Vec<serde_json::Value> {
+    with_store(&app, |s| sessions(s, &query, now_ms())).into_iter().map(|g| serde_json::json!({
+        "label": g.label, "kind": g.kind, "pc": g.pc, "day": g.day, "count": g.count, "errors": g.errors, "last_ms": g.last_ms,
+    })).collect()
 }
 
 #[tauri::command(async)]

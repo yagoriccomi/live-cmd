@@ -5,7 +5,7 @@ import { randomUUID } from 'expo-crypto';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { Offerer, b64d, parseMsg, toJson, uuidBytes, type Bytes } from './auth.ts';
 import { encodeFrame, parseFrame, parseHostControl, encodeControl } from './pty.ts';
-import { capsProbe, isExtraReply, parseExtraReply } from './extras.ts';
+import { capsProbe, isExtraReply, parseExtraReply, type ExtraMsg } from './extras.ts';
 
 export interface Pin { hostPk: string; room: string; server: string }
 /** `reset`: a sessão exibida mudou (agente retomado, SSH, troca de aba); limpar a tela. */
@@ -41,6 +41,8 @@ export class Conn {
   sessionId?: string;
   private seq = 0n;
   private pending = new Map<string, (m: any) => void>();
+  /** Evento `agent_waiting` (após `agentList(true)` com o cap `agent_waiting`): agente pede ou deixou de pedir confirmação. */
+  onAgentWaiting?: (e: Extract<ExtraMsg, { t: 'agent_waiting' }>) => void;
   private done = false;
 
   constructor(private pin: Pin, private seed: Bytes, private otk: Bytes | undefined, private h: Handlers) {}
@@ -144,7 +146,9 @@ export class Conn {
     try {
       if (typeof data === 'string') {
         if (isExtraReply(data)) {
-          const x = parseExtraReply(data, this.id), w = this.pending.get(x.requestId);
+          const x = parseExtraReply(data, this.id);
+          if (x.t === 'agent_waiting') { this.onAgentWaiting?.(x); return; }
+          const w = this.pending.get(x.requestId);
           if (w) { this.pending.delete(x.requestId); w(x); }
           return;
         }

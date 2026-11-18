@@ -5,11 +5,15 @@
     "history",
     "folders",
     "ssh_keys",
-    "agent_default"
+    "agent_default",
+    "settings",
+    "ssh_opts",
+    "agent_waiting",
+    "history_sessions"
   ],
   "caps_probe": {
     "auth_ok_host_antigo": "{\"type\":\"auth_ok\",\"v\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\"}",
-    "reply": "{\"api\":1,\"caps\":[\"agents\",\"ssh\",\"history\",\"folders\",\"ssh_keys\",\"agent_default\"],\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"caps_ok\",\"v\":1}",
+    "reply": "{\"api\":1,\"caps\":[\"agents\",\"ssh\",\"history\",\"folders\",\"ssh_keys\",\"agent_default\",\"settings\",\"ssh_opts\",\"agent_waiting\",\"history_sessions\"],\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"caps_ok\",\"v\":1}",
     "reply_host_antigo": "{\"code\":\"NOT_FOUND\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"error\",\"v\":1}",
     "request": {
       "from_offset": null,
@@ -28,6 +32,86 @@
       "name": "agent_list_vazia",
       "result": "ok",
       "text": "{\"agents\":[],\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "agent_list_ext",
+      "result": "ok",
+      "text": "{\"agents\":[{\"agent\":\"claude\",\"args\":\"--model opus\",\"cwd\":\"C:/proj/api\",\"label\":\"api\",\"last_activity_ms\":\"1700000000000\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"waiting\"},{\"agent\":\"codex\",\"args\":\"\",\"cwd\":null,\"label\":\"\",\"last_activity_ms\":\"5\",\"session_id\":\"2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"saved\"}],\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "ssh_list_ext",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"servers\":[{\"auto_reconnect\":true,\"host\":\"10.0.0.5\",\"keepalive_s\":30,\"key\":null,\"label\":\"Produção\",\"latency_ms\":38,\"port\":22,\"server_id\":\"srv-1\",\"status\":\"ok\",\"user\":\"deploy\"},{\"auto_reconnect\":false,\"host\":\"nas.local\",\"keepalive_s\":0,\"key\":\"C:\\\\k\",\"label\":\"NAS\",\"latency_ms\":null,\"port\":2222,\"server_id\":\"srv-2\",\"status\":\"timeout\",\"user\":\"admin\"}],\"sessions\":[{\"label\":\"Produção\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"disconnected\"}],\"type\":\"ssh_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "history_query_ext",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"entries\":[{\"at_ms\":\"1700000000000\",\"command\":\"git status\",\"cwd\":\"C:/proj\",\"entry_id\":\"h_42\",\"exit_code\":0,\"kind\":\"pwsh\",\"label\":\"PowerShell\",\"pc\":\"Este PC\"},{\"at_ms\":\"7\",\"command\":\"npm test\",\"cwd\":null,\"entry_id\":\"h_43\",\"exit_code\":null,\"kind\":\"ssh\",\"label\":\"srv\",\"pc\":\"Este PC\"}],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"sessions\":[{\"count\":1,\"day\":\"2023-11-14\",\"errors\":0,\"kind\":\"pwsh\",\"label\":\"PowerShell\",\"last_ms\":\"1700000000000\",\"pc\":\"Este PC\"},{\"count\":1,\"day\":\"1969-12-31\",\"errors\":0,\"kind\":\"ssh\",\"label\":\"srv\",\"last_ms\":\"7\",\"pc\":\"Este PC\"}],\"type\":\"history_query_ok\",\"v\":1}"
+    },
+    {
+      "name": "settings_get_ok",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"settings\":{\"animations\":true,\"blur\":30,\"font_family\":\"Fira Code\",\"font_size\":13,\"glow\":true,\"opacity\":100,\"theme\":\"dark\"},\"type\":\"settings_get_ok\",\"v\":1}"
+    },
+    {
+      "name": "settings_set_ok",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"settings\":{\"animations\":true,\"blur\":30,\"font_family\":\"Fira Code\",\"font_size\":13,\"glow\":true,\"opacity\":100,\"theme\":\"cosmo\"},\"type\":\"settings_set_ok\",\"v\":1}"
+    },
+    {
+      "name": "agent_waiting",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"label\":\"api\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"agent_waiting\",\"v\":1,\"waiting\":true}"
+    },
+    {
+      "name": "agente_waiting_sem_ext",
+      "result": "ok",
+      "text": "{\"agents\":[{\"agent\":\"claude\",\"args\":\"--model opus\",\"cwd\":\"C:/proj/api\",\"label\":\"api\",\"last_activity_ms\":\"1700000000000\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"waiting\"},{\"agent\":\"codex\",\"args\":\"\",\"cwd\":null,\"label\":\"\",\"last_activity_ms\":\"5\",\"session_id\":\"2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"saved\"}],\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "ssh_keepalive_texto",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"servers\":[{\"auto_reconnect\":true,\"host\":\"10.0.0.5\",\"keepalive_s\":\"30\",\"key\":null,\"label\":\"Produção\",\"latency_ms\":38,\"port\":22,\"server_id\":\"srv-1\",\"status\":\"ok\",\"user\":\"deploy\"},{\"auto_reconnect\":false,\"host\":\"nas.local\",\"keepalive_s\":0,\"key\":\"C:\\\\k\",\"label\":\"NAS\",\"latency_ms\":null,\"port\":2222,\"server_id\":\"srv-2\",\"status\":\"timeout\",\"user\":\"admin\"}],\"sessions\":[{\"label\":\"Produção\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"disconnected\"}],\"type\":\"ssh_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "ssh_reconectar_numero",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"servers\":[{\"auto_reconnect\":1,\"host\":\"10.0.0.5\",\"keepalive_s\":30,\"key\":null,\"label\":\"Produção\",\"latency_ms\":38,\"port\":22,\"server_id\":\"srv-1\",\"status\":\"ok\",\"user\":\"deploy\"},{\"auto_reconnect\":false,\"host\":\"nas.local\",\"keepalive_s\":0,\"key\":\"C:\\\\k\",\"label\":\"NAS\",\"latency_ms\":null,\"port\":2222,\"server_id\":\"srv-2\",\"status\":\"timeout\",\"user\":\"admin\"}],\"sessions\":[{\"label\":\"Produção\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"state\":\"disconnected\"}],\"type\":\"ssh_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "sessoes_count_texto",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"entries\":[{\"at_ms\":\"1700000000000\",\"command\":\"git status\",\"cwd\":\"C:/proj\",\"entry_id\":\"h_42\",\"exit_code\":0,\"kind\":\"pwsh\",\"label\":\"PowerShell\",\"pc\":\"Este PC\"},{\"at_ms\":\"7\",\"command\":\"npm test\",\"cwd\":null,\"entry_id\":\"h_43\",\"exit_code\":null,\"kind\":\"ssh\",\"label\":\"srv\",\"pc\":\"Este PC\"}],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"sessions\":[{\"count\":\"2\",\"day\":\"2023-11-14\",\"errors\":0,\"kind\":\"pwsh\",\"label\":\"PowerShell\",\"last_ms\":\"1700000000000\",\"pc\":\"Este PC\"},{\"count\":1,\"day\":\"1969-12-31\",\"errors\":0,\"kind\":\"ssh\",\"label\":\"srv\",\"last_ms\":\"7\",\"pc\":\"Este PC\"}],\"type\":\"history_query_ok\",\"v\":1}"
+    },
+    {
+      "name": "sessoes_dia_invalido",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"entries\":[{\"at_ms\":\"1700000000000\",\"command\":\"git status\",\"cwd\":\"C:/proj\",\"entry_id\":\"h_42\",\"exit_code\":0,\"kind\":\"pwsh\",\"label\":\"PowerShell\",\"pc\":\"Este PC\"},{\"at_ms\":\"7\",\"command\":\"npm test\",\"cwd\":null,\"entry_id\":\"h_43\",\"exit_code\":null,\"kind\":\"ssh\",\"label\":\"srv\",\"pc\":\"Este PC\"}],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"sessions\":[{\"count\":1,\"day\":\"17/11/2026\",\"errors\":0,\"kind\":\"pwsh\",\"label\":\"PowerShell\",\"last_ms\":\"1700000000000\",\"pc\":\"Este PC\"},{\"count\":1,\"day\":\"1969-12-31\",\"errors\":0,\"kind\":\"ssh\",\"label\":\"srv\",\"last_ms\":\"7\",\"pc\":\"Este PC\"}],\"type\":\"history_query_ok\",\"v\":1}"
+    },
+    {
+      "name": "settings_tema_invalido",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"settings\":{\"animations\":true,\"blur\":30,\"font_family\":\"Fira Code\",\"font_size\":13,\"glow\":true,\"opacity\":100,\"theme\":\"neon\"},\"type\":\"settings_get_ok\",\"v\":1}"
+    },
+    {
+      "name": "settings_campo_extra",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"settings\":{\"animations\":true,\"blur\":30,\"font_family\":\"Fira Code\",\"font_size\":13,\"glow\":true,\"opacity\":100,\"theme\":\"dark\",\"x\":1},\"type\":\"settings_get_ok\",\"v\":1}"
+    },
+    {
+      "name": "settings_sem_campo",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"settings\":{\"animations\":true,\"blur\":30,\"font_family\":\"Fira Code\",\"font_size\":13,\"opacity\":100,\"theme\":\"dark\"},\"type\":\"settings_get_ok\",\"v\":1}"
+    },
+    {
+      "name": "waiting_com_request_id",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"label\":\"api\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"agent_waiting\",\"v\":1,\"waiting\":true}"
+    },
+    {
+      "name": "waiting_texto",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"label\":\"api\",\"session_id\":\"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\",\"type\":\"agent_waiting\",\"v\":1,\"waiting\":\"sim\"}"
     },
     {
       "name": "agent_resume_ok",
@@ -821,6 +905,239 @@
         "type": "agent_default_set"
       },
       "name": "padrao_sem_agente",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "ext": true,
+        "type": "agent_list"
+      },
+      "name": "agent_list_ext",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "ext": true,
+        "type": "ssh_list"
+      },
+      "name": "ssh_list_ext",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "auto_reconnect": true,
+        "host": "10.0.0.5",
+        "keepalive_s": 30,
+        "key": null,
+        "label": "Produção",
+        "port": 22,
+        "type": "ssh_save",
+        "user": "deploy"
+      },
+      "name": "ssh_save_opcoes",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "ext": true,
+        "limit": 50,
+        "type": "history_query"
+      },
+      "name": "history_query_ext",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "type": "settings_get"
+      },
+      "name": "settings_get",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "settings": {
+          "font_size": 14,
+          "glow": false,
+          "theme": "cosmo"
+        },
+        "type": "settings_set"
+      },
+      "name": "settings_set",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "settings": {
+          "animations": false,
+          "blur": 0,
+          "font_family": "Consolas",
+          "font_size": 10,
+          "glow": true,
+          "opacity": 60,
+          "theme": "light"
+        },
+        "type": "settings_set"
+      },
+      "name": "settings_set_tudo",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "ext": "sim",
+        "type": "agent_list"
+      },
+      "name": "ext_texto",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "host": "h",
+        "keepalive_s": 4,
+        "label": "x",
+        "port": 22,
+        "type": "ssh_save",
+        "user": "u"
+      },
+      "name": "save_keepalive_4",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "host": "h",
+        "keepalive_s": "30",
+        "label": "x",
+        "port": 22,
+        "type": "ssh_save",
+        "user": "u"
+      },
+      "name": "save_keepalive_texto",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "auto_reconnect": 1,
+        "host": "h",
+        "label": "x",
+        "port": 22,
+        "type": "ssh_save",
+        "user": "u"
+      },
+      "name": "save_reconectar_numero",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "settings": {},
+        "type": "settings_set"
+      },
+      "name": "set_vazio",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "settings": {
+          "server": "wss://x"
+        },
+        "type": "settings_set"
+      },
+      "name": "set_campo_desconhecido",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "settings": {
+          "theme": "neon"
+        },
+        "type": "settings_set"
+      },
+      "name": "set_tema_desconhecido",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "settings": {
+          "font_family": "Comic Sans"
+        },
+        "type": "settings_set"
+      },
+      "name": "set_fonte_livre",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "settings": {
+          "font_size": 25
+        },
+        "type": "settings_set"
+      },
+      "name": "set_fonte_25",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "settings": {
+          "opacity": 59
+        },
+        "type": "settings_set"
+      },
+      "name": "set_opacidade_59",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "settings": {
+          "blur": 61
+        },
+        "type": "settings_set"
+      },
+      "name": "set_desfoque_61",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "settings": {
+          "glow": "true"
+        },
+        "type": "settings_set"
+      },
+      "name": "set_brilho_texto",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "theme": "dark",
+        "type": "settings_set"
+      },
+      "name": "set_sem_settings",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "type": "settings_get",
+        "x": 1
+      },
+      "name": "get_com_campo",
       "result": "INVALID_MESSAGE"
     }
   ]
