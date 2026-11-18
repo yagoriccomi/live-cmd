@@ -209,8 +209,12 @@ for (const i of document.querySelectorAll("[name=theme-pick]")) i.onchange = () 
   themePicked();
 };
 $("cfg-pane").addEventListener("click", (e) => {
+  // Agentes e SSH têm painel próprio no trilho: o cartão abre o painel (o mesmo botão do trilho).
+  const open = e.target.closest("[data-open]");
+  if (open) return $(open.dataset.open).click();
   const go = e.target.closest("[data-go]");
   if (!go) return;
+  for (const c of $("cfg-pane").querySelectorAll(".cfg-nav .card")) { c.classList.toggle("on", c === go); c.toggleAttribute("aria-current", c === go); }
   const f = $(go.dataset.go);
   f.scrollIntoView({ block: "start", behavior: "smooth" });
   f.querySelector("input, select, button")?.focus({ preventScroll: true });

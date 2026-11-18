@@ -169,7 +169,7 @@
           <p class="side-sub">Seus terminais no bolso</p>
           <div class="chips"><button type="button" class="chip pane-x" id="pp-x" aria-label="Fechar pareamento (Esc)">×</button></div>
           <ol class="cards pair-steps" aria-label="Como parear">
-            <li class="card"><span class="tile" aria-hidden="true">1</span><span class="card-txt"><span class="card-t">Instale o app</span><span class="card-s">live-cmd no celular</span></span></li>
+            <li class="card on"><span class="tile" aria-hidden="true">1</span><span class="card-txt"><span class="card-t">Instale o app</span><span class="card-s">live-cmd no celular</span></span></li>
             <li class="card"><span class="tile" aria-hidden="true">2</span><span class="card-txt"><span class="card-t">Leia o código</span><span class="card-s">câmera do app</span></span></li>
             <li class="card"><span class="tile" aria-hidden="true">3</span><span class="card-txt"><span class="card-t">Pronto</span><span class="card-s">o celular abre os terminais deste PC</span></span></li>
           </ol>
@@ -233,10 +233,12 @@
           <p class="side-sub">Aparência e comportamento deste PC</p>
           <div class="chips"><button type="button" class="chip pane-x" id="cfg-x" aria-label="Fechar configurações (Esc)">×</button></div>
           <ul class="cards cfg-nav" aria-label="Seções">
-            <li><button type="button" class="card" data-go="cfg-look"><span class="tile" aria-hidden="true">◐</span><span class="card-txt"><span class="card-t">Aparência</span><span class="card-s">tema e início com o Windows</span></span></button></li>
-            <li><button type="button" class="card" data-go="cfg-srv"><span class="tile" aria-hidden="true">⇄</span><span class="card-txt"><span class="card-t">Servidor</span><span class="card-s">sinalização do pareamento</span></span></button></li>
-            <li><button type="button" class="card" data-go="cfg-term"><span class="tile" aria-hidden="true">›_</span><span class="card-txt"><span class="card-t">Terminal</span><span class="card-s">rolagem e perfis de shell</span></span></button></li>
+            <li><button type="button" class="card on" data-go="cfg-look" aria-current="true"><span class="tile" aria-hidden="true">◐</span><span class="card-txt"><span class="card-t">Aparência</span><span class="card-s">tema, vidro, fontes</span></span></button></li>
+            <li><button type="button" class="card" data-go="cfg-term"><span class="tile" aria-hidden="true">›_</span><span class="card-txt"><span class="card-t">Terminal</span><span class="card-s">rolagem e perfis</span></span></button></li>
             <li><button type="button" class="card" data-go="cfg-about"><span class="tile" aria-hidden="true">↺</span><span class="card-txt"><span class="card-t">Sobre</span><span class="card-s">versão e atualizações</span></span></button></li>
+            <li><button type="button" class="card" data-open="nav-agents"><span class="tile" aria-hidden="true">✦</span><span class="card-txt"><span class="card-t">Agentes</span><span class="card-s">claude, codex</span></span></button></li>
+            <li><button type="button" class="card" data-open="ssh-open"><span class="tile" aria-hidden="true">⇄</span><span class="card-txt"><span class="card-t">SSH</span><span class="card-s">chaves e hosts</span></span></button></li>
+            <li><button type="button" class="card" data-go="cfg-srv"><span class="tile" aria-hidden="true">▣</span><span class="card-txt"><span class="card-t">Celular</span><span class="card-s">pareamento e servidor</span></span></button></li>
           </ul>
         </div>
         <div class="pane-r">
@@ -251,11 +253,16 @@
             <fieldset id="cfg-look"><legend>Aparência</legend>
               <div class="swatches" role="radiogroup" aria-label="Tema">
                 <label class="swatch sw-dark"><input type="radio" name="theme-pick" value="dark"><i aria-hidden="true"></i><span>Aurora (escuro)</span></label>
-                <label class="swatch sw-cosmo"><input type="radio" name="theme-pick" value="cosmo"><i aria-hidden="true"></i><span>Cosmo</span></label>
                 <label class="swatch sw-light"><input type="radio" name="theme-pick" value="light"><i aria-hidden="true"></i><span>Claro</span></label>
                 <label class="swatch sw-contrast"><input type="radio" name="theme-pick" value="contrast"><i aria-hidden="true"></i><span>Alto contraste</span></label>
+                <label class="swatch sw-cosmo"><input type="radio" name="theme-pick" value="cosmo"><i aria-hidden="true"></i><span>Cosmo</span></label>
               </div>
               <select id="theme" hidden><option value="dark">Escuro</option><option value="cosmo">Cosmo</option><option value="light">Claro</option><option value="contrast">Alto contraste</option></select>
+              <label class="check toggle"><input type="checkbox" role="switch" id="ap-glow"> <span>Brilho nas bordas<br><span class="muted">Halo neon nos cartões e painéis de vidro.</span></span></label>
+              <label class="check toggle"><input type="checkbox" role="switch" id="ap-anim"> <span>Animações<br><span class="muted">Transições e movimentos da interface.</span></span></label>
+              <p class="field-error" role="alert" id="ap-err" hidden>Não foi possível salvar a aparência.</p>
+              <label class="check toggle"><input type="checkbox" role="switch" id="autostart"> <span>Iniciar com o Windows<br><span class="muted">Abre o live-cmd na bandeja quando você entra no Windows.</span></span></label>
+              <div class="alert alert-danger" role="alert" id="autostart-err" hidden><p>Não foi possível ativar o início com o Windows.</p></div>
               <div class="look-grid">
                 <label for="ap-font">Fonte do terminal</label>
                 <select id="ap-font"><option>Fira Code</option><option>Cascadia Mono</option><option>Consolas</option><option>Courier New</option></select>
@@ -266,11 +273,6 @@
                 <label for="ap-blur">Desfoque do vidro</label>
                 <div class="range"><input id="ap-blur" type="range" min="0" max="60" step="2"><output id="ap-blur-v" for="ap-blur"></output></div>
               </div>
-              <label class="check toggle"><input type="checkbox" role="switch" id="ap-glow"> <span>Brilho nas bordas<br><span class="muted">Halo neon nos cartões e painéis de vidro.</span></span></label>
-              <label class="check toggle"><input type="checkbox" role="switch" id="ap-anim"> <span>Animações<br><span class="muted">Transições e movimentos da interface.</span></span></label>
-              <p class="field-error" role="alert" id="ap-err" hidden>Não foi possível salvar a aparência.</p>
-              <label class="check toggle"><input type="checkbox" role="switch" id="autostart"> <span>Iniciar com o Windows<br><span class="muted">Abre o live-cmd na bandeja quando você entra no Windows.</span></span></label>
-              <div class="alert alert-danger" role="alert" id="autostart-err" hidden><p>Não foi possível ativar o início com o Windows.</p></div>
             </fieldset>
             <fieldset id="cfg-srv"><legend>Servidor de sinalização</legend>
               <label for="srv">Endereço</label>

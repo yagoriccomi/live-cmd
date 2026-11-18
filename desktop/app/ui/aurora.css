@@ -224,6 +224,17 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .qr-card .actions { margin:4px 0 0; display:flex; gap:10px; align-items:center; justify-content:center; }
 .cfg-nav li { list-style:none; }
 .cfg-nav .card { width:100%; text-align:left; font:inherit; color:inherit; cursor:pointer; }
+/* VD-Config-1: seção ativa em cartão claro; linhas de opção com a chave à direita. */
+.pair-steps .card.on, .cfg-nav .card.on { background:#fff; color:#1b1030; border-color:transparent; }
+.pair-steps .card.on .card-s, .cfg-nav .card.on .card-s { color:#6b5a86; }
+.pair-steps .card.on .tile, .cfg-nav .card.on .tile { background:#1b1030; color:#fff; }
+.cfg-pane .hero, #pair-pane .hero { min-height:140px; }
+.cfg-card .swatch { padding:12px 10px 10px; border:1px solid var(--glass-line); border-radius:12px; text-align:center; }
+.cfg-card .swatch i { height:56px; }
+.cfg-card .toggle { min-height:44px; padding:0; }
+.cfg-card select, .cfg-card input[type=url], .cfg-card input[type=number] { background:rgb(0 0 0 / .18); }
+.cfg-card .toggle { flex-direction:row-reverse; justify-content:space-between; align-items:center; margin:0; padding:10px 0; }
+.cfg-card .toggle br, .cfg-card .toggle .muted { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
 .cfg-card fieldset { border-top:1px solid var(--glass-line); }
 .cfg-card fieldset:first-child { border-top:0; }
 .cfg-card legend { font-weight:800; font-size:14px; margin-bottom:8px; }
