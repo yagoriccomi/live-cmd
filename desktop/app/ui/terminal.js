@@ -15,6 +15,8 @@ const MSG = {
   INVALID_MESSAGE: "Mensagem inválida. Tente conectar de novo.",
   LIMIT_EXCEEDED: "Limite atingido. Aguarde e tente novamente.",
   NOT_FOUND: "Não encontrado.",
+  SCP_FAILED: "Não deu para enviar o print: o servidor precisa aceitar sua chave SSH (sem senha).",
+  SCP_MISSING: "scp.exe não encontrado (instale o Cliente OpenSSH do Windows).",
   NOT_CONNECTED: "Sem conexão com este PC.",
   IO_ERROR: "Não foi possível gravar os dados do app.",
   CLIPBOARD: "Não foi possível usar a área de transferência.",
@@ -810,10 +812,12 @@ function paste() {
   if (!t || t.exited != null) return $("screen").focus();
   const dir = dropCwds[t.key] ?? null;
   // Print: local vai para <pasta>\.live-cmd; remoto é enviado ao outro PC. Cola o caminho (claude/codex anexam pelo caminho).
-  invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir }).then((name) => {
+  const sshId = window.sshTabs?.[t.sid] ?? null;
+  invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir, sshId }).then((name) => {
     if (!name) return;
-    send(dir ? `"${dir.replace(/[\\/]+$/, "")}\\${name}"` : name);
-    banner(`Print enviado: ${name} em ${dir ?? "pasta padrão do outro PC"}.`);
+    const local = t.conn === LOCAL;
+    send(sshId ? name : dir ? `"${dir.replace(/[\\/]+$/, "")}\\${name}"` : local ? `"${name}"` : name);
+    banner(sshId ? `Print enviado ao servidor: ${name}.` : local ? `Print salvo: ${name}.` : `Print enviado: ${name} em ${dir ?? "pasta padrão do outro PC"}.`);
   }).catch((err) => banner(msg(err), "err"));
   $("screen").focus();
 }

@@ -14,7 +14,8 @@
   const sshMsg = (code) => SSH_MSG[code] || msg(code);
   // Mesmas regras do host (desktop/src/ssh.rs); o Rust valida de novo ao salvar e ao conectar.
   const okHost = (h) => /^(?!-)[A-Za-z0-9._:-]{1,253}$/.test(h);
-  const okUser = (u) => /^(?!-)[A-Za-z0-9._-]{1,64}$/.test(u);
+  const okUser = (u) => !u || /^(?!-)[A-Za-z0-9._-]{1,64}$/.test(u);
+  const dest = (s) => (s.user ? `${s.user}@` : "") + s.host;
   const okKey = (k) => /^([A-Za-z]:[\\/]|\\\\.)/.test(k) && !/["\u0000-\u001f\u007f]/.test(k);
 
   let list = [];
@@ -103,7 +104,7 @@
   function render() {
     const q = $("ssh-q").value.trim().toLowerCase();
     const isOn = (s) => status[s.id]?.ok === true;
-    const shown = list.filter((s) => (!q || `${s.name} ${s.user}@${s.host}:${s.port}`.toLowerCase().includes(q))
+    const shown = list.filter((s) => (!q || `${s.name} ${dest(s)}:${s.port}`.toLowerCase().includes(q))
       && (filter === "all" || (filter === "on" ? isOn(s) : !isOn(s))));
     if (!shown.some((s) => s.id === selected)) selected = shown[0]?.id ?? null;
     $("ssh-q").hidden = list.length < 8;
@@ -140,7 +141,7 @@
       more("Chave privada", s.key ? s.key.split(/[\/]/).pop() : "padrão", () => edit(s)), li(del));
   }
   // Comando equivalente para colar em outro terminal (sem senha: ela nunca é guardada).
-  window.sshCommand = (s) => `ssh${s.key ? ` -i "${s.key}"` : ""}${s.port !== 22 ? ` -p ${s.port}` : ""} ${s.user}@${s.host}`;
+  window.sshCommand = (s) => `ssh${s.key ? ` -i "${s.key}"` : ""}${s.port !== 22 ? ` -p ${s.port}` : ""} ${dest(s)}`;
 
   function row(s) {
     const li = el("li");
@@ -151,8 +152,8 @@
     const d = el("span", cls, dot);
     d.setAttribute("aria-hidden", "true");
     const info = el("div", "ssh-info");
-    info.append(el("div", "ssh-name", s.name), el("div", "muted small mono ssh-dest", `${s.user}@${s.host}` + (s.port !== 22 ? `:${s.port}` : "")));
-    li.dataset.sub = `${s.user}@${s.host} : ${s.port}`;
+    info.append(el("div", "ssh-name", s.name), el("div", "muted small mono ssh-dest", dest(s) + (s.port !== 22 ? `:${s.port}` : "")));
+    li.dataset.sub = `${dest(s)} : ${s.port}`;
     li.dataset.ms = status[s.id]?.ok ? String(status[s.id].ms) : "";
     li.dataset.key = s.key || "";
     const st = el("span", "muted small ssh-st", label);
@@ -184,6 +185,7 @@
     const { cols, rows } = size();
     try {
       const sid = await invoke("ssh_connect", { id: s.id, cols, rows });
+      (window.sshTabs ??= {})[sid] = s.id; // Ctrl+V com print vai por scp para este servidor
       closePanel(false);
       await openSession(LOCAL, { session_id: sid, label: s.name, state: "running" });
       refresh(LOCAL);
@@ -197,7 +199,7 @@
 
   // ---------- Remover ----------
   async function remove(s) {
-    if (!(await ask("Remover servidor?", `“${s.name}” (${s.user}@${s.host}) sai da lista. Abas já abertas continuam.`, "Remover"))) return;
+    if (!(await ask("Remover servidor?", `“${s.name}” (${dest(s)}) sai da lista. Abas já abertas continuam.`, "Remover"))) return;
     try { await invoke("ssh_remove", { id: s.id }); delete status[s.id]; } catch (e) { banner(sshMsg(e), "err"); }
     load();
   }
@@ -227,8 +229,8 @@
     $("ssh-cancel").onclick = end;
     $("ssh-ok").onclick = async () => {
       const v = {
-        id: cur.id, name: $("ssh-name").value.trim(), user: $("ssh-user").value.trim(), host: $("ssh-host").value.trim(),
-        port: Number($("ssh-port").value), key: $("ssh-key").value.trim() || null,
+        id: cur.id, name: $("ssh-name").value.trim() || $("ssh-host").value.trim(), user: $("ssh-user").value.trim(), host: $("ssh-host").value.trim(),
+        port: Number($("ssh-port").value || 22), key: $("ssh-key").value.trim() || null,
         keepalive_s: Number($("ssh-alive").value || 0), auto_reconnect: $("ssh-retry").checked,
       };
       const bad = !v.name || v.name.length > 40 ? "INVALID_SSH_NAME" : !okUser(v.user) ? "INVALID_SSH_USER" : !okHost(v.host) ? "INVALID_SSH_HOST"
@@ -246,6 +248,13 @@
     };
   }
   $("ssh-add").onclick = () => edit(null);
+  $("ssh-import").onclick = async () => {
+    try {
+      const n = await invoke("ssh_import");
+      banner(n ? `${n} servidor(es) importado(s) de ~/.ssh/config.` : "Nada novo em ~/.ssh/config.", "ok");
+      load();
+    } catch (e) { banner(sshMsg(e), "err"); }
+  };
   for (const f of FIELDS) $(f).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("ssh-ok").click(); } });
 
   $("ssh-key-pick").onclick = () => window.__TAURI__.dialog.open({ multiple: false, directory: false, title: "Chave privada SSH" })

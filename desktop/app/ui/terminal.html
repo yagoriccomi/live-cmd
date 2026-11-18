@@ -74,6 +74,7 @@
       <div class="pane-l">
         <div class="ssh-head side-head">
           <h2 id="ssh-h">Servidores</h2>
+          <button type="button" id="ssh-import" title="Importa os Host de %USERPROFILE%\.ssh\config">Importar ~/.ssh/config</button>
           <button type="button" class="btn-primary" id="ssh-add">+ Servidor</button>
         </div>
         <p class="side-sub" id="ssh-sub" role="status">Servidores salvos neste PC</p>
@@ -378,13 +379,13 @@
     <h3 id="ssh-t">Adicionar servidor</h3>
     <label for="ssh-name">Nome</label>
     <input type="text" id="ssh-name" maxlength="40" autocomplete="off" placeholder="Produção">
-    <label for="ssh-user" class="gap">Usuário</label>
-    <input type="text" class="mono" id="ssh-user" maxlength="64" autocomplete="off" spellcheck="false" placeholder="deploy">
+    <label for="ssh-user" class="gap">Usuário (opcional)</label>
+    <input type="text" class="mono" id="ssh-user" maxlength="64" autocomplete="off" spellcheck="false" placeholder="padrão do ssh">
     <div class="ssh-row gap">
       <div><label for="ssh-host">Host</label>
       <input type="text" class="mono" id="ssh-host" maxlength="253" autocomplete="off" spellcheck="false" placeholder="srv.exemplo.com"></div>
       <div class="ssh-port"><label for="ssh-port">Porta</label>
-      <input type="number" id="ssh-port" min="1" max="65535" value="22"></div>
+      <input type="number" id="ssh-port" min="1" max="65535" value="22" placeholder="22"></div>
     </div>
     <label for="ssh-key" class="gap">Chave privada (opcional)</label>
     <div class="inline"><input type="text" class="mono" id="ssh-key" autocomplete="off" spellcheck="false" placeholder="C:\Users\voce\.ssh\id_ed25519">

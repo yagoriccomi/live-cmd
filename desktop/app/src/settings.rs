@@ -217,6 +217,7 @@ pub fn save_ssh_server(dir: &Path, mut s: SshServer) -> Result<SshServer, String
     s.name = s.name.trim().into();
     s.user = s.user.trim().into();
     s.host = s.host.trim().into();
+    if s.port == 0 { s.port = 22; }
     s.key = s.key.map(|k| k.trim().to_owned()).filter(|k| !k.is_empty());
     let n = s.name.chars().count();
     if n == 0 || n > 40 || s.name.chars().any(char::is_control) { return Err("INVALID_SSH_NAME".into()); }
@@ -320,11 +321,13 @@ mod tests {
         save_ssh_server(&d, SshServer { port: 2200, ..a.clone() }).unwrap();
         let l = ssh_servers(&d).unwrap();
         assert_eq!((l.len(), l[0].port), (2, 2200), "editar troca no lugar");
+        let p = save_ssh_server(&d, srv("", "sem-user", "", "h", 0, None)).unwrap();
+        assert_eq!((p.port, p.user.as_str()), (22, ""), "porta vazia = 22, usuário opcional");
+        remove_ssh_server(&d, &p.id).unwrap();
         let txt = std::fs::read_to_string(d.join("ssh.json")).unwrap();
         assert!(!txt.contains("password") && !txt.contains("senha"));
         for (bad, code) in [(srv("", "", "u", "h", 22, None), "INVALID_SSH_NAME"), (srv("", "x", "u;rm", "h", 22, None), "INVALID_SSH_USER"),
-            (srv("", "x", "u", "h h", 22, None), "INVALID_SSH_HOST"), (srv("", "x", "u", "h", 0, None), "INVALID_SSH_PORT"),
-            (srv("", "x", "u", "h", 22, Some("id_rsa")), "INVALID_SSH_KEY"), (srv("nao-existe", "x", "u", "h", 22, None), "NOT_FOUND")] {
+            (srv("", "x", "u", "h h", 22, None), "INVALID_SSH_HOST"),             (srv("", "x", "u", "h", 22, Some("id_rsa")), "INVALID_SSH_KEY"), (srv("nao-existe", "x", "u", "h", 22, None), "NOT_FOUND")] {
             assert_eq!(save_ssh_server(&d, bad).unwrap_err(), code);
         }
         assert!(serde_json::from_str::<SshServer>(r#"{"name":"x","user":"u","host":"h","port":22,"password":"p"}"#).map(|s| serde_json::to_string(&s).unwrap()).unwrap().find("password").is_none(), "senha nunca é regravada");
