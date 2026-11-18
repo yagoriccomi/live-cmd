@@ -6,6 +6,7 @@ import { parseHostControl } from './pty.ts';
 import {
   capsProbe, agentList, agentResume, agentCreate, agentRemove, sshList, sshConnect, sshSave, sshRemove, sshProbe, sshReconnect,
   historyQuery, historyRun, historyClear, parseExtraReply, isExtraReply, groupByFolder, groupByDay, baseName, sshFormError, validArgs,
+  folderList, sshKeyList, agentDefaultGet, agentDefaultSet, joinPath, parentPath, settingsGet, settingsSet,
   type Agent, type HistoryEntry,
 } from './extras.ts';
 
@@ -31,15 +32,23 @@ test('pedidos: os construtores montam o mesmo corpo que o host aceita', () => {
   assert.deepEqual(sshRemove('srv-1'), body('ssh_remove'));
   assert.deepEqual(sshProbe('srv-1'), body('ssh_probe'));
   assert.deepEqual(sshReconnect(SID, 80, 24), body('ssh_reconnect'));
+  assert.deepEqual(folderList('C:\\proj'), body('folder_list'));
+  assert.deepEqual(folderList(''), body('folder_list_unidades'));
+  assert.deepEqual(sshKeyList(), body('ssh_key_list'));
+  assert.deepEqual(sshKeyList('C:\\Users\\eu\\.ssh\\work'), body('ssh_key_list_pasta'));
+  assert.deepEqual(agentDefaultGet(), body('agent_default_get'));
+  assert.deepEqual(agentDefaultSet('claude', 'C:\\proj\\api', '--model opus'), body('agent_default_set'));
+  assert.deepEqual(agentDefaultSet('codex', null, ''), body('agent_default_set_minimo'));
   for (const n of ['agent_list', 'agent_resume', 'agent_create', 'agent_create_minimo', 'agent_remove', 'ssh_list', 'ssh_connect', 'ssh_save',
-    'ssh_save_editar', 'ssh_remove', 'ssh_probe', 'ssh_reconnect', 'history_query', 'history_query_filtros', 'history_run', 'history_clear'])
+    'ssh_save_editar', 'ssh_remove', 'ssh_probe', 'ssh_reconnect', 'history_query', 'history_query_filtros', 'history_run', 'history_clear',
+    'folder_list', 'folder_list_unidades', 'ssh_key_list', 'ssh_key_list_pasta', 'agent_default_get', 'agent_default_set', 'agent_default_set_minimo'])
     assert.equal(fx.requests.find((c: any) => c.name === n).result, 'ok', n);
 });
 
 test('respostas: mesmo resultado esperado pelo host', () => {
   let n = 0;
   for (const c of fx.replies) { assert.equal(res(() => parseExtraReply(c.text, fx.connection_id)), c.result, c.name); n++; }
-  assert.ok(n >= 33);
+  assert.ok(n >= 47);
 });
 
 test('respostas: valores', () => {
@@ -62,6 +71,59 @@ test('respostas: valores', () => {
   assert.ok(sv.t === 'ssh_save_ok' && sv.serverId.length > 0);
   const r = t('ssh_connect_ok');
   assert.ok(r.t === 'ssh_connect_ok' && r.sessionId === SID);
+  const fl = t('folder_list_ok');
+  assert.ok(fl.t === 'folder_list_ok');
+  assert.deepEqual([fl.path, fl.dirs], ['C:\\proj', ['api', 'web']]);
+  const un = t('folder_list_unidades');
+  assert.ok(un.t === 'folder_list_ok' && un.path === '' && un.dirs[0] === 'C:\\');
+  const kl = t('ssh_key_list_ok');
+  assert.ok(kl.t === 'ssh_key_list_ok');
+  assert.deepEqual([kl.root, kl.path, kl.dirs, kl.keys], ['C:\\Users\\eu\\.ssh', 'C:\\Users\\eu\\.ssh', ['work'], ['id_ed25519', 'id_rsa']]);
+  const ad = t('agent_default_ok');
+  assert.ok(ad.t === 'agent_default_ok');
+  assert.deepEqual(ad.value, { agent: 'claude', cwd: 'C:\\proj\\api', args: '--model opus' });
+  const an = t('agent_default_nunca_salvo');
+  assert.ok(an.t === 'agent_default_ok' && an.value === null);
+  assert.equal(t('agent_default_set_ok').t, 'agent_default_set_ok');
+});
+
+test('caminhos: mesmo navegador do desktop (subir até as unidades)', () => {
+  assert.equal(joinPath('', 'C:\\'), 'C:\\');
+  assert.equal(joinPath('C:\\', 'proj'), 'C:\\proj');
+  assert.equal(joinPath('C:\\proj\\', 'api'), 'C:\\proj\\api');
+  assert.equal(parentPath('C:\\proj\\api'), 'C:\\proj\\');
+  assert.equal(parentPath('C:\\proj\\'), 'C:\\');
+  assert.equal(parentPath('C:\\'), '');
+});
+
+test('funções dos mockups: pedidos com ext e aparência', () => {
+  assert.deepEqual(agentList(true), body('agent_list_ext'));
+  assert.deepEqual(sshList(true), body('ssh_list_ext'));
+  assert.deepEqual(historyQuery({ ext: true }), body('history_query_ext'));
+  assert.deepEqual(settingsGet(), body('settings_get'));
+  assert.deepEqual(settingsSet({ theme: 'cosmo', fontSize: 14, glow: false }), body('settings_set'));
+  assert.deepEqual(settingsSet({ theme: 'magenta', fontFamily: 'Consolas', fontSize: 10, opacity: 60, blur: 0, glow: true, animations: false }), body('settings_set_tudo'));
+  for (const n of ['agent_list_ext', 'ssh_list_ext', 'history_query_ext', 'settings_get', 'settings_set', 'settings_set_tudo'])
+    assert.equal(fx.requests.find((c: any) => c.name === n).result, 'ok', n);
+  const s = sshSave({ label: 'x', user: 'u', host: 'h', port: 22, key: null, keepaliveS: 30, autoReconnect: true });
+  assert.deepEqual([s.keepalive_s, s.auto_reconnect], [30, true]);
+  assert.ok(!('keepalive_s' in sshSave({ label: 'x', user: 'u', host: 'h', port: 22, key: null })), 'sem o cap, corpo antigo');
+});
+
+test('funções dos mockups: respostas', () => {
+  const t = (n: string) => parseExtraReply(fx.replies.find((c: any) => c.name === n).text, fx.connection_id);
+  const al = t('agent_list_ext');
+  assert.ok(al.t === 'agent_list_ok' && al.agents[0].state === 'waiting');
+  const sl = t('ssh_list_ext');
+  assert.ok(sl.t === 'ssh_list_ok' && sl.servers[0].keepaliveS === 30 && sl.servers[0].autoReconnect === true);
+  const hq = t('history_query_ext');
+  assert.ok(hq.t === 'history_query_ok');
+  assert.deepEqual(hq.sessions?.map(g => [g.label, g.day, g.count, g.lastMs]), [['PowerShell', '2023-11-14', 1, 1_700_000_000_000n], ['srv', '1969-12-31', 1, 7n]]);
+  const sg = t('settings_set_ok');
+  assert.ok(sg.t === 'settings_set_ok' && sg.settings.theme === 'cosmo' && sg.settings.fontFamily === 'Fira Code');
+  const w = t('agent_waiting');
+  assert.deepEqual(w, { t: 'agent_waiting', sessionId: SID, label: 'api', waiting: true });
+  assert.equal(isExtraReply(fx.replies.find((c: any) => c.name === 'agent_waiting').text), true);
 });
 
 test('isExtraReply separa respostas extras das C3', () => {
@@ -106,6 +168,7 @@ test('capacidades: pergunta que o host 0.1.8 entende; host novo responde caps_ok
   const r = parseExtraReply(p.reply, fx.connection_id);
   assert.ok(r.t === 'caps_ok');
   assert.deepEqual(r.caps, fx.caps);
+  for (const c of ['agents', 'ssh', 'history', 'folders', 'ssh_keys', 'agent_default']) assert.ok(r.caps.includes(c), c);
   // Host antigo: `error` com request_id, resposta comum de pedido (pty.ts), não fecha a conexão.
   assert.equal(isExtraReply(p.reply_host_antigo), false);
   const old = JSON.parse(p.reply_host_antigo);

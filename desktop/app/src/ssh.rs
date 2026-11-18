@@ -19,6 +19,56 @@ pub fn ssh_save(app: State<App>, server: settings::SshServer) -> Result<settings
 #[tauri::command]
 pub fn ssh_remove(app: State<App>, id: String) -> Result<(), String> { settings::remove_ssh_server(&app.data_dir, &id) }
 
+/// `Host` do `~/.ssh/config` como servidores (sem curinga); `HostName`, `Port`, `User`, `IdentityFile`.
+/// ponytail: sem `Include`/`Match`; entradas inválidas são puladas.
+pub fn parse_config(text: &str) -> Vec<settings::SshServer> {
+    let mut out: Vec<settings::SshServer> = vec![];
+    let mut cur: Vec<usize> = vec![];
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        let (k, v) = line.split_once(|c: char| c.is_whitespace() || c == '=').unwrap_or((line, ""));
+        let v = v.trim_start_matches(|c: char| c.is_whitespace() || c == '=').trim().trim_matches('"');
+        match k.to_ascii_lowercase().as_str() {
+            "host" => {
+                cur.clear();
+                for a in v.split_whitespace().filter(|a| !a.contains(['*', '?', '!'])) {
+                    cur.push(out.len());
+                    out.push(settings::SshServer { name: a.chars().take(40).collect(), host: a.into(), port: 22, ..Default::default() });
+                }
+            }
+            "match" => cur.clear(),
+            key => for &i in &cur {
+                let s = &mut out[i];
+                match key {
+                    "hostname" => s.host = v.into(),
+                    "port" => s.port = v.parse().unwrap_or(22),
+                    "user" => s.user = v.into(),
+                    "identityfile" => s.key = Some(v.replacen('~', &home, 1).replace('/', "\\")),
+                    _ => {}
+                }
+            },
+        }
+    }
+    out.retain(|s| s.target().check().is_ok());
+    out
+}
+
+/// Importa `%USERPROFILE%\.ssh\config`; pula quem já existe (mesmo nome). Devolve quantos entraram.
+#[tauri::command]
+pub fn ssh_import(app: State<App>) -> Result<usize, String> {
+    let p = std::path::PathBuf::from(std::env::var("USERPROFILE").map_err(|_| "NOT_FOUND")?).join(".ssh").join("config");
+    let text = std::fs::read_to_string(p).map_err(|_| "NOT_FOUND")?;
+    let have: Vec<String> = settings::ssh_servers(&app.data_dir)?.into_iter().map(|s| s.name).collect();
+    let mut n = 0;
+    for s in parse_config(&text).into_iter().filter(|s| !have.contains(&s.name)) {
+        settings::save_ssh_server(&app.data_dir, s)?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 /// Abre `porta` no host em até `timeout`; `{ok, ms}` ou `{ok:false, code}` (`DNS`, `TIMEOUT`, `OFFLINE`).
 pub fn probe(host: &str, port: u16, timeout: Duration) -> Value {
     if !live_cmd_echo::ssh::valid_host(host) || port == 0 { return json!({ "ok": false, "code": "INVALID_SSH_HOST" }); }
@@ -80,6 +130,16 @@ mod tests {
         drop(l);
         assert_eq!(probe("127.0.0.1", port, Duration::from_secs(2))["ok"], false, "porta fechada");
         assert_eq!(probe("-oProxyCommand=x", 22, Duration::from_secs(1))["code"], "INVALID_SSH_HOST");
+        let c = parse_config("Host a b
+  HostName 10.0.0.1
+  Port 2222
+Host *
+  User x
+Host c
+  User=deploy
+");
+        assert_eq!(c.iter().map(|s| (s.name.as_str(), s.host.as_str(), s.port, s.user.as_str())).collect::<Vec<_>>(),
+            [("a", "10.0.0.1", 2222, ""), ("b", "10.0.0.1", 2222, ""), ("c", "c", 22, "deploy")]);
         assert_eq!(probe("h", 0, Duration::from_secs(1))["code"], "INVALID_SSH_HOST");
     }
 }

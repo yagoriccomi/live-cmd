@@ -6,16 +6,28 @@ export const C = {
   accent: '#8b5cf6',
   accent2: '#ff4fd8',
   text: '#f4efff',
-  muted: '#c8b8ff',
+  muted: '#d6c8ff',
   activeBg: '#ffffff',
   activeText: '#2a1460',
   ok: '#5ef2b0',
   warn: '#ffd35c',
   err: '#ff5c8a',
-  term: 'rgba(10,4,30,0.85)',
+  term: 'rgba(10,4,30,0.55)',
+  /** Texto escuro sobre selo claro (AO VIVO, AGUARDA). */
+  ink: '#1a1030',
+  dim: '#a99bd6',
 };
-/** Espaço livre embaixo para a barra de abas flutuante. */
-export const TAB_SPACE = 92;
+/** Famílias empacotadas (assets/fonts, OFL). Cada peso é uma família: no Android não se combina com fontWeight. */
+export const F = {
+  regular: 'Sora-Regular',
+  semi: 'Sora-SemiBold',
+  bold: 'Sora-Bold',
+  xbold: 'Sora-ExtraBold',
+  mono: 'FiraCode-Regular',
+  monoSemi: 'FiraCode-SemiBold',
+};
+/** Espaço livre embaixo do conteúdo rolável (a barra de abas fica fora da área rolável). */
+export const TAB_SPACE = 12;
 
 /** Mensagem pt-BR para os códigos de erro do host. */
 export function errText(e: any): string {

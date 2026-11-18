@@ -153,8 +153,28 @@ pub mod autostart {
     }
 }
 
+/// Aparência (tema, fonte, vidro, brilho, animações) em `appearance.json`, separada de `app.json`:
+/// o celular também grava aqui (`settings_set`) sem disputar o estado do servidor e da rolagem.
+const APPEARANCE_FILE: &str = "appearance.json";
+pub use live_cmd_echo::extras::Appearance;
+
+/// Sem arquivo, ilegível ou fora das faixas: o padrão.
+pub fn appearance(dir: &Path) -> Appearance {
+    std::fs::read(dir.join(APPEARANCE_FILE)).ok().and_then(|t| serde_json::from_slice::<Appearance>(&t).ok())
+        .map(|mut a| { a.theme = live_cmd_echo::extras::legacy_theme(&a.theme).to_owned(); a })
+        .filter(Appearance::valid).unwrap_or_default()
+}
+
+pub fn save_appearance(dir: &Path, a: &Appearance) -> Result<(), String> {
+    if !a.valid() { return Err("INVALID_MESSAGE".into()); }
+    std::fs::create_dir_all(dir).map_err(|_| "IO_ERROR")?;
+    let tmp = dir.join("appearance.json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(a).unwrap()).map_err(|_| "IO_ERROR")?;
+    std::fs::rename(&tmp, dir.join(APPEARANCE_FILE)).map_err(|_| "IO_ERROR".into())
+}
+
 /// Servidor da tela "Servidores SSH" em `ssh.json`. Nunca guarda senha: só o caminho da chave.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct SshServer {
     #[serde(default)] pub id: String,
     pub name: String,
@@ -162,13 +182,17 @@ pub struct SshServer {
     pub host: String,
     pub port: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub key: Option<String>,
+    /// "Manter vivo" em segundos (0 = desligado) e "Reconectar ao cair".
+    #[serde(default, skip_serializing_if = "is_zero")] pub keepalive_s: u16,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")] pub auto_reconnect: bool,
 }
+fn is_zero(n: &u16) -> bool { *n == 0 }
 
 const SSH_FILE: &str = "ssh.json";
 
 impl SshServer {
     pub fn target(&self) -> live_cmd_echo::ssh::Ssh {
-        live_cmd_echo::ssh::Ssh { user: self.user.clone(), host: self.host.clone(), port: self.port, key: self.key.clone() }
+        live_cmd_echo::ssh::Ssh { user: self.user.clone(), host: self.host.clone(), port: self.port, key: self.key.clone(), keepalive_s: self.keepalive_s, auto_reconnect: self.auto_reconnect }
     }
 }
 
@@ -193,6 +217,7 @@ pub fn save_ssh_server(dir: &Path, mut s: SshServer) -> Result<SshServer, String
     s.name = s.name.trim().into();
     s.user = s.user.trim().into();
     s.host = s.host.trim().into();
+    if s.port == 0 { s.port = 22; }
     s.key = s.key.map(|k| k.trim().to_owned()).filter(|k| !k.is_empty());
     let n = s.name.chars().count();
     if n == 0 || n > 40 || s.name.chars().any(char::is_control) { return Err("INVALID_SSH_NAME".into()); }
@@ -286,7 +311,7 @@ mod tests {
     fn servidores_ssh() {
         let d = tmp("ssh");
         let srv = |id: &str, name: &str, user: &str, host: &str, port: u16, key: Option<&str>| SshServer {
-            id: id.into(), name: name.into(), user: user.into(), host: host.into(), port, key: key.map(Into::into) };
+            id: id.into(), name: name.into(), user: user.into(), host: host.into(), port, key: key.map(Into::into), ..Default::default() };
         assert_eq!(ssh_servers(&d).unwrap(), vec![]);
         let a = save_ssh_server(&d, srv("", " Produção ", " deploy ", "srv.exemplo.com", 22, Some(" "))).unwrap();
         assert!(!a.id.is_empty());
@@ -296,11 +321,13 @@ mod tests {
         save_ssh_server(&d, SshServer { port: 2200, ..a.clone() }).unwrap();
         let l = ssh_servers(&d).unwrap();
         assert_eq!((l.len(), l[0].port), (2, 2200), "editar troca no lugar");
+        let p = save_ssh_server(&d, srv("", "sem-user", "", "h", 0, None)).unwrap();
+        assert_eq!((p.port, p.user.as_str()), (22, ""), "porta vazia = 22, usuário opcional");
+        remove_ssh_server(&d, &p.id).unwrap();
         let txt = std::fs::read_to_string(d.join("ssh.json")).unwrap();
         assert!(!txt.contains("password") && !txt.contains("senha"));
         for (bad, code) in [(srv("", "", "u", "h", 22, None), "INVALID_SSH_NAME"), (srv("", "x", "u;rm", "h", 22, None), "INVALID_SSH_USER"),
-            (srv("", "x", "u", "h h", 22, None), "INVALID_SSH_HOST"), (srv("", "x", "u", "h", 0, None), "INVALID_SSH_PORT"),
-            (srv("", "x", "u", "h", 22, Some("id_rsa")), "INVALID_SSH_KEY"), (srv("nao-existe", "x", "u", "h", 22, None), "NOT_FOUND")] {
+            (srv("", "x", "u", "h h", 22, None), "INVALID_SSH_HOST"),             (srv("", "x", "u", "h", 22, Some("id_rsa")), "INVALID_SSH_KEY"), (srv("nao-existe", "x", "u", "h", 22, None), "NOT_FOUND")] {
             assert_eq!(save_ssh_server(&d, bad).unwrap_err(), code);
         }
         assert!(serde_json::from_str::<SshServer>(r#"{"name":"x","user":"u","host":"h","port":22,"password":"p"}"#).map(|s| serde_json::to_string(&s).unwrap()).unwrap().find("password").is_none(), "senha nunca é regravada");

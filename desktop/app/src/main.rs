@@ -9,6 +9,7 @@ mod host;
 mod mobile;
 mod settings;
 mod ssh;
+mod sys;
 mod term;
 
 use std::sync::Mutex;
@@ -202,23 +203,41 @@ fn set_scrollback(app: State<App>, lines: usize) -> Result<(), String> {
     Ok(())
 }
 
+fn apply_opacity(app: &AppHandle, w: &tauri::WebviewWindow) {
+    sys::window_opacity(w, settings::appearance(&app.state::<App>().data_dir).opacity);
+}
+
+/// Aparência (tema, fonte, vidro, brilho, animações): a mesma que o celular lê e grava por `settings_get`/`settings_set`.
+#[tauri::command]
+fn get_appearance(app: State<App>) -> Value { settings::appearance(&app.data_dir).json() }
+
+/// Só os campos mandados mudam (lista branca e faixas de `Appearance::patch`); todas as janelas recebem `appearance`.
+#[tauri::command]
+fn set_appearance(handle: AppHandle, app: State<App>, patch: serde_json::Map<String, Value>) -> Result<Value, String> {
+    let a = settings::appearance(&app.data_dir).patch(&patch).map_err(|e| e.code().to_owned())?;
+    settings::save_appearance(&app.data_dir, &a)?;
+    let _ = handle.emit("appearance", a.json());
+    for w in handle.webview_windows().values() { sys::window_opacity(w, a.opacity); }
+    Ok(a.json())
+}
+
 /// Abre a pasta de dados (perfis, trust store e, no futuro, logs) no Explorer.
 #[tauri::command]
 fn open_data_dir(app: State<App>) -> Result<(), String> {
     std::process::Command::new("explorer").arg(&app.data_dir).spawn().map(drop).map_err(|_| "IO_ERROR".into())
 }
 
-/// Abre (ou traz para frente) a janela já na aba pedida.
+/// Parear, Aparelhos e Configurações são painéis da janela do terminal (V1 Aurora): abre (ou traz
+/// para frente) a janela e pede o painel. Janela nova recebe o painel pelo hash da URL.
 fn open_window(app: &AppHandle, tab: &str) {
-    if let Some(w) = app.get_webview_window("main") {
+    if let Some(w) = app.get_webview_window("terminal") {
         let _ = w.emit("tab", tab);
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
         return;
     }
-    let _ = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(format!("index.html#{tab}").into()))
-        .title("live-cmd").inner_size(420.0, 560.0).resizable(false).maximizable(false).center().build();
+    build_terminal(app, &format!("terminal.html#{tab}"));
 }
 
 /// Terminal Desktop (design §6): janela própria, redimensionável.
@@ -229,8 +248,13 @@ fn open_terminal(app: &AppHandle) {
         let _ = w.set_focus();
         return;
     }
-    let _ = WebviewWindowBuilder::new(app, "terminal", WebviewUrl::App("terminal.html".into()))
-        .title("Terminal Desktop — live-cmd").inner_size(960.0, 600.0).min_inner_size(560.0, 360.0).center().build();
+    build_terminal(app, "terminal.html");
+}
+
+fn build_terminal(app: &AppHandle, url: &str) {
+    let w = WebviewWindowBuilder::new(app, "terminal", WebviewUrl::App(url.into()))
+        .title("Terminal Desktop — live-cmd").inner_size(1280.0, 800.0).min_inner_size(560.0, 360.0).center().build();
+    if let Ok(w) = w { apply_opacity(app, &w); }
 }
 
 /// Menu ☰ do terminal: abre Parear/Aparelhos/Configurações ou sai.
@@ -341,16 +365,22 @@ fn main() {
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove,
             term::term_export, term::term_export_file, term::term_clear, term::term_upload, term::term_conn_stats, term::term_busy, term::term_rename, term::term_dirs, term::remote_rename,
-            agents::agent_list, agents::agent_resume, agents::agent_remove,
-            ssh::ssh_list, ssh::ssh_save, ssh::ssh_remove, ssh::ssh_probe, ssh::ssh_connect, ssh::ssh_sessions, ssh::ssh_reconnect,
-            hist::hist_meta, hist::hist_list, hist::hist_clear])
+            agents::agent_list, agents::agent_resume, agents::agent_remove, agents::agent_default_get, agents::agent_default_set,
+            ssh::ssh_list, ssh::ssh_save, ssh::ssh_import, ssh::ssh_remove, ssh::ssh_probe, ssh::ssh_connect, ssh::ssh_sessions, ssh::ssh_reconnect,
+            hist::hist_meta, hist::hist_list, hist::hist_clear, hist::hist_sessions, sys::sys_stats, get_appearance, set_appearance])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
             // Telas do celular (Agentes, SSH, Histórico) leem os mesmos arquivos das telas desktop.
             // O histórico é um store só: desktop e celular limpam e gravam o mesmo.
             let history = hist::History::default();
-            live_cmd_echo::extras::set_provider(std::sync::Arc::new(mobile::AppProvider::new(dir.clone()).with_history(history.store.clone())));
+            // Celular mudou a aparência ou um agente passou a esperar confirmação: as janelas desktop recebem o evento.
+            let h = a.handle().clone();
+            let notify: mobile::Notify = std::sync::Arc::new(move |ev: &str, v: Value| {
+                if ev == "appearance" && let Some(o) = v["opacity"].as_u64() { for w in h.webview_windows().values() { sys::window_opacity(w, o as u8); } }
+                let _ = h.emit(ev, v);
+            });
+            live_cmd_echo::extras::set_provider(std::sync::Arc::new(mobile::AppProvider::new(dir.clone()).with_history(history.store.clone()).with_notify(notify)));
             let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: host::room_id(&dir)? })?;
             a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });
             a.manage(term::Term::default());
@@ -374,7 +404,7 @@ fn main() {
             // P13: fechar/minimizar não invalida a OTK (vale até 300 s ou o uso). Fechar destrói a
             // janela e o QR com ela; minimizar avisa a UI para tirar o QR da tela até restaurar.
             match (w.label(), e) {
-                ("main", WindowEvent::Resized(_)) => { let _ = w.emit("visible", !w.is_minimized().unwrap_or(false)); }
+                ("terminal", WindowEvent::Resized(_)) => { let _ = w.emit("visible", !w.is_minimized().unwrap_or(false)); }
                 ("terminal", WindowEvent::Destroyed) => term::shutdown(w.app_handle()),
                 _ => {}
             }

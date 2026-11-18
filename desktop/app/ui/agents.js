@@ -6,12 +6,24 @@
   // Estado → [classe, marcador, texto]; o texto vai por extenso (o marcador é só visual).
   const STATUS = {
     rodando: ["dot-ok", "●", "Rodando"],
+    esperando: ["dot-wait", "◆", "Esperando sua confirmação"],
     saiu: ["dot-warn", "◐", "Programa terminou"],
     encerrada: ["muted", "○", "Encerrada"],
     desconhecido: ["dot-err", "⚠", "PC sem resposta"],
   };
   const isLive = (x) => x.status === "rodando" || x.status === "saiu";
   let conn = LOCAL, opener = null;
+  let filter = "all"; // all | live | resume | nome do agente
+  let data = null;   // última resposta de agent_list
+  // Agentes deste PC parados num pedido de confirmação (evento "agent-waiting" do host, o mesmo que vai ao celular).
+  const waiting = new Set();
+  window.__TAURI__.event.listen("agent-waiting", (e) => {
+    const { session_id: id, label, waiting: on } = e.payload;
+    if (on === waiting.has(id)) return;
+    on ? waiting.add(id) : waiting.delete(id);
+    if (on) banner(`${label || "Agente"} está esperando sua confirmação.`, "warn");
+    if (!panel.hidden && conn === LOCAL) load();
+  });
 
   const when = (ms) => {
     if (!ms) return "";
@@ -21,11 +33,21 @@
     if (min < 1440) return `há ${Math.round(min / 60)} h`;
     return new Date(ms).toLocaleDateString("pt-BR");
   };
+  const day = (ms) => {
+    if (!ms) return "";
+    const d = new Date(ms), t = new Date(), y = new Date();
+    y.setDate(t.getDate() - 1);
+    const hm = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    if (d.toDateString() === t.toDateString()) return `hoje ${hm}`;
+    if (d.toDateString() === y.toDateString()) return `ontem ${hm}`;
+    return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }).replace(".", "").replace(" de ", " ");
+  };
   const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
 
   function connOptions() {
     const ids = [LOCAL, ...remoteOrder.filter((id) => conns[id]?.status.state === "ready")];
     if (!ids.includes(conn)) conn = LOCAL;
+    $("ag-conn-row").hidden = ids.length < 2;
     $("ag-conn").replaceChildren(...ids.map((id) => {
       const o = el("option", null, conns[id].name);
       o.value = id; o.selected = id === conn;
@@ -39,37 +61,58 @@
     let v;
     try { v = await invoke("agent_list", { conn }); }
     catch (e) { $("ag-state").textContent = msg(e); $("ag-list").replaceChildren(); return; }
-    const n = v.groups.reduce((a, g) => a + g.sessions.length, 0);
+    data = v;
+    render();
+  }
+
+  // Lista única (sem cabeçalho por pasta): sessões abertas primeiro, depois as mais recentes. A pasta vai na linha de detalhe.
+  function render() {
+    const v = data;
+    if (!v) return;
+    const all = v.groups.flatMap((g) => g.sessions.map((x) => ({ ...x, dir: g.path || "Pasta inicial do perfil", folder: g.name })));
+    const live = (x) => isLive(x) || x.status === "desconhecido";
+    const nLive = all.filter(isLive).length;
     $("ag-state").textContent = !v.online ? "O PC não respondeu; o estado das sessões é desconhecido."
-      : n ? `${plural(n, "sessão", "sessões")} em ${plural(v.groups.length, "pasta", "pastas")}.` : "";
-    if (!n) {
+      : all.length ? `${nLive} rodando · ${all.length - nLive} para retomar` : "";
+    const agentsSeen = [...new Set(all.map((x) => x.agent))];
+    $("ag-chips").replaceChildren(...[["all", "Todos"], ["live", "Rodando"], ["resume", "Retomar"], ...agentsSeen.map((a) => [a, a])].map(([f, t]) => {
+      const c = el("button", "chip", t);
+      c.type = "button"; c.dataset.f = f; c.setAttribute("aria-pressed", String(f === filter));
+      return c;
+    }));
+    if (!all.length) {
       const e = el("div", "ag-empty");
       e.append(el("p", null, "Nenhuma sessão de agente ainda. Crie uma para conversar com claude, openclaude ou codex numa pasta; ela fica aqui para retomar depois."));
       $("ag-list").replaceChildren(e);
       return;
     }
-    $("ag-list").replaceChildren(...v.groups.map(group));
-  }
-
-  function group(g, i) {
-    const s = el("section", "ag-group"), h = el("h3", null, g.name);
-    h.id = `ag-g${i}`;
-    s.setAttribute("aria-labelledby", h.id);
+    const keep = (x) => filter === "all" || (filter === "live" ? isLive(x) : filter === "resume" ? !live(x) : x.agent === filter);
+    const rank = (x) => (waiting.has(x.session_id) ? 0 : isLive(x) ? 1 : 2);
+    const shown = all.filter(keep).sort((p, q) => rank(p) - rank(q) || (q.used_ms || 0) - (p.used_ms || 0));
     const ul = el("ul", "ag-rows");
-    ul.append(...g.sessions.map(row));
-    s.append(h, el("p", "muted small mono ag-path", g.path || "Pasta inicial do perfil"), ul);
-    return s;
+    ul.append(...shown.map(row));
+    if (!shown.length) ul.append(el("li", "muted small", "Nenhuma sessão com esse filtro."));
+    $("ag-list").replaceChildren(ul);
   }
 
   function row(x) {
     const li = el("li", "ag-row");
-    const [cls, mark, label] = STATUS[x.status] || STATUS.desconhecido;
+    li.dataset.ms = x.used_ms || "";
+    li.dataset.agent = x.agent;
+    li.dataset.dir = x.dir || "";
+    li.dataset.live = isLive(x) ? "1" : "";
+    const st = x.status === "rodando" && conn === LOCAL && waiting.has(x.session_id) ? "esperando" : x.status;
+    const [cls, mark, label] = STATUS[st] || STATUS.desconhecido;
     const dot = el("span", `${cls} ag-dot`, mark);
     dot.setAttribute("aria-hidden", "true");
     const name = x.label || x.agent;
     const info = el("div", "ag-info");
-    info.append(el("span", "ag-label", name),
-      el("span", "muted small", [x.agent + (x.args ? " " + x.args : ""), label, when(x.used_ms)].filter(Boolean).join(" · ")));
+    // Detalhe da linha: pasta para o que está aberto; agente e data para o que se retoma. O texto completo vai no title e para leitores de tela.
+    const full = [x.agent + (x.args ? " " + x.args : ""), label, when(x.used_ms)].filter(Boolean).join(" · ");
+    const short = isLive(x) ? x.dir : `${x.agent} · ${day(x.used_ms)}`;
+    const detail = el("span", "muted small mono", short);
+    detail.title = `${full} · ${x.dir}`;
+    info.append(el("span", "ag-label", name), detail, el("span", "sr-only", `${full}. Pasta ${x.dir}`));
     const go = el("button", isLive(x) ? null : "btn-primary", isLive(x) ? "Abrir" : "Retomar");
     go.type = "button";
     go.disabled = x.status === "desconhecido";
@@ -125,6 +168,12 @@
   nav.onclick = () => (panel.hidden ? show() : hide());
   $("ag-x").onclick = () => hide();
   $("ag-reload").onclick = load;
+  $("ag-chips").addEventListener("click", (e) => {
+    const c = e.target.closest("button.chip[data-f]");
+    if (!c) return;
+    filter = c.dataset.f;
+    render();
+  });
   $("ag-conn").onchange = () => { conn = $("ag-conn").value; load(); };
   $("ag-new").onclick = () => { hide(false); newAi(conn); };
   // Terminal ganhou o foco (aba escolhida, sessão aberta por outro caminho): a tela sai da frente.

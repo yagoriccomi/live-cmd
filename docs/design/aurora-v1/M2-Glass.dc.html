@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>live-cmd — Glass Aurora mobile</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;800&amp;family=Fira+Code:wght@400&amp;display=swap">
+<style>body{margin:0}a{color:#e0ccff}a:hover{color:#fff}</style>
+</helmet>
+<div style="width:390px;height:844px;box-sizing:border-box;position:relative;overflow:hidden;background:#140b2e;color:#f4efff;font-family:Sora,sans-serif">
+  <div style="position:absolute;width:420px;height:420px;left:-140px;top:-120px;border-radius:210px;background:#8b5cf6;filter:blur(100px);opacity:0.95"></div>
+  <div style="position:absolute;width:360px;height:360px;right:-160px;top:300px;border-radius:180px;background:#ff4fd8;filter:blur(110px);opacity:0.65"></div>
+
+  <div style="position:absolute;left:20px;right:20px;top:56px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center">
+      <div><div style="font-size:13px;color:#d6c8ff">Boa noite, Yago</div><div style="font-size:30px;font-weight:800;letter-spacing:-1px">Sessões</div></div>
+      <div style="margin-left:auto;width:44px;height:44px;border-radius:22px;background:#fff;color:#2a1460;font-weight:800;display:flex;align-items:center;justify-content:center">Y</div>
+    </div>
+    <div style="border-radius:24px;padding:18px;background:linear-gradient(135deg,rgba(139,92,246,0.9),rgba(255,79,216,0.8));display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;font-size:13px">✦ Agente ativo<span style="margin-left:auto;padding:4px 10px;border-radius:10px;background:rgba(255,255,255,0.25);font-size:11px">--resume</span></div>
+      <div style="font-size:20px;font-weight:800">claude · live-cmd</div>
+      <div style="font-family:'Fira Code';font-size:12px;opacity:0.9">✓ 42 testes ok · aguardando você</div>
+    </div>
+    <div style="border-radius:20px;padding:14px 16px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);display:flex;align-items:center;gap:12px">
+      <div style="width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center">⇄</div>
+      <div><div style="font-weight:600;font-size:14px">ssh prod-01</div><div style="font-size:12px;color:#d6c8ff">deploy · 42 ms</div></div>
+      <span style="margin-left:auto;width:10px;height:10px;border-radius:5px;background:#ffd35c"></span>
+    </div>
+  </div>
+
+  <!-- bottom sheet -->
+  <div style="position:absolute;inset:0;background:rgba(10,4,30,0.35)"></div>
+  <div style="position:absolute;left:0;right:0;bottom:0;border-radius:32px 32px 0 0;background:rgba(40,20,90,0.8);border-top:1px solid rgba(255,255,255,0.3);backdrop-filter:blur(40px);padding:12px 20px 36px;display:flex;flex-direction:column;gap:10px">
+    <div style="width:40px;height:5px;border-radius:3px;background:rgba(255,255,255,0.4);align-self:center"></div>
+    <div style="font-size:20px;font-weight:800;padding:8px 0">Nova sessão</div>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+      <div style="border-radius:20px;padding:16px;background:#fff;color:#2a1460;display:flex;flex-direction:column;gap:8px"><span style="font-size:22px">✦</span><span style="font-weight:800;font-size:14px">Agente de IA</span><span style="font-size:11px">claude, codex…</span></div>
+      <div style="border-radius:20px;padding:16px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);display:flex;flex-direction:column;gap:8px"><span style="font-size:22px">⇄</span><span style="font-weight:800;font-size:14px">SSH</span><span style="font-size:11px;color:#d6c8ff">servidor remoto</span></div>
+      <div style="border-radius:20px;padding:16px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);display:flex;flex-direction:column;gap:8px"><span style="font-size:22px">›_</span><span style="font-weight:800;font-size:14px">PowerShell</span><span style="font-size:11px;color:#d6c8ff">no PC</span></div>
+      <div style="border-radius:20px;padding:16px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);display:flex;flex-direction:column;gap:8px"><span style="font-size:22px">↺</span><span style="font-weight:800;font-size:14px">Retomar</span><span style="font-size:11px;color:#d6c8ff">sessão anterior</span></div>
+    </div>
+    <button style="margin-top:8px;height:52px;border-radius:18px;border:none;background:linear-gradient(90deg,#8b5cf6,#ff4fd8);color:#fff;font-family:Sora;font-weight:800;font-size:15px">Iniciar agente</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

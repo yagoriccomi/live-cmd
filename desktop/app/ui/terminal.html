@@ -3,56 +3,107 @@
 <head>
 <meta charset="utf-8">
 <title>Terminal Desktop — live-cmd</title>
+<link rel="stylesheet" href="fonts/fonts.css">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="aurora.css">
 <script src="links.js" defer></script>
 <script src="terminal.js" defer></script>
 <script src="extras.js" defer></script>
 <script src="agents.js" defer></script>
 <script src="ssh.js" defer></script>
 <script src="historico.js" defer></script>
+<script src="aurora.js" defer></script>
+<script src="app.js" type="module"></script>
+<script src="aparencia.js" defer></script>
 </head>
 <body class="term-body">
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
 <div class="term-layout" id="layout">
+  <nav class="rail" aria-label="Telas">
+    <span class="rail-logo" aria-hidden="true">›_</span>
+    <button type="button" class="rail-btn" id="nav-term" title="Terminais" aria-label="Terminais">›_</button>
+    <button type="button" class="rail-btn nav-tool" id="nav-agents" title="Agentes de IA" aria-label="Agentes de IA" aria-controls="agents-panel" aria-expanded="false">✦</button>
+    <button type="button" class="rail-btn" id="ssh-open" title="Servidores SSH" aria-label="Servidores SSH" aria-controls="ssh-panel" aria-expanded="false">⇄</button>
+    <button type="button" class="rail-btn nav-hist" id="hist-open" title="Histórico" aria-label="Histórico" aria-controls="hist" aria-expanded="false">↺</button>
+    <button type="button" class="rail-btn" id="nav-pair" title="Parear celular" aria-label="Parear celular">▣</button>
+    <button type="button" class="rail-btn" id="nav-settings" title="Configurações" aria-label="Configurações">⚙</button>
+  </nav>
   <nav class="sidebar" id="sidebar" aria-label="Conexões">
-    <h3 id="h-local">Este PC</h3>
-    <ul id="local-ul" aria-labelledby="h-local"></ul>
-    <button type="button" class="add" id="local-new" aria-haspopup="menu">+ Nova sessão ▾</button>
+    <div class="side-head">
+      <h2 id="side-t">Área de trabalho</h2>
+      <button type="button" class="btn-primary" id="local-new" aria-haspopup="menu">+ Nova aba</button>
+    </div>
+    <p class="side-sub" id="side-sub"></p>
+    <div class="chips" role="group" aria-label="Filtrar sessões" id="side-chips">
+      <button type="button" class="chip" data-f="" aria-pressed="true">Todas</button><button type="button" class="chip" data-f="agent" aria-pressed="false">Agentes</button><button type="button" class="chip" data-f="ssh" aria-pressed="false">SSH</button><button type="button" class="chip" data-f="shell" aria-pressed="false">Shell</button>
+    </div>
+    <h3 id="h-local" class="sr-only">Este PC</h3>
+    <ul id="local-ul" class="cards" aria-labelledby="h-local"></ul>
     <h3 id="h-remote">Outros PCs</h3>
     <ul id="remote-ul" aria-labelledby="h-remote"></ul>
     <button type="button" class="add" id="remote-add">+ Adicionar PC</button>
-    <button type="button" class="nav-tool" id="nav-agents" aria-controls="agents-panel" aria-expanded="false">Agentes de IA</button>
-    <button type="button" class="add" id="ssh-open" aria-controls="ssh-panel" aria-expanded="false">Servidores SSH</button>
-    <button type="button" class="nav-hist" id="hist-open" aria-controls="hist" aria-expanded="false">🕘 Histórico</button>
   </nav>
   <main class="term-main">
+    <section class="hero" id="hero" aria-label="Sessão ativa">
+      <div class="hero-top">
+        <span class="tile tile-lg" id="hero-i" aria-hidden="true">›_</span>
+        <div class="hero-txt"><div class="hero-t" id="hero-t">Nenhuma sessão</div><div class="hero-s mono" id="hero-s"></div></div>
+        <span class="badge" id="hero-b" hidden></span>
+      </div>
+      <div class="term-tools" role="toolbar" aria-label="Ações do terminal">
+        <button type="button" id="tb-find" title="Buscar (Ctrl+F)" aria-label="Buscar">Buscar</button>
+        <button type="button" id="tb-split" title="Dividir painel" aria-label="Dividir painel">Dividir →</button>
+        <button type="button" id="tb-pal" title="Paleta de comandos" aria-label="Paleta de comandos">Paleta</button>
+        <button type="button" id="tb-new" title="Nova sessão (Ctrl+Shift+T)" aria-label="Nova sessão">+</button>
+        <button type="button" id="tb-help" title="Ajuda (F1)" aria-label="Ajuda">?</button>
+        <button type="button" id="tb-menu" title="Todas as ações" aria-label="Menu" aria-haspopup="menu">☰</button>
+      </div>
+    </section>
+    <div class="stats" id="stats" aria-label="Resumo">
+      <div class="stat"><div class="stat-k">CPU</div><div class="stat-v" id="st-1v">0</div><div class="stat-s" id="st-1s"></div></div>
+      <div class="stat"><div class="stat-k">Memória</div><div class="stat-v" id="st-2v">0</div><div class="stat-s" id="st-2s"></div></div>
+      <div class="stat"><div class="stat-k">Sessões</div><div class="stat-v" id="st-3v">0</div><div class="stat-s" id="st-3s"></div></div>
+    </div>
+    <div class="term-card">
     <div class="term-bar">
       <div class="term-tabs" role="tablist" aria-label="Terminais abertos" id="tabs"></div>
-      <div class="term-tools" role="toolbar" aria-label="Ações do terminal">
-        <button type="button" id="tb-new" title="Nova sessão (Ctrl+Shift+T)" aria-label="Nova sessão">+</button>
-        <button type="button" id="tb-find" title="Buscar (Ctrl+F)" aria-label="Buscar">Buscar</button>
-        <button type="button" id="tb-split" title="Dividir painel" aria-label="Dividir painel">Dividir</button>
-        <button type="button" id="tb-pal" title="Paleta de comandos" aria-label="Paleta de comandos">Paleta</button>
-        <button type="button" id="tb-help" title="Ajuda (F1)" aria-label="Ajuda">?</button>
-        <button type="button" id="tb-menu" title="Todas as ações" aria-label="Menu" aria-haspopup="menu">☰ Menu</button>
-      </div>
     </div>
     <div class="status-banner" role="status" id="upd-banner" hidden><span id="upd-t"></span><span class="inline"><button type="button" id="upd-go">Atualizar agora</button><button type="button" id="upd-x" aria-label="Dispensar">×</button></span></div>
     <div class="status-banner" role="status" id="banner" hidden><span id="banner-t"></span><span class="inline" id="banner-a"></span></div>
-    <section class="ssh-panel" id="ssh-panel" aria-labelledby="ssh-h" hidden>
-      <div class="ssh-head">
-        <h2 id="ssh-h">Servidores SSH</h2>
-        <input type="search" id="ssh-q" aria-label="Buscar servidor" placeholder="Buscar por nome, usuário ou host" autocomplete="off" spellcheck="false">
-        <button type="button" class="btn-primary" id="ssh-add">+ Adicionar servidor</button>
-        <button type="button" id="ssh-x" aria-label="Voltar ao terminal" title="Voltar ao terminal">×</button>
+    <section class="ssh-panel aurora-pane" id="ssh-panel" aria-labelledby="ssh-h" hidden>
+      <div class="pane-l">
+        <div class="ssh-head side-head">
+          <h2 id="ssh-h">Servidores</h2>
+          <button type="button" id="ssh-import" title="Importa os Host de %USERPROFILE%\.ssh\config">Importar ~/.ssh/config</button>
+          <button type="button" class="btn-primary" id="ssh-add">+ Servidor</button>
+        </div>
+        <p class="side-sub" id="ssh-sub" role="status">Servidores salvos neste PC</p>
+        <div class="chips" id="ssh-chips">
+          <button type="button" class="chip" data-f="all" aria-pressed="true">Todos</button>
+          <button type="button" class="chip" data-f="on" aria-pressed="false">Online</button>
+          <button type="button" class="chip" data-f="off" aria-pressed="false">Offline</button>
+          <input type="search" id="ssh-q" aria-label="Buscar servidor" placeholder="Buscar" autocomplete="off" spellcheck="false" hidden>
+          <button type="button" class="chip pane-x" id="ssh-x" aria-label="Voltar ao terminal" title="Voltar ao terminal">×</button>
+        </div>
+        <ul class="ssh-list cards" id="ssh-list" aria-label="Servidores salvos"></ul>
+        <p class="muted" id="ssh-empty" hidden></p>
       </div>
-      <p class="muted small">Conectar abre uma aba com o ssh.exe do Windows. A senha é pedida no terminal e nunca é salva.</p>
-      <ul class="ssh-list" id="ssh-list" aria-label="Servidores salvos"></ul>
-      <p class="muted" id="ssh-empty" hidden></p>
-      <section id="ssh-sess-box" aria-labelledby="ssh-sess-h" hidden>
-        <h3 id="ssh-sess-h">Sessões SSH neste PC</h3>
-        <p class="muted small">Sessões restauradas ao reiniciar voltam desconectadas: Reconectar abre o ssh.exe de novo na mesma aba.</p>
-        <ul class="ssh-list" id="ssh-sess" aria-label="Sessões SSH"></ul>
-      </section>
+      <div class="pane-r">
+        <div class="hero" id="ssh-hero"></div>
+        <div class="stats" id="ssh-stats"></div>
+        <div class="term-card pane-c">
+          <h3 class="card-t" id="ssh-cfg-t">Configuração</h3>
+          <ul class="cfg-rows" id="ssh-cfg" aria-label="Configuração do servidor"></ul>
+          <h3 class="card-t" id="ssh-sess-t">Sessões SSH neste PC</h3>
+          <p class="muted small" id="ssh-sess-none">Nenhuma sessão SSH aberta. Conectar abre uma aba com o ssh.exe do Windows; a senha é pedida no terminal e nunca é salva.</p>
+          <section id="ssh-sess-box" aria-labelledby="ssh-sess-h" hidden>
+            <h3 id="ssh-sess-h" class="sr-only">Sessões SSH neste PC</h3>
+            <p class="muted small">Sessões restauradas ao reiniciar voltam desconectadas: Reconectar abre o ssh.exe de novo na mesma aba.</p>
+            <ul class="ssh-list" id="ssh-sess" aria-label="Sessões SSH"></ul>
+          </section>
+        </div>
+      </div>
+    </section>
     </section>
     <div class="term-area">
       <div class="terminal" id="screen" tabindex="0" aria-label="Terminal" aria-roledescription="terminal"><span class="measure" id="measure" aria-hidden="true">WWWWWWWWWW</span></div>
@@ -68,38 +119,227 @@
         <div><p>Nenhum terminal aberto. Escolha uma sessão à esquerda ou crie uma nova.</p>
         <div class="actions center"><button type="button" class="btn-primary" id="empty-new">Nova sessão</button></div></div>
       </div>
-      <section class="tool-panel" id="agents-panel" aria-labelledby="ag-t" hidden>
-        <header class="tool-head">
-          <h2 id="ag-t">Agentes de IA</h2>
-          <label class="tool-conn">PC <select id="ag-conn"></select></label>
-          <span class="inline">
-            <button type="button" id="ag-reload">Atualizar</button>
-            <button type="button" class="btn-primary" id="ag-new">Nova sessão de agente</button>
-            <button type="button" id="ag-x" aria-label="Fechar Agentes (Esc)">×</button>
-          </span>
-        </header>
-        <p class="muted small" role="status" id="ag-state"></p>
-        <div class="ag-list" id="ag-list"></div>
-      </section>
-      <section class="hist-panel" id="hist" aria-labelledby="hist-t" hidden>
-        <header class="hist-head">
-          <h2 id="hist-t">Histórico</h2>
-          <button type="button" class="btn-danger" id="hist-clear">Limpar histórico</button>
-          <button type="button" id="hist-x" aria-label="Fechar histórico (Esc)">×</button>
-        </header>
-        <div class="hist-filters" role="search">
-          <input type="text" id="hist-q" aria-label="Buscar comandos" placeholder="Buscar comandos" autocomplete="off" spellcheck="false">
-          <label class="hist-chk"><input type="checkbox" id="hist-7d"> Últimos 7 dias</label>
-          <select id="hist-kind" aria-label="Tipo de sessão">
-            <option value="">Todas as sessões</option><option value="pwsh">PowerShell</option><option value="cmd">Prompt de Comando</option>
-            <option value="wsl">WSL / bash</option><option value="ssh">SSH</option><option value="outro">Outras</option>
-          </select>
-          <label class="hist-chk"><input type="checkbox" id="hist-err"> Só erros</label>
+      <section class="tool-panel aurora-pane" id="agents-panel" aria-labelledby="ag-t" hidden>
+        <div class="pane-l">
+          <header class="tool-head side-head">
+            <h2 id="ag-t">Agentes de IA</h2>
+            <button type="button" class="btn-primary" id="ag-new">+ Novo agente</button>
+          </header>
+          <p class="side-sub" role="status" id="ag-state"></p>
+          <div class="chips" id="ag-chips" role="group" aria-label="Filtro"></div>
+          <div class="chips tool-conn-row" id="ag-conn-row" hidden>
+            <label class="tool-conn">PC <select id="ag-conn"></select></label>
+            <button type="button" class="chip" id="ag-reload">Atualizar</button>
+          </div>
+          <button type="button" class="chip pane-x" id="ag-x" aria-label="Fechar Agentes (Esc)">×</button>
+          <div class="ag-list" id="ag-list"></div>
         </div>
-        <p class="muted small" id="hist-n" role="status"></p>
-        <div class="hist-list" id="hist-list"></div>
-        <p class="muted small hist-note">Gravado só neste PC. Linhas digitadas em pedidos de senha não são gravadas.</p>
+        <div class="pane-r" aria-label="Resumo dos agentes">
+          <div class="hero" id="ag-hero"></div>
+          <div class="stats" id="ag-stats"></div>
+          <div class="term-card pane-c"><h3 class="card-t">Retomar com --resume</h3><div id="ag-resume"></div></div>
+        </div>
       </section>
+      <section class="hist-panel aurora-pane" id="hist" aria-labelledby="hist-t" hidden>
+        <div class="pane-l">
+          <header class="hist-head side-head">
+            <h2 id="hist-t">Histórico</h2>
+            <button type="button" class="btn-primary" id="hist-export" title="Copia os comandos filtrados">+ Exportar</button>
+          </header>
+          <p class="side-sub" id="hist-n" role="button" tabindex="0" aria-label="Buscar comandos" aria-live="polite"></p>
+          <input type="text" id="hist-q" class="side-sub hist-q" aria-label="Buscar comandos" placeholder="Buscar comandos" autocomplete="off" spellcheck="false" hidden>
+          <div class="chips" id="hist-chips" role="search">
+            <button type="button" class="chip" data-h="7d" aria-pressed="false">7 dias</button>
+            <button type="button" class="chip" data-h="shell" aria-pressed="false">Shell</button>
+            <button type="button" class="chip" data-h="ssh" aria-pressed="false">SSH</button>
+            <button type="button" class="chip" data-h="err" aria-pressed="false">Só erros</button>
+            <button type="button" class="chip pane-x" id="hist-x" aria-label="Fechar histórico (Esc)">×</button>
+          </div>
+          <div class="sr-only">
+            <label class="hist-chk chip"><input type="checkbox" id="hist-7d" tabindex="-1"> 7 dias</label>
+            <select id="hist-kind" aria-label="Tipo de sessão" tabindex="-1">
+              <option value="">Todas as sessões</option><option value="shell">Shell</option><option value="pwsh">PowerShell</option><option value="cmd">Prompt de Comando</option>
+              <option value="wsl">WSL / bash</option><option value="ssh">SSH</option><option value="outro">Outras</option>
+            </select>
+            <label class="hist-chk chip"><input type="checkbox" id="hist-err" tabindex="-1"> Só erros</label>
+          </div>
+          <ul class="cards" id="hist-sess" aria-label="Sessões no histórico"></ul>
+          <p class="muted small hist-note">Gravado só neste PC. Linhas digitadas em pedidos de senha não são gravadas.</p>
+          <button type="button" class="btn-danger hist-clear" id="hist-clear">Limpar histórico</button>
+        </div>
+        <div class="pane-r">
+          <div class="hero" id="hist-hero"></div>
+          <div class="stats" id="hist-stats"></div>
+          <div class="term-card pane-c"><h3 class="card-t">Linha do tempo</h3><div class="hist-list" id="hist-list"></div></div>
+        </div>
+      </section>
+      <!-- Parear e Aparelhos (antes janela própria). O URI nunca entra no DOM: só a imagem do QR (alt genérico). -->
+      <section class="aurora-pane pair-pane" id="pair-pane" aria-labelledby="pp-t" hidden>
+        <div class="pane-l">
+          <header class="side-head">
+            <h2 id="pp-t">Parear celular</h2>
+            <button type="button" class="btn-primary" data-act="pair">+ Novo código</button>
+          </header>
+          <p class="side-sub">Seus terminais no bolso</p>
+          <div class="chips" id="pp-tabs" role="group" aria-label="Visões">
+            <button type="button" class="chip" data-v="qr" aria-pressed="true">QR code</button>
+            <button type="button" class="chip" data-v="code" aria-pressed="false">Código</button>
+            <button type="button" class="chip" data-v="devs" aria-pressed="false">Aparelhos</button>
+            <button type="button" class="chip pane-x" id="pp-x" aria-label="Fechar pareamento (Esc)">×</button>
+          </div>
+          <ol class="cards pair-steps" id="pp-steps" aria-label="Como parear">
+            <li class="card on"><span class="tile" aria-hidden="true">✓</span><span class="card-txt"><span class="card-t">Instale o app</span><span class="card-s mono">Android e iOS</span></span><span class="card-st ok">● feito</span></li>
+            <li class="card"><span class="tile" aria-hidden="true">2</span><span class="card-txt"><span class="card-t">Leia o código</span><span class="card-s mono">câmera do app</span></span><span class="card-st now">● agora</span></li>
+            <li class="card"><span class="tile" aria-hidden="true">3</span><span class="card-txt"><span class="card-t">Pronto</span><span class="card-s mono">celular abre os terminais</span></span><span class="card-st muted">● depois</span></li>
+          </ol>
+          <h3 class="pane-h sr-only" id="dev-h">Aparelhos pareados</h3>
+          <section id="devices" aria-labelledby="dev-h">
+            <div id="dev-busy" aria-busy="true" aria-label="Carregando aparelhos"><div class="skeleton"></div><div class="skeleton"></div></div>
+            <div id="dev-list" hidden><ul class="device-list cards" id="dev-ul"></ul></div>
+            <div id="dev-empty" class="empty" hidden><p>Nenhum aparelho pareado ainda.</p></div>
+            <div id="dev-error" hidden><div class="alert alert-danger" role="alert"><p>Não foi possível ler a lista de aparelhos.</p></div><div class="actions"><button type="button" class="btn-primary" id="dev-retry">Tentar de novo</button></div></div>
+            <p id="toast-wrap" hidden><span class="toast" role="status" id="toast"></span></p>
+          </section>
+        </div>
+        <div class="pane-r">
+          <div class="hero"><div class="hero-top"><span class="tile tile-lg" aria-hidden="true">▣</span><div class="hero-txt"><div class="hero-t" id="pp-host">Este PC</div><div class="hero-s mono" id="pp-state">gerando QR Code…</div></div><span class="badge" id="pp-badge">ESPERANDO</span></div>
+            <p class="hero-n">Conexão direta e criptografada entre os dois aparelhos.</p>
+            <div class="term-tools"><button type="button" id="copy">Copiar link</button><button type="button" id="pp-cancel">Cancelar</button></div></div>
+          <div class="stats">
+            <div class="stat"><div class="stat-k">Expira em</div><div class="stat-v" id="pp-left">–</div><div class="stat-s">gera outro depois</div></div>
+            <div class="stat"><div class="stat-k">Aparelhos</div><div class="stat-v" id="pp-devs">–</div><div class="stat-s">pareados com este PC</div></div>
+            <div class="stat"><div class="stat-k">Conexão</div><div class="stat-v">P2P</div><div class="stat-s">WebRTC, ponta a ponta</div></div>
+          </div>
+          <div class="term-card pane-c qr-card">
+            <h3 class="card-t">Leia com o celular</h3>
+            <div id="pair" class="qr-panel">
+              <div id="pair-busy" hidden>
+                <div class="qr blank"><div class="spinner" role="status" aria-label="Gerando QR Code"></div></div>
+                <p class="muted" aria-live="polite">Gerando QR Code…</p>
+              </div>
+              <div id="pair-show" hidden>
+                <div class="qr" id="qr-box"><img id="qr" alt="QR Code de pareamento"></div>
+                <p class="muted" id="pair-hint">Abra o live-cmd no celular e leia este código.</p>
+                <p class="muted code-only">Sem câmera? Use Copiar link e abra o link no live-cmd do outro aparelho.</p>
+                <div id="pair-live">
+                  <div class="countdown" aria-hidden="true"><i id="bar"></i></div>
+                  <p aria-live="off">Expira em <strong id="left">5:00</strong></p>
+                  <p class="notice">🔒 Este código dá acesso aos terminais deste PC. Não compartilhe nem tire print. Ele vale uma vez e por 5 minutos.</p>
+                </div>
+                <p id="pair-expired" aria-live="polite" hidden>Este QR Code expirou.</p>
+                <!-- Desvio de C2 §1 pendente de aprovação (P11); ver src/clip.rs para remover. O botão #copy fica no cartão de destaque. -->
+                <p class="alert alert-ok" role="status" id="copied" hidden><span>Link copiado. Ele vale até o QR expirar.</span></p>
+              </div>
+              <div id="pair-done" role="status" hidden>
+                <div class="big-ok" aria-hidden="true">✓</div>
+                <h2 id="done-t"></h2>
+                <p class="muted">Ele já pode abrir terminais deste PC.</p>
+                <div class="actions center"><button type="button" class="btn-primary" data-act="pair">Parear outro</button></div>
+              </div>
+              <div id="pair-error" hidden>
+                <div class="qr blank"></div>
+                <div class="alert alert-danger" role="alert"><p>Não foi possível falar com o servidor de sinalização. Confira a internet ou o endereço em Configurações.</p></div>
+                <div class="actions center"><button type="button" data-tab="settings">Abrir Configurações</button><button type="button" class="btn-primary" data-act="pair">Tentar de novo</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <!-- Configurações (antes janela própria). -->
+      <section class="aurora-pane cfg-pane" id="cfg-pane" aria-labelledby="cfg-t" hidden>
+        <div class="pane-l">
+          <header class="side-head"><h2 id="cfg-t">Configurações</h2><button type="button" class="btn-primary" id="cfg-import" title="Aplica um tema copiado (JSON) da área de transferência">+ Importar tema</button></header>
+          <p class="side-sub">Aparência e comportamento</p>
+          <div class="chips" id="cfg-chips" role="group" aria-label="Atalhos para as seções">
+            <button type="button" class="chip" data-go="cfg-look" aria-pressed="true">Aparência</button>
+            <button type="button" class="chip" data-go="cfg-term" aria-pressed="false">Terminal</button>
+            <button type="button" class="chip" data-go="cfg-keys" aria-pressed="false">Atalhos</button>
+            <button type="button" class="chip" data-open="nav-agents">Agentes</button>
+            <button type="button" class="chip pane-x" id="cfg-x" aria-label="Fechar configurações (Esc)">×</button>
+          </div>
+          <ul class="cards cfg-nav" aria-label="Seções">
+            <li><button type="button" class="card on" data-go="cfg-look" aria-current="true"><span class="tile" aria-hidden="true">◐</span><span class="card-txt"><span class="card-t">Aparência</span><span class="card-s mono">tema, vidro, fontes</span></span><span class="card-st ok" id="cfg-look-st">● padrão</span></button></li>
+            <li><button type="button" class="card" data-go="cfg-term"><span class="tile" aria-hidden="true">›_</span><span class="card-txt"><span class="card-t">Terminal</span><span class="card-s mono">shell padrão, rolagem</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-go="cfg-keys"><span class="tile" aria-hidden="true">⌘</span><span class="card-txt"><span class="card-t">Atalhos</span><span class="card-s mono" id="cfg-keys-n">atalhos</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-open="nav-agents"><span class="tile" aria-hidden="true">✦</span><span class="card-txt"><span class="card-t">Agentes</span><span class="card-s mono">claude, codex</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-open="ssh-open"><span class="tile" aria-hidden="true">⇄</span><span class="card-txt"><span class="card-t">SSH</span><span class="card-s mono">chaves e hosts</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-go="cfg-srv"><span class="tile" aria-hidden="true">▣</span><span class="card-txt"><span class="card-t">Celular</span><span class="card-s mono">pareamento</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-go="cfg-about"><span class="tile" aria-hidden="true">↺</span><span class="card-txt"><span class="card-t">Sobre</span><span class="card-s mono">versão e atualizações</span></span><span class="card-st ok">● ok</span></button></li>
+          </ul>
+        </div>
+        <div class="pane-r">
+          <div class="hero"><div class="hero-top"><span class="tile tile-lg" aria-hidden="true">◐</span><div class="hero-txt"><div class="hero-t" id="cfg-theme-t">Tema</div><div class="hero-s mono" id="cfg-theme-s">vale para todas as janelas</div></div><span class="badge">ATIVO</span></div>
+            <div class="term-tools"><button type="button" id="cfg-edit">Editar</button><button type="button" id="cfg-copy" title="Copia o tema (JSON) para a área de transferência">Copiar tema</button></div></div>
+          <div class="stats">
+            <div class="stat"><div class="stat-k">Fonte</div><div class="stat-v" id="cfg-font">–</div><div class="stat-s" id="cfg-font-s">terminal</div></div>
+            <div class="stat"><div class="stat-k">Opacidade</div><div class="stat-v" id="cfg-op">–</div><div class="stat-s">janela</div></div>
+            <div class="stat"><div class="stat-k">Desfoque</div><div class="stat-v" id="cfg-blur">–</div><div class="stat-s">vidro</div></div>
+            <span hidden id="cfg-ver"></span><span hidden id="cfg-sb"></span><span hidden id="cfg-auto"></span>
+          </div>
+          <form id="settings" class="term-card pane-c cfg-card">
+            <fieldset id="cfg-look"><legend>Aparência</legend>
+              <div class="swatches" role="radiogroup" aria-label="Tema">
+                <label class="swatch sw-dark"><input type="radio" name="theme-pick" value="dark"><i aria-hidden="true"></i><span>Aurora</span></label>
+                <label class="swatch sw-ametista"><input type="radio" name="theme-pick" value="ametista"><i aria-hidden="true"></i><span>Ametista</span></label>
+                <label class="swatch sw-magenta"><input type="radio" name="theme-pick" value="magenta"><i aria-hidden="true"></i><span>Magenta</span></label>
+                <label class="swatch sw-cosmo"><input type="radio" name="theme-pick" value="cosmo"><i aria-hidden="true"></i><span>Cosmo</span></label>
+              </div>
+              <select id="theme" hidden><option value="dark">Aurora</option><option value="ametista">Ametista</option><option value="magenta">Magenta</option><option value="cosmo">Cosmo</option></select>
+              <label class="check toggle"><input type="checkbox" role="switch" id="ap-glow"> <span>Brilho nas bordas<br><span class="muted">Halo neon nos cartões e painéis de vidro.</span></span></label>
+              <label class="check toggle"><input type="checkbox" role="switch" id="ap-anim"> <span>Animações<br><span class="muted">Transições e movimentos da interface.</span></span></label>
+              <p class="field-error" role="alert" id="ap-err" hidden>Não foi possível salvar a aparência.</p>
+              <label class="check toggle"><input type="checkbox" role="switch" id="autostart"> <span>Iniciar com o Windows<br><span class="muted">Abre o live-cmd na bandeja quando você entra no Windows.</span></span></label>
+              <div class="alert alert-danger" role="alert" id="autostart-err" hidden><p>Não foi possível ativar o início com o Windows.</p></div>
+              <div class="look-grid">
+                <label for="ap-font">Fonte do terminal</label>
+                <select id="ap-font"><option>Fira Code</option><option>Cascadia Mono</option><option>Consolas</option><option>Courier New</option></select>
+                <label for="ap-size">Tamanho da fonte</label>
+                <div class="range"><input id="ap-size" type="range" min="10" max="24" step="1"><output id="ap-size-v" for="ap-size"></output></div>
+                <label for="ap-opacity">Opacidade da janela</label>
+                <div class="range"><input id="ap-opacity" type="range" min="60" max="100" step="1"><output id="ap-opacity-v" for="ap-opacity"></output></div>
+                <label for="ap-blur">Desfoque do vidro</label>
+                <div class="range"><input id="ap-blur" type="range" min="0" max="60" step="2"><output id="ap-blur-v" for="ap-blur"></output></div>
+              </div>
+            </fieldset>
+            <fieldset id="cfg-keys"><legend>Atalhos</legend>
+              <ul class="keys" id="keys-list"><li><span>Nova sessão</span><kbd>Ctrl+Shift+T</kbd></li><li><span>Reabrir a última aba fechada</span><kbd>Ctrl+Alt+T</kbd></li><li><span>Fechar a aba</span><kbd>Ctrl+Shift+W</kbd></li><li><span>Próxima aba (com Shift, a anterior)</span><kbd>Ctrl+Tab</kbd></li><li><span>Recolher ou abrir a lista</span><kbd>Ctrl+Shift+B</kbd></li><li><span>Ir para a lista de sessões</span><kbd>Ctrl+Shift+F6</kbd></li><li><span>Copiar a seleção</span><kbd>Ctrl+Shift+C</kbd></li><li><span>Colar</span><kbd>Ctrl+Shift+V</kbd></li><li><span>Buscar no terminal</span><kbd>Ctrl+F</kbd></li><li><span>Buscar no histórico</span><kbd>Ctrl+Shift+F</kbd></li></ul>
+            </fieldset>
+            <fieldset id="cfg-srv"><legend>Servidor de sinalização</legend>
+              <label for="srv">Endereço</label>
+              <div class="inline"><input id="srv" type="url" class="mono" spellcheck="false" autocomplete="off" aria-describedby="srv-e"><button type="submit" id="srv-save">Salvar</button></div>
+              <p id="srv-e" class="field-error" hidden>Use um endereço wss://. ws:// só é aceito em localhost.</p>
+              <p id="srv-msg" class="ok-text" role="status"></p>
+              <div class="alert alert-danger" role="alert" id="srv-err" hidden><p>Não foi possível salvar o endereço. Tente de novo.</p></div>
+              <p class="muted small">O celular só aceita servidores conhecidos pelo app. Mudar aqui pode exigir atualizar o celular.</p>
+            </fieldset>
+            <fieldset id="cfg-term"><legend>Histórico de rolagem</legend>
+              <label for="sb">Linhas por aba (100 a 100000)</label>
+              <div class="inline"><input id="sb" type="number" min="100" max="100000" step="100" aria-describedby="sb-e"><button type="button" id="sb-save">Salvar</button></div>
+              <p id="sb-e" class="field-error" hidden>Use um número inteiro de 100 a 100000.</p>
+              <p id="sb-msg" class="ok-text" role="status"></p>
+            </fieldset>
+            <fieldset><legend>Perfis de terminal</legend>
+              <div class="alert alert-warn" role="alert" id="prof-err" hidden><p></p></div>
+              <p class="muted" id="prof-default" hidden>Usando perfis padrão (PowerShell e WSL).</p>
+              <table id="prof-table" hidden><thead><tr><th scope="col">Nome</th><th scope="col">Comando</th><th scope="col"><span class="sr-only">Ações</span></th></tr></thead><tbody id="prof-body"></tbody></table>
+              <datalist id="prof-shells"></datalist>
+              <p class="inline"><button type="button" id="prof-add">Adicionar perfil</button><button type="button" class="btn-primary" id="prof-save">Salvar perfis</button></p>
+              <p class="field-error" role="alert" id="prof-e" hidden>Cada perfil precisa de nome (até 40 caracteres) e comando, sem caracteres de controle.</p>
+              <p class="ok-text" role="status" id="prof-msg"></p>
+              <button type="button" id="open-dir">Abrir pasta de configuração</button>
+              <p class="muted small">Mudanças valem para os próximos terminais. Outros PCs conectados reconectam em segundos.</p>
+            </fieldset>
+            <fieldset id="cfg-about"><legend>Sobre</legend>
+              <!-- ponytail: o app ainda não grava log próprio; "Ver logs" abre a pasta de dados até existir uma pasta de logs. -->
+              <p>live-cmd <span id="ver"></span> · <button type="button" class="btn-link" id="logs">Ver logs</button></p>
+              <p class="inline"><button type="button" id="cfg-upd">Verificar atualizações</button><button type="button" id="cfg-upd-go" hidden>Atualizar agora</button></p>
+              <p id="upd-msg" role="status"></p>
+              <p class="muted small">Software sem assinatura digital: o Windows pode mostrar "editor desconhecido".</p>
+            </fieldset>
+          </form>
+        </div>
+      </section>
+    </div>
     </div>
   </main>
 </div>
@@ -139,17 +379,21 @@
     <h3 id="ssh-t">Adicionar servidor</h3>
     <label for="ssh-name">Nome</label>
     <input type="text" id="ssh-name" maxlength="40" autocomplete="off" placeholder="Produção">
-    <label for="ssh-user" class="gap">Usuário</label>
-    <input type="text" class="mono" id="ssh-user" maxlength="64" autocomplete="off" spellcheck="false" placeholder="deploy">
+    <label for="ssh-user" class="gap">Usuário (opcional)</label>
+    <input type="text" class="mono" id="ssh-user" maxlength="64" autocomplete="off" spellcheck="false" placeholder="padrão do ssh">
     <div class="ssh-row gap">
       <div><label for="ssh-host">Host</label>
       <input type="text" class="mono" id="ssh-host" maxlength="253" autocomplete="off" spellcheck="false" placeholder="srv.exemplo.com"></div>
       <div class="ssh-port"><label for="ssh-port">Porta</label>
-      <input type="number" id="ssh-port" min="1" max="65535" value="22"></div>
+      <input type="number" id="ssh-port" min="1" max="65535" value="22" placeholder="22"></div>
     </div>
     <label for="ssh-key" class="gap">Chave privada (opcional)</label>
     <div class="inline"><input type="text" class="mono" id="ssh-key" autocomplete="off" spellcheck="false" placeholder="C:\Users\voce\.ssh\id_ed25519">
       <button type="button" id="ssh-key-pick">Procurar…</button></div>
+    <label for="ssh-alive" class="gap">Manter vivo (segundos, 0 desliga)</label>
+    <input type="number" id="ssh-alive" min="0" max="3600" step="5" value="0" aria-describedby="ssh-alive-h">
+    <p class="muted" id="ssh-alive-h">Envia um sinal a cada N segundos (ServerAliveInterval) para a conexão não cair parada. De 5 a 3600.</p>
+    <label class="check toggle"><input type="checkbox" role="switch" id="ssh-retry"> <span>Reconectar ao cair<br><span class="muted">Tenta de novo sozinho, com espera crescente, se a conexão cair com erro.</span></span></label>
     <div class="alert alert-danger" role="alert" id="ssh-err" hidden><p></p></div>
     <div class="actions"><button type="button" id="ssh-cancel">Cancelar</button><button type="button" class="btn-primary" id="ssh-ok">Salvar</button></div>
   </dialog>
@@ -166,6 +410,14 @@
     <h3 id="help-t">Atalhos do terminal</h3>
     <dl class="keys" id="help-list"></dl>
     <div class="actions"><button type="button" class="btn-primary" id="help-ok">Fechar</button></div>
+  </dialog>
+</div>
+<div class="dialog-scrim" id="rm-scrim" hidden>
+  <dialog open aria-modal="true" aria-labelledby="rm-t" aria-describedby="rm-d" id="rm">
+    <h3 id="rm-t"></h3>
+    <p id="rm-d">Este celular perde o acesso aos terminais deste PC na hora. Se estiver conectado, será desconectado. Para usar de novo, será preciso parear com um novo QR Code.</p>
+    <div class="alert alert-danger" role="alert" id="rm-err" hidden><p>Não foi possível remover. O aparelho continua com acesso. Tente de novo.</p></div>
+    <div class="actions"><button type="button" id="rm-cancel">Cancelar</button><button type="button" class="btn-danger" id="rm-ok">Remover aparelho</button></div>
   </dialog>
 </div>
 </body>
