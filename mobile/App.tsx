@@ -16,7 +16,8 @@ import { HistoryScreen } from './src/screens/HistoryScreen.tsx';
 import { SettingsScreen } from './src/screens/SettingsScreen.tsx';
 import { DEFAULT_PREFS, loadPrefs, savePrefs, type Prefs } from './src/prefs.ts';
 import { C, errText } from './src/screens/theme.ts';
-import { Shell } from './src/screens/aurora.tsx';
+import { Banner, Shell } from './src/screens/aurora.tsx';
+import { agentList } from './src/extras.ts';
 import { FONTS } from './src/screens/fonts.ts';
 
 // Mesmo servidor padrão do desktop (desktop/app/src/settings.rs DEFAULT_SERVER).
@@ -53,6 +54,26 @@ export default function App() {
   prefsRef.current = prefs;
   const setPrefs = (p: Prefs) => { setPrefsState(p); savePrefs(p); };
   useEffect(() => { loadPrefs().then(setPrefsState); }, []);
+  /** Agente pedindo confirmação (evento `agent_waiting`): aviso no topo de qualquer aba. */
+  const [waiting, setWaiting] = useState<{ sessionId: string; label: string } | null>(null);
+  /** Muda a cada evento `agent_waiting`: a aba Agentes recarrega a lista. */
+  const [agentsRev, setAgentsRev] = useState(0);
+
+  // "Vibrar ao concluir": comando terminou (OSC 133 `command_completed`) ou agente pediu confirmação.
+  useEffect(() => {
+    if (!live) { setWaiting(null); return; }
+    live.onCommandDone = () => { if (prefsRef.current.vibrate) Vibration.vibrate(40); };
+    live.onAgentWaiting = e => {
+      setAgentsRev(n => n + 1);
+      if (e.waiting) {
+        setWaiting({ sessionId: e.sessionId, label: e.label });
+        if (prefsRef.current.vibrate) Vibration.vibrate([0, 80, 80, 80]);
+      } else setWaiting(w => w?.sessionId === e.sessionId ? null : w);
+    };
+    // A inscrição no evento vem com `agentList(true)`; só com o cap `agent_waiting`.
+    if (live.caps.includes('agent_waiting')) live.extra(agentList(true)).catch(() => {});
+    return () => { live.onCommandDone = undefined; live.onAgentWaiting = undefined; };
+  }, [live]);
 
   useEffect(() => { SecureStore.getItemAsync('pin').then(p => p && setPin(JSON.parse(p))); }, []);
   // QR lido pela câmera do sistema abre o app via scheme remoteterm://
@@ -106,13 +127,17 @@ export default function App() {
   return (
     <Shell bar={<TabBar tab={tab === 'historico' ? 'sessoes' : tab} onChange={setTab} />}>
       <StatusBar style="light" />
+      {waiting && (
+        <Banner text={`${waiting.label || 'Agente'} está esperando sua confirmação`}
+          onPress={() => { const id = waiting.sessionId; setWaiting(null); open(id); }} onClose={() => setWaiting(null)} />
+      )}
       {tab === 'sessoes' && (
         <SessionsScreen status={status} on={!!conn.current} pin={pin} out={out} link={link} setLink={setLink}
           onPair={() => connect(true)} onScan={async () => { if ((await askCam()).granted) setScan(true); }}
           onReconnect={() => connect(false)} onDisconnect={() => conn.current?.close()} send={send}
           conn={live} onOpen={open} onHistory={() => setTab('historico')} termFont={prefs.termFont} />
       )}
-      {tab === 'agentes' && <AgentsScreen conn={live} onOpen={open} />}
+      {tab === 'agentes' && <AgentsScreen conn={live} onOpen={open} rev={agentsRev} />}
       {tab === 'ssh' && <SshScreen conn={live} onOpen={open} />}
       {tab === 'historico' && <HistoryScreen conn={live} onRan={() => setTab('sessoes')} />}
       {tab === 'ajustes' && (

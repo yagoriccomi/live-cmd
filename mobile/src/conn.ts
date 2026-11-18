@@ -43,6 +43,8 @@ export class Conn {
   private pending = new Map<string, (m: any) => void>();
   /** Evento `agent_waiting` (após `agentList(true)` com o cap `agent_waiting`): agente pede ou deixou de pedir confirmação. */
   onAgentWaiting?: (e: Extract<ExtraMsg, { t: 'agent_waiting' }>) => void;
+  /** `command_completed` (OSC 133;D) da sessão exibida: o host já repassa às conexões anexadas. */
+  onCommandDone?: (exitCode?: number) => void;
   private done = false;
 
   constructor(private pin: Pin, private seed: Bytes, private otk: Bytes | undefined, private h: Handlers) {}
@@ -155,6 +157,7 @@ export class Conn {
         parseHostControl(data, this.id);
         const m = JSON.parse(data);
         if (m.type === 'error' && !('request_id' in m)) return this.close(m.code);
+        if (m.type === 'command_completed') { if (m.session_id === this.sessionId) this.onCommandDone?.(m.exit_code); return; }
         const w = m.request_id && this.pending.get(m.request_id);
         if (w) { this.pending.delete(m.request_id); w(m); }
         return;

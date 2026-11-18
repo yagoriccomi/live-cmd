@@ -237,3 +237,23 @@ export const tl = StyleSheet.create({
   cmd: { flex: 1, color: C.text, fontFamily: F.mono, fontSize: 11, includeFontPadding: false },
   kind: { color: C.muted, fontFamily: F.regular, fontSize: 10, maxWidth: 110, includeFontPadding: false },
 });
+
+/** Aviso flutuante no topo (agente pedindo confirmação): toque abre a sessão, ✕ fecha. Fica sobre a tela, fora da rolagem. */
+export function Banner({ text, onPress, onClose }: { text: string; onPress: () => void; onClose: () => void }) {
+  return (
+    <View style={bn.wrap} accessibilityLiveRegion="assertive">
+      <Pressable onPress={onPress} style={({ pressed }) => [bn.main, pressed && { opacity: 0.8 }]} accessibilityRole="button" accessibilityLabel={`${text}. Abrir a sessão`}>
+        <Text style={bn.icon}>!</Text>
+        <Text style={bn.text} numberOfLines={2}>{text}</Text>
+      </Pressable>
+      <IconBtn glyph="✕" label="Fechar aviso" onPress={onClose} />
+    </View>
+  );
+}
+const bn = StyleSheet.create({
+  wrap: { position: 'absolute', top: 44, left: 16, right: 16, zIndex: 10, flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 14, paddingRight: 6,
+    minHeight: 52, borderRadius: 16, backgroundColor: 'rgba(40,28,8,0.94)', borderWidth: 1, borderColor: C.warn },
+  main: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 },
+  icon: { width: 22, height: 22, borderRadius: 11, textAlign: 'center', lineHeight: 22, backgroundColor: C.warn, color: '#1a1200', fontFamily: F.xbold },
+  text: { flex: 1, color: C.text, fontFamily: F.semi, fontSize: 13 },
+});

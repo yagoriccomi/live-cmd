@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import type { Conn } from '../conn.ts';
 import { AGENTS, agentCreate, agentDefaultGet, agentDefaultSet, agentList, agentRemove, agentResume, baseName, groupByFolder, validArgs, type Agent, type AgentDefault, type AgentState } from '../extras.ts';
@@ -18,10 +18,14 @@ type Form = { agent: string; cwd: string; args: string; save: boolean; browse: b
 
 /** Sessões de IA do PC agrupadas por pasta; mesmas ações da tela desktop (agents.js): nova sessão (com navegador de pastas
  *  do PC e "Salvar como padrão", o mesmo padrão do diálogo desktop), abrir/retomar, remover. */
-export function AgentsScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (sessionId: string) => Promise<void> }) {
+export function AgentsScreen({ conn, onOpen, rev = 0 }: { conn: Conn | null; onOpen: (sessionId: string) => Promise<void>; rev?: number }) {
   const ok = !!conn && conn.caps.includes('agents');
-  const load = useCallback(() => conn!.extra(agentList()).then(r => r.agents as Agent[]), [conn]);
+  // Com o cap `agent_waiting`, a lista traz 'waiting' (esperando confirmação) e a conexão fica inscrita no evento.
+  const ext = !!conn && conn.caps.includes('agent_waiting');
+  const load = useCallback(() => conn!.extra(agentList(ext)).then(r => r.agents as Agent[]), [conn, ext]);
   const { data, err, busy, reload } = useRemote(ok ? load : null);
+  // Evento `agent_waiting` (App.tsx): recarrega para mostrar ou tirar o estado.
+  useEffect(() => { if (rev && ok) reload(); }, [rev]);
   const [acting, setActing] = useState('');
   const [msg, setMsg] = useState('');
   const [form, setForm] = useState<Form | null>(null);
@@ -44,7 +48,7 @@ export function AgentsScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (ses
 
   async function remove(a: Agent) {
     const name = a.label || a.agent;
-    const live = a.state === 'running';
+    const live = a.state === 'running' || a.state === 'waiting';
     if (!await confirm(`Remover ${name}?`, live
       ? 'A sessão está aberta: o terminal será encerrado e ela sai da lista.'
       : 'A sessão sai da lista e não poderá mais ser retomada por aqui.', 'Remover')) return;
@@ -69,10 +73,12 @@ export function AgentsScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (ses
     finally { setActing(''); }
   }
 
-  const running = (data ?? []).filter(a => a.state === 'running');
-  const others = (data ?? []).filter(a => a.state !== 'running');
+  const isLive = (a: Agent) => a.state === 'running' || a.state === 'waiting';
+  const running = (data ?? []).filter(isLive);
+  const others = (data ?? []).filter(a => !isLive(a));
+  const asking = running.filter(a => a.state === 'waiting').length;
   const hhmm = (ms: bigint) => new Date(Number(ms)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  const sub = !conn ? 'sem conexão com o PC' : !ok ? 'atualize o live-cmd no PC' : data ? `${running.length} rodando · ${data.length} no PC` : 'carregando…';
+  const sub = !conn ? 'sem conexão com o PC' : !ok ? 'atualize o live-cmd no PC' : data ? `${running.length} rodando${asking ? ` · ${asking} esperando` : ''} · ${data.length} no PC` : 'carregando…';
   return (
     <ScrollView contentContainerStyle={[screen, { flexGrow: 1, paddingBottom: TAB_SPACE }]} keyboardShouldPersistTaps="handled">
       <TopBar title="Agentes" label="Nova sessão de agente" disabled={!ok || !!form}
@@ -113,8 +119,8 @@ export function AgentsScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (ses
             {running.map(a => {
               const name = a.label || a.agent;
               return (
-                <Row key={a.sessionId} icon="✦" title={name} sub={a.cwd ?? [a.agent, a.args].filter(Boolean).join(' ')} status={{ color: STATE.running.color, text: 'rodando' }}
-                  onPress={() => resume(a)} disabled={!!acting} label={`Abrir ${name}, ${STATE.running.text}, ${ago(a.lastActivityMs)}`}
+                <Row key={a.sessionId} icon="✦" title={name} sub={a.cwd ?? [a.agent, a.args].filter(Boolean).join(' ')} status={a.state === 'waiting' ? { color: STATE.waiting.color, text: 'confirmar' } : { color: STATE.running.color, text: 'rodando' }}
+                  onPress={() => resume(a)} disabled={!!acting} label={`Abrir ${name}, ${STATE[a.state].text}, ${ago(a.lastActivityMs)}`}
                   right={<IconBtn glyph="✕" label={`Remover ${name}`} disabled={!!acting} onPress={() => remove(a)} />} />
               );
             })}
