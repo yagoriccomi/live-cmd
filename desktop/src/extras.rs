@@ -103,7 +103,11 @@ const KNOWN: [&str; 19] = ["agent_list", "agent_resume", "agent_create", "agent_
     "settings_get", "settings_set"];
 
 /// Temas, fontes e faixas da aparência (telas Configurações do desktop e do celular).
-pub const THEMES: [&str; 4] = ["dark", "cosmo", "light", "contrast"];
+/// "dark" é o Aurora (padrão). Os antigos "light" e "contrast" foram aposentados: `legacy_theme` os leva ao Aurora.
+pub const THEMES: [&str; 4] = ["dark", "ametista", "magenta", "cosmo"];
+
+/// Tema gravado por versões antigas (claro, alto contraste) vira Aurora, sem perder as outras opções.
+pub fn legacy_theme(t: &str) -> &str { if matches!(t, "light" | "contrast") { "dark" } else { t } }
 pub const FONTS: [&str; 4] = ["Fira Code", "Cascadia Mono", "Consolas", "Courier New"];
 const FONT_SIZE: std::ops::RangeInclusive<u64> = 10..=24;
 const OPACITY: std::ops::RangeInclusive<u64> = 60..=100;
@@ -562,7 +566,7 @@ mod tests {
             ("history_query_ext", json!({"type":"history_query","api":1,"limit":50,"ext":true})),
             ("settings_get", json!({"type":"settings_get","api":1})),
             ("settings_set", json!({"type":"settings_set","api":1,"settings":{"theme":"cosmo","font_size":14,"glow":false}})),
-            ("settings_set_tudo", json!({"type":"settings_set","api":1,"settings":{"theme":"light","font_family":"Consolas","font_size":10,"opacity":60,"blur":0,"glow":true,"animations":false}})),
+            ("settings_set_tudo", json!({"type":"settings_set","api":1,"settings":{"theme":"magenta","font_family":"Consolas","font_size":10,"opacity":60,"blur":0,"glow":true,"animations":false}})),
             ("ext_texto", json!({"type":"agent_list","api":1,"ext":"sim"})),
             ("save_keepalive_4", json!({"type":"ssh_save","api":1,"label":"x","user":"u","host":"h","port":22,"keepalive_s":4})),
             ("save_keepalive_texto", json!({"type":"ssh_save","api":1,"label":"x","user":"u","host":"h","port":22,"keepalive_s":"30"})),
@@ -800,8 +804,10 @@ mod tests {
         assert_eq!(a.patch(&m(json!({"opacity": 82}))).unwrap().opacity, 82);
         assert!(a.patch(&m(json!({"opacity": 101}))).is_err());
         assert!(a.patch(&m(json!({"font_family": "Fira Code\u{0}"}))).is_err());
-        let back: Appearance = serde_json::from_value(json!({"theme": "light"})).unwrap();
-        assert_eq!(back, Appearance { theme: "light".into(), ..a }, "settings.json antigo ou parcial cai no padrão");
+        let back: Appearance = serde_json::from_value(json!({"theme": "ametista"})).unwrap();
+        assert_eq!(back, Appearance { theme: "ametista".into(), ..a.clone() }, "settings.json antigo ou parcial cai no padrão");
+        assert_eq!((legacy_theme("light"), legacy_theme("contrast"), legacy_theme("cosmo")), ("dark", "dark", "cosmo"));
+        assert!(a.patch(&m(json!({"theme": "light"}))).is_err(), "claro e alto contraste saíram da lista branca");
     }
 
     #[test]

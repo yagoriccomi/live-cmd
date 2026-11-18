@@ -29,7 +29,7 @@ export interface HistoryFilter { query?: string; limit?: number; days?: number |
 export interface SshForm { serverId?: string; label: string; user: string; host: string; port: number; key: string | null; keepaliveS?: number; autoReconnect?: boolean }
 /** Aparência compartilhada com a tela Configurações do desktop (desktop/src/extras.rs Appearance). */
 export interface Appearance { theme: string; fontFamily: string; fontSize: number; opacity: number; blur: number; glow: boolean; animations: boolean }
-export const THEMES = ['dark', 'cosmo', 'light', 'contrast'] as const;
+export const THEMES = ['dark', 'ametista', 'magenta', 'cosmo'] as const; // dark = Aurora
 export const FONTS = ['Fira Code', 'Cascadia Mono', 'Consolas', 'Courier New'] as const;
 const RANGES = { font_size: [10, 24], opacity: [60, 100], blur: [0, 60] } as const;
 export const capsProbe = () => ({ type: 'session_attach', session_id: CAPS_PROBE, from_offset: null });

@@ -1,5 +1,5 @@
 /* V1 Glass Aurora (docs/design/aurora-v1/VD-*-1.dc.html): trilho + lista + destaque, medidas do mockup.
-   Tokens: o tema Aurora (padrão) usa os valores do mockup; claro e alto contraste reaproveitam os tokens deles. */
+   Tokens: o tema Aurora (padrão) usa os valores do mockup; Ametista, Magenta e Cosmo trocam só as cores (blocos mais abaixo). */
 :root {
   --glass:var(--surface); --glass-line:var(--border); --glass-glow:var(--shadow); --glass-blur:none;
   --ink:var(--on-accent); --chip:var(--surface-2); --card:var(--surface-2); --card-on:var(--accent); --card-on-ink:var(--on-accent);
@@ -21,7 +21,6 @@
   --term-bg:transparent; --term-fg:#e6dcff;
 }
 :root:not([data-theme=light]):not([data-theme=contrast]) body { background:#140b2e; }
-:root[data-theme=contrast] { --hero-btn-1:#000; --hero-btn-1-ink:#ff0; --hero-btn:var(--bg); --card-on:var(--accent); }
 
 /* Fundo: três manchas desfocadas (só no Aurora). */
 .aurora { position:fixed; inset:0; overflow:hidden; pointer-events:none; }
@@ -245,9 +244,9 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .swatch input:checked + i { border-color:var(--text); box-shadow:0 0 18px rgb(255 79 216 / .55); }
 .swatch input:focus-visible + i { outline:2px solid var(--focus, #fff); outline-offset:2px; }
 .sw-dark i { background:linear-gradient(135deg, #8b5cf6, #ff4fd8); }
-.sw-light i { background:linear-gradient(135deg, #f5f3ff, #d8b4fe); }
+.sw-ametista i { background:linear-gradient(135deg, #4c1d95, #8b5cf6); }
 .sw-cosmo i { background:linear-gradient(135deg, #3c6cff, #22d3ee); }
-.sw-contrast i { background:linear-gradient(135deg, #000 50%, #ffff00 50%); }
+.sw-magenta i { background:linear-gradient(135deg, #c026d3, #ff4fd8); }
 .toggle input[type=checkbox] { appearance:none; flex:none; width:38px; height:22px; border-radius:11px; background:var(--chip); border:1px solid var(--glass-line); position:relative; margin:2px 0 0; cursor:pointer; }
 .toggle input[type=checkbox]::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:var(--text-muted); transition:left .15s; }
 .toggle input[type=checkbox]:checked { background:var(--grad); }
@@ -272,6 +271,27 @@ body.term-body { font-family:var(--font); line-height:normal; }
 :root[data-theme=cosmo][data-theme] body { background:#0a1430; }
 :root[data-theme=cosmo] .aurora i:nth-child(2) { background:#22d3ee; }
 :root[data-theme=cosmo] .swatch input:checked + i { box-shadow:0 0 18px rgb(34 211 238 / .55); }
+/* Temas Ametista e Magenta (2º e 3º do mockup): o mesmo vidro, outras cores. */
+:root[data-theme=ametista][data-theme] {
+  --bg:#12072e; --accent:#6d3fd6; --text-muted:#d0c0ff; --border:rgb(190 160 255 / .5); --term-sel:#4c1d95; --term-fg:#e6dcff;
+  --glass-line:rgb(190 160 255 / .5); --glass-glow:0 0 28px rgb(109 63 214 / .4), inset 0 1px 0 rgb(255 255 255 / .22);
+  --shadow:0 0 28px rgb(109 63 214 / .4); --glow:0 0 28px rgb(109 63 214 / .4), inset 0 1px 0 rgb(255 255 255 / .3);
+  --hero-bg:linear-gradient(135deg, color-mix(in srgb, #4c1d95 87%, transparent), #8b5cf6aa); --hero-glow:0 0 40px #8b5cf666;
+  --grad:linear-gradient(135deg, #5b2bc0, #8b5cf6); --grad-glow:0 0 22px #8b5cf688; --off:#8f80b8;
+}
+:root[data-theme=ametista][data-theme] body { background:#12072e; }
+:root[data-theme=ametista] .aurora i:nth-child(2) { background:#8b5cf6; }
+:root[data-theme=ametista] .aurora i:nth-child(3) { background:#4c1d95; }
+:root[data-theme=magenta][data-theme] {
+  --bg:#1c0620; --accent:#c026d3; --text-muted:#ffc8f4; --border:rgb(255 150 235 / .5); --term-sel:#9d1aae; --term-fg:#ffe6fa;
+  --glass-line:rgb(255 150 235 / .5); --glass-glow:0 0 28px rgb(192 38 211 / .4), inset 0 1px 0 rgb(255 255 255 / .22);
+  --shadow:0 0 28px rgb(192 38 211 / .4); --glow:0 0 28px rgb(192 38 211 / .4), inset 0 1px 0 rgb(255 255 255 / .3);
+  --hero-bg:linear-gradient(135deg, color-mix(in srgb, #c026d3 87%, transparent), #ff4fd8aa); --hero-glow:0 0 40px #ff4fd866;
+  --grad:linear-gradient(135deg, #c026d3, #ff4fd8); --grad-glow:0 0 22px #ff4fd888; --ink:#4a0d52; --card-on-ink:#4a0d52; --hero-btn-1-ink:#4a0d52; --off:#c08ab8;
+}
+:root[data-theme=magenta][data-theme] body { background:#1c0620; }
+:root[data-theme=magenta] .aurora i:nth-child(3) { background:#ff4fd8; }
+:root[data-theme=ametista] .swatch input:checked + i, :root[data-theme=magenta] .swatch input:checked + i { box-shadow:0 0 18px rgb(255 79 216 / .5); }
 /* "Animações" desligado: o mesmo efeito de prefers-reduced-motion. */
 :root[data-anim=off] *, :root[data-anim=off] *::before, :root[data-anim=off] *::after { animation:none !important; transition:none !important; }
 /* Agente esperando confirmação (detecção pelo texto da tela no host). */

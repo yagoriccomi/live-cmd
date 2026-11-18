@@ -102,7 +102,7 @@ test('funções dos mockups: pedidos com ext e aparência', () => {
   assert.deepEqual(historyQuery({ ext: true }), body('history_query_ext'));
   assert.deepEqual(settingsGet(), body('settings_get'));
   assert.deepEqual(settingsSet({ theme: 'cosmo', fontSize: 14, glow: false }), body('settings_set'));
-  assert.deepEqual(settingsSet({ theme: 'light', fontFamily: 'Consolas', fontSize: 10, opacity: 60, blur: 0, glow: true, animations: false }), body('settings_set_tudo'));
+  assert.deepEqual(settingsSet({ theme: 'magenta', fontFamily: 'Consolas', fontSize: 10, opacity: 60, blur: 0, glow: true, animations: false }), body('settings_set_tudo'));
   for (const n of ['agent_list_ext', 'ssh_list_ext', 'history_query_ext', 'settings_get', 'settings_set', 'settings_set_tudo'])
     assert.equal(fx.requests.find((c: any) => c.name === n).result, 'ok', n);
   const s = sshSave({ label: 'x', user: 'u', host: 'h', port: 22, key: null, keepaliveS: 30, autoReconnect: true });

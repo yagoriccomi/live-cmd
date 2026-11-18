@@ -160,7 +160,9 @@ pub use live_cmd_echo::extras::Appearance;
 
 /// Sem arquivo, ilegível ou fora das faixas: o padrão.
 pub fn appearance(dir: &Path) -> Appearance {
-    std::fs::read(dir.join(APPEARANCE_FILE)).ok().and_then(|t| serde_json::from_slice::<Appearance>(&t).ok()).filter(Appearance::valid).unwrap_or_default()
+    std::fs::read(dir.join(APPEARANCE_FILE)).ok().and_then(|t| serde_json::from_slice::<Appearance>(&t).ok())
+        .map(|mut a| { a.theme = live_cmd_echo::extras::legacy_theme(&a.theme).to_owned(); a })
+        .filter(Appearance::valid).unwrap_or_default()
 }
 
 pub fn save_appearance(dir: &Path, a: &Appearance) -> Result<(), String> {

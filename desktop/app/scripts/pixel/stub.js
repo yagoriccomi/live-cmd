@@ -3,7 +3,7 @@
 // #historico, #estados; na janela principal, #pair e #settings (as abas do app.js).
 (() => {
   const [screen = "terminal", theme] = location.hash.slice(1).split(":");
-  try { localStorage.theme = theme || "dark"; } catch {} // #terminal:light, #terminal:contrast
+  try { localStorage.theme = theme || "dark"; } catch {} // #terminal:ametista, #terminal:magenta, #terminal:cosmo
   const ls = []; // ouvintes de evento
   const sid = (n) => "00000000-0000-0000-0000-00000000000" + n;
   const now = Date.now(), H = 3600e3, D = 24 * H;
