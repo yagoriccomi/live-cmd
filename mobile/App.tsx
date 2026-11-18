@@ -141,7 +141,7 @@ export default function App() {
       )}
       {tab === 'agentes' && <AgentsScreen conn={live} onOpen={open} rev={agentsRev} />}
       {tab === 'ssh' && <SshScreen conn={live} onOpen={open} />}
-      {tab === 'historico' && <HistoryScreen conn={live} onRan={() => setTab('sessoes')} />}
+      {tab === 'historico' && <HistoryScreen conn={live} />}
       {tab === 'ajustes' && (
         <SettingsScreen conn={live} pin={pin} status={status} prefs={prefs} setPrefs={setPrefs} onOpenTerminals={() => setTab('sessoes')}
           onUnpair={() => { conn.current?.close(); SecureStore.deleteItemAsync('pin'); setPin(null); }} />

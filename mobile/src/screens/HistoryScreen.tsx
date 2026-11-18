@@ -1,7 +1,8 @@
 import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Conn } from '../conn.ts';
-import { HISTORY_KINDS, groupByDay, historyClear, historyQuery, historyRun, summarizeSessions, type HistoryEntry, type HistorySession } from '../extras.ts';
+import * as Clipboard from 'expo-clipboard';
+import { HISTORY_KINDS, groupByDay, historyClear, historyQuery, summarizeSessions, type HistoryEntry, type HistorySession } from '../extras.ts';
 import { Dot, Notice, OFFLINE, OLD_HOST, confirm, useRemote } from './common.tsx';
 import { Chip, GroupLabel, Hero, HeroBtn, IconBtn, ListPanel, Panel, Row, Section, TopBar, screen, tl as t } from './aurora.tsx';
 import { C, F, TAB_SPACE, errText } from './theme.ts';
@@ -13,8 +14,8 @@ function exit(code: number | null): { color: string; text: string } {
 const LIMIT = 200;
 
 /** Comandos gravados no PC, com os mesmos filtros e ações da tela desktop (historico.js): busca, últimos 7 dias,
- *  tipo de sessão, só erros, limpar; "Reexecutar" digita o comando na sessão aberta na aba Sessões. */
-export function HistoryScreen({ conn, onRan }: { conn: Conn | null; onRan: () => void }) {
+ *  tipo de sessão, só erros, limpar; "Copiar" põe o comando na área de transferência (não executa). */
+export function HistoryScreen({ conn }: { conn: Conn | null }) {
   const ok = !!conn && conn.caps.includes('history');
   const [query, setQuery] = useState('');
   const [applied, setApplied] = useState('');
@@ -34,10 +35,9 @@ export function HistoryScreen({ conn, onRan }: { conn: Conn | null; onRan: () =>
   const [msg, setMsg] = useState('');
   const filtered = !!(applied || week || kind || errors);
 
-  async function run(e: HistoryEntry) {
-    setMsg('');
-    if (!conn?.sessionId) return setMsg('Abra uma sessão na aba Sessões primeiro.');
-    try { await conn.extra(historyRun(e.entryId, conn.sessionId)); onRan(); } catch (x) { setMsg(errText(x)); }
+  // Histórico só consulta: copia o comando, nunca executa.
+  async function copy(e: HistoryEntry) {
+    try { await Clipboard.setStringAsync(e.command); setMsg('Comando copiado.'); } catch { setMsg('Não foi possível copiar.'); }
   }
   async function clear() {
     if (!await confirm('Limpar histórico?', 'Todos os comandos gravados no PC serão apagados. Não dá para desfazer.', 'Limpar histórico')) return;
@@ -110,7 +110,7 @@ export function HistoryScreen({ conn, onRan }: { conn: Conn | null; onRan: () =>
                       <Text style={t.cmd} numberOfLines={1} selectable>{mark(e.command, applied)}</Text>
                       <Text style={t.kind} numberOfLines={1}>{e.exitCode ? `saída ${e.exitCode}` : e.label || (HISTORY_KINDS[e.kind] ?? e.kind)}</Text>
                     </View>
-                    <IconBtn glyph="↻" label={`Reexecutar ${e.command}`} onPress={() => run(e)} />
+                    <IconBtn glyph="⧉" label={`Copiar ${e.command}`} onPress={() => copy(e)} />
                   </View>
                 );
               })}

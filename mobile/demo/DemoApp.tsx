@@ -98,7 +98,7 @@ export function DemoScreen({ name }: { name: DemoName }) {
       {name === 'erro' && sessions('fechado: Permission denied (publickey)', false, '')}
       {name === 'agentes' && <AgentsScreen conn={fake} onOpen={async () => {}} />}
       {name === 'ssh' && <SshScreen conn={fake} onOpen={async () => {}} />}
-      {name === 'historico' && <HistoryScreen conn={fake} onRan={noop} />}
+      {name === 'historico' && <HistoryScreen conn={fake} />}
       {name === 'ajustes' && <SettingsScreen conn={fake} pin={PIN} status="conectado" prefs={{ ...DEFAULT_PREFS, termFont: 13 }} setPrefs={noop} onOpenTerminals={noop} onUnpair={noop} />}
     </Shell>
   );
