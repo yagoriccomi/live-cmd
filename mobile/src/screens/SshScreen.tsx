@@ -4,7 +4,7 @@ import type { Conn } from '../conn.ts';
 import { SSH_MSG, baseName, sshConnect, sshFormError, sshList, sshProbe, sshReconnect, sshRemove, sshSave, type SshServer, type SshSession, type SshStatus } from '../extras.ts';
 import { Browser } from './Browser.tsx';
 import { Field, Notice, OFFLINE, OLD_HOST, confirm, s, useRemote } from './common.tsx';
-import { Chip, Hero, HeroBtn, IconBtn, ListPanel, Panel, Row, Section, SettingRow, TopBar, screen } from './aurora.tsx';
+import { Chip, Hero, HeroBtn, ToggleRow, IconBtn, ListPanel, Panel, Row, Section, SettingRow, TopBar, screen } from './aurora.tsx';
 import { C, F, TAB_SPACE, errText } from './theme.ts';
 
 /** Mesmos estados da tela desktop (ssh.js `statusText`). */
@@ -20,15 +20,19 @@ function status(st: SshStatus, ms: number | null): { color: string; text: string
 }
 const sshErr = (e: any) => SSH_MSG[e?.code ?? e?.message] ?? errText(e);
 
-type Form = { serverId?: string; label: string; user: string; host: string; port: string; key: string; browse?: boolean };
-const EMPTY: Form = { label: '', user: '', host: '', port: '22', key: '' };
+type Form = { serverId?: string; label: string; user: string; host: string; port: string; key: string; browse?: boolean; keepalive: string; reconnect: boolean };
+const EMPTY: Form = { label: '', user: '', host: '', port: '22', key: '', keepalive: '0', reconnect: false };
+/** "Manter vivo": 0 desliga, senão 5..3600 s (o mesmo limite do desktop, ssh.rs). */
+const keepaliveOk = (n: number) => Number.isInteger(n) && (n === 0 || (n >= 5 && n <= 3600));
 
 /** Servidores SSH do PC com as mesmas ações da tela desktop (ssh.js): buscar, conectar, testar, adicionar, editar,
  *  remover, e as sessões SSH abertas no PC (as restauradas voltam desconectadas, com Reconectar). Nunca pede senha. */
 export function SshScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (sessionId: string) => Promise<void> }) {
   const ok = !!conn && conn.caps.includes('ssh');
   const canKeys = !!conn && conn.caps.includes('ssh_keys');
-  const load = useCallback(() => conn!.extra(sshList()).then(r => ({ servers: r.servers as SshServer[], sessions: r.sessions as SshSession[] })), [conn]);
+  // "Manter vivo" e "Reconectar ao cair" (cap `ssh_opts`): a lista os traz com `ext` e o salvar os manda.
+  const opts = !!conn && conn.caps.includes('ssh_opts');
+  const load = useCallback(() => conn!.extra(sshList(opts)).then(r => ({ servers: r.servers as SshServer[], sessions: r.sessions as SshSession[] })), [conn, opts]);
   const { data, err, busy, reload } = useRemote(ok ? load : null);
   const [acting, setActing] = useState('');
   const [msg, setMsg] = useState('');
@@ -56,9 +60,11 @@ export function SshScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (sessio
   }
   async function save() {
     if (!form) return;
-    const f = { serverId: form.serverId, label: form.label.trim(), user: form.user.trim(), host: form.host.trim(), port: Number(form.port), key: form.key.trim() || null };
+    const f = { serverId: form.serverId, label: form.label.trim(), user: form.user.trim(), host: form.host.trim(), port: Number(form.port), key: form.key.trim() || null,
+      ...(opts && { keepaliveS: Number(form.keepalive.trim() || '0'), autoReconnect: form.reconnect }) };
     const bad = sshFormError(f);
     if (bad) return setMsg(SSH_MSG[bad]);
+    if (opts && !keepaliveOk(f.keepaliveS!)) return setMsg('Manter vivo: 0 (desligado) ou de 5 a 3600 segundos.');
     await act('form', async () => { await conn!.extra(sshSave(f)); setForm(null); reload(); });
   }
 
@@ -68,7 +74,7 @@ export function SshScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (sessio
   const sel = shown.find(x => x.serverId === selId) ?? shown[0];
   const selSt = sel ? status(sel.status, sel.latencyMs) : null;
   const add = () => { setMsg(''); setForm(EMPTY); };
-  const edit = (x: SshServer) => { setMsg(''); setForm({ serverId: x.serverId, label: x.label, user: x.user, host: x.host, port: String(x.port), key: x.key ?? '' }); };
+  const edit = (x: SshServer) => { setMsg(''); setForm({ serverId: x.serverId, label: x.label, user: x.user, host: x.host, port: String(x.port), key: x.key ?? '', keepalive: String(x.keepaliveS ?? 0), reconnect: !!x.autoReconnect }); };
   return (
     <ScrollView contentContainerStyle={[screen, { flexGrow: 1, paddingBottom: TAB_SPACE }]} keyboardShouldPersistTaps="handled">
       <TopBar title="Servidores" label="Adicionar servidor" onPress={add} disabled={!ok || !!form} />
@@ -102,6 +108,12 @@ export function SshScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (sessio
             </View>
           )}
           {canKeys && form.browse && <Browser conn={conn!} mode="keys" onPick={key => setForm(f => f && { ...f, key, browse: false })} />}
+          {opts && (
+            <>
+              <Field label="Manter vivo (segundos, 0 desliga)" value={form.keepalive} keyboardType="number-pad" maxLength={4} onChangeText={keepalive => setForm({ ...form, keepalive })} placeholder="30" />
+              <ToggleRow title="Reconectar ao cair" value={form.reconnect} onChange={reconnect => setForm({ ...form, reconnect })} last />
+            </>
+          )}
           <Text style={s.meta}>A senha é pedida no terminal e nunca é salva.</Text>
           <View style={[s.wrap, { justifyContent: 'flex-end', marginTop: 10, marginBottom: 0 }]}>
             <HeroBtn title="Cancelar" onPress={() => { setForm(null); setMsg(''); }} />
@@ -123,7 +135,7 @@ export function SshScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (sessio
             {shown.map(x => {
               const l = status(x.status, x.latencyMs);
               return (
-                <Row key={x.serverId} icon="⇄" title={x.label || x.host} sub={`${x.user}@${x.host}${x.port !== 22 ? `:${x.port}` : ''}${x.key ? ' · chave' : ''}`}
+                <Row key={x.serverId} icon="⇄" title={x.label || x.host} sub={`${x.user}@${x.host}${x.port !== 22 ? `:${x.port}` : ''}${x.key ? ' · chave' : ''}${x.keepaliveS ? ' · vivo' : ''}${x.autoReconnect ? ' · reconecta' : ''}`}
                   status={{ color: l.color, text: l.text }} selected={x.serverId === sel?.serverId} onPress={() => setSelId(x.serverId)}
                   label={`${x.label || x.host}, ${x.user}@${x.host}:${x.port}, ${l.text}. Mostrar detalhes`} />
               );
@@ -137,6 +149,8 @@ export function SshScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (sessio
           <SettingRow title="Testar alcance" value={selSt.text} onPress={() => probe(sel)} disabled={!!acting} label={`Testar alcance de ${sel.label}`} />
           <SettingRow title="Porta" value={String(sel.port)} />
           <SettingRow title="Chave" value={sel.key ? baseName(sel.key) : 'senha no terminal'} />
+          {opts && <SettingRow title="Manter vivo" value={sel.keepaliveS ? `${sel.keepaliveS} s` : 'desligado'} />}
+          {opts && <SettingRow title="Reconectar ao cair" value={sel.autoReconnect ? 'ligado' : 'desligado'} />}
           <SettingRow title="Excluir servidor" danger onPress={() => remove(sel)} disabled={!!acting} label={`Remover ${sel.label}`} last />
         </View>
         </Panel>
