@@ -317,7 +317,10 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .pair-steps { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:10px; }
 .pair-steps + .pane-h + #devices, #devices { margin-top:10px; }
 .aurora-pane .card.device-row { position:relative; border:0; border-radius:18px; padding:13px 14px; min-height:66px; }
-.aurora-pane .device-row button { position:absolute; right:10px; top:50%; translate:0 -50%; opacity:0; pointer-events:none; }
+/* Botão ao lado do status (nunca por cima dele); aparece no hover/foco. */
+.aurora-pane .device-row button { position:static; flex:none; margin-left:8px; opacity:0; pointer-events:none; }
+.term-bar .fold { flex:none; padding:4px 9px; margin-right:4px; border:0; border-radius:10px; background:var(--chip); color:var(--text); font-size:14px; line-height:1; }
+.term-bar .fold[aria-pressed=true] { background:var(--card-on); color:var(--card-on-ink); }
 .aurora-pane .device-row:is(:hover, :focus-within) button { opacity:1; pointer-events:auto; }
 .card-st.dot-ok { color:var(--ok); }
 #pair-pane .code-only { display:none; }

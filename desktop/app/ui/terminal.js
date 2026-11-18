@@ -99,7 +99,14 @@ function updateBanner() {
 
 // ---------- Abas ----------
 let tabsLater = false;
+// Ordem das abas e aba ativa sobrevivem a fechar/atualizar o app; não grava durante a reabertura inicial.
+let restoring = false;
+function saveTabs() {
+  if (restoring) return;
+  try { localStorage.setItem("tabs-state", JSON.stringify({ order: tabs.map((t) => t.key), active })); } catch {}
+}
 function renderTabs() {
+  saveTabs();
   const bar = $("tabs");
   if (bar.querySelector("input.rename")) { tabsLater = true; return; }
   bar.replaceChildren(...tabs.map((t) => {
@@ -109,8 +116,10 @@ function renderTabs() {
     b.setAttribute("aria-selected", String(t.key === active));
     b.tabIndex = t.key === active ? 0 : -1;
     b.dataset.key = t.key;
-    if (t.conn !== LOCAL) b.append(pcMark(t.conn));
-    const name = el("span", "tab-name", t.title + (t.split ? " | dividido" : ""));
+    // Aba remota: só a cor do PC (nome do PC fica no tooltip e no leitor de tela).
+    if (t.conn !== LOCAL) { b.append(pcMark(t.conn)); b.title = t.title; }
+    const name = el("span", "tab-name", (t.label || "Terminal") + (t.split ? " | dividido" : ""));
+    if (t.conn !== LOCAL) name.setAttribute("aria-label", t.title);
     name.ondblclick = (e) => { e.stopPropagation(); renameSession(t.conn, t.sid, name, t.label); };
     b.append(name);
     if (busy.has(t.key)) b.append(actDot());
@@ -765,7 +774,8 @@ document.addEventListener("keydown", (e) => {
   }
   else if (e.ctrlKey && e.shiftKey && !e.altKey && k === "B") {
     e.preventDefault();
-    const c = $("layout").classList.toggle("collapsed");
+    $("fold-side").click();
+    const c = $("layout").classList.contains("collapsed");
     if (c && $("sidebar").contains(document.activeElement)) $("screen").focus();
   }
   else if (e.ctrlKey && e.shiftKey && k === "C") {
@@ -872,14 +882,21 @@ $("screen").oncontextmenu = (e) => {
   else if (hasSel()) copySel();
   else paste();
 };
-// ☰ Menu: só as ações da bandeja; o resto já tem lugar (barra, Shift+botão direito, atalhos).
-$("tb-menu").onclick = () => menu($("tb-menu"), [["Novo pareamento (QR Code)", "pair"], ["Dispositivos conectados", "devices"], ["Configurações", "settings"], ["Sair do live-cmd", "quit"]]
-  .map(([n, id]) => [n, () => invoke("tray_action", { id }).catch((err) => banner(msg(err), "err"))]));
-$("tb-new").onclick = action("new");
-$("tb-find").onclick = () => openFind();
-$("tb-split").onclick = action("split");
-$("tb-pal").onclick = action("palette");
-$("tb-help").onclick = () => help();
+// Recolher/expandir a lista de terminais e o topo (destaque + resumo) para ampliar o terminal; lembrado por aparelho.
+function foldToggle(btn, apply, key) {
+  const set = (on) => {
+    apply(on);
+    btn.setAttribute("aria-pressed", String(on));
+    try { localStorage.setItem(key, on ? "1" : ""); } catch {}
+    requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+  };
+  let on = false;
+  try { on = localStorage.getItem(key) === "1"; } catch {}
+  set(on);
+  btn.onclick = () => set(btn.getAttribute("aria-pressed") !== "true");
+}
+foldToggle($("fold-side"), (on) => $("layout").classList.toggle("collapsed", on), "fold-side");
+foldToggle($("fold-top"), (on) => { $("hero").hidden = on; $("stats").hidden = on; }, "fold-top");
 
 // Fonte: Ctrl+roda, Ctrl+=/-/0; salva por PC no localStorage e recalcula cols/rows.
 let FONT0 = 13; // V1 Aurora: Fira Code 13 px; a aparência (aparencia.js) troca o padrão
@@ -1037,9 +1054,18 @@ new ResizeObserver(fit).observe($("screen"));
 // ---------- Início ----------
 $("local-new").onclick = () => profileMenu($("local-new"), LOCAL);
 $("empty-new").onclick = () => newSession(LOCAL);
-// Retomar: abre em abas todas as sessões locais vivas (inclusive as restauradas do disco).
+// Retomar: abre em abas todas as sessões locais vivas (inclusive as restauradas do disco),
+// na ordem das abas da última vez e voltando para a aba que estava ativa (salvas em saveTabs).
 refresh(LOCAL).then(async () => {
-  for (const s of conns[LOCAL].sessions || []) if (s.state !== "closed") await openSession(LOCAL, s).catch(() => {});
+  let saved = { order: [], active: null };
+  try { saved = { ...saved, ...JSON.parse(localStorage.getItem("tabs-state") || "{}") }; } catch {}
+  const pos = (s) => { const i = saved.order.indexOf(LOCAL + "/" + s.session_id); return i < 0 ? Infinity : i; };
+  const list = (conns[LOCAL].sessions || []).filter((s) => s.state !== "closed").sort((a, b) => pos(a) - pos(b));
+  restoring = true;
+  for (const s of list) await openSession(LOCAL, s).catch(() => {});
+  restoring = false;
+  const back = tabs.find((t) => t.key === saved.active) || tabs.find((t) => t.key === active) || tabs[0];
+  if (back) activate(back.key);
 });
 refreshRemotes();
 // Sessões criadas pelo celular aparecem sozinhas; não redesenha a lista sob o foco do teclado.

@@ -50,14 +50,6 @@
         <div class="hero-txt"><div class="hero-t" id="hero-t">Nenhuma sessão</div><div class="hero-s mono" id="hero-s"></div></div>
         <span class="badge" id="hero-b" hidden></span>
       </div>
-      <div class="term-tools" role="toolbar" aria-label="Ações do terminal">
-        <button type="button" id="tb-find" title="Buscar (Ctrl+F)" aria-label="Buscar">Buscar</button>
-        <button type="button" id="tb-split" title="Dividir painel" aria-label="Dividir painel">Dividir →</button>
-        <button type="button" id="tb-pal" title="Paleta de comandos" aria-label="Paleta de comandos">Paleta</button>
-        <button type="button" id="tb-new" title="Nova sessão (Ctrl+Shift+T)" aria-label="Nova sessão">+</button>
-        <button type="button" id="tb-help" title="Ajuda (F1)" aria-label="Ajuda">?</button>
-        <button type="button" id="tb-menu" title="Todas as ações" aria-label="Menu" aria-haspopup="menu">☰</button>
-      </div>
     </section>
     <div class="stats" id="stats" aria-label="Resumo">
       <div class="stat"><div class="stat-k">CPU</div><div class="stat-v" id="st-1v">0</div><div class="stat-s" id="st-1s"></div></div>
@@ -66,6 +58,8 @@
     </div>
     <div class="term-card">
     <div class="term-bar">
+      <button type="button" class="fold" id="fold-side" title="Recolher/expandir lista de terminais (Ctrl+Shift+B)" aria-label="Recolher lista de terminais" aria-pressed="false">◧</button>
+      <button type="button" class="fold" id="fold-top" title="Recolher/expandir informações do topo" aria-label="Recolher informações do topo" aria-pressed="false">⬒</button>
       <div class="term-tabs" role="tablist" aria-label="Terminais abertos" id="tabs"></div>
     </div>
     <div class="status-banner" role="status" id="upd-banner" hidden><span id="upd-t"></span><span class="inline"><button type="button" id="upd-go">Atualizar agora</button><button type="button" id="upd-x" aria-label="Dispensar">×</button></span></div>

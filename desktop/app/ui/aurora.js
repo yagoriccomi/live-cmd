@@ -170,8 +170,7 @@
     hero($("hist-hero"), first ? {
       icon: "⌕", title: q || txt(first, ".hist-cmd"), sub: `${plural(items.length, "comando", "comandos")} em ${plural(by.size, "sessão", "sessões")}`,
       badge: "CTRL+SHIFT+F", tone: "key",
-      buttons: [Object.assign(el("button", null, "Rodar de novo"), { onclick: () => first.querySelector(".hist-run")?.click() }),
-        Object.assign(el("button", null, "Copiar"), { onclick: () => navigator.clipboard?.writeText(first.dataset.cmd).then(() => banner("Comando copiado.", "ok"), () => banner("Não foi possível copiar.", "err")) })],
+      buttons: [Object.assign(el("button", null, "Copiar"), { onclick: () => first.querySelector(".hist-run")?.click() })],
     } : {});
     stats($("hist-stats"), [["Sucesso", ok, items.length ? `${Math.round((ok * 100) / items.length)}%` : ""], ["Erros", err, "saída ≠ 0"], ["Sessões", by.size, "no histórico"]]);
     if (window.histSessions) return histSessions();

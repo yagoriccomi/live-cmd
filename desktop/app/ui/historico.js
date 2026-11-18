@@ -48,11 +48,11 @@
     dot.setAttribute("aria-hidden", "true");
     const side = el("span", "hist-side", e.code != null && e.code !== 0 ? `saída ${e.code}` : (e.label || "").split(" · ")[0]);
     side.title = `${e.pc} · ${e.label}${e.cwd ? ` · ${e.cwd}` : ""}`;
-    const run = el("button", "hist-run", "Reexecutar");
+    const run = el("button", "hist-run", "Copiar");
     run.type = "button";
-    run.title = "Enviar à aba ativa e executar";
-    run.setAttribute("aria-label", `Reexecutar ${e.cmd}`);
-    run.onclick = () => rerun(e.cmd);
+    run.title = "Copiar o comando";
+    run.setAttribute("aria-label", `Copiar ${e.cmd}`);
+    run.onclick = () => copyCmd(e.cmd);
     li.dataset.cmd = e.cmd;
     li.append(meta, el("span", "hist-time", time), dot, cmd, side, run);
     if (code) li.append(code);
@@ -92,12 +92,9 @@
     }
   }
 
-  function rerun(cmd) {
-    const t = activeTab();
-    if (!t || t.exited != null) return banner("Abra uma aba de terminal para reexecutar o comando.", "warn");
-    close(false);
-    invoke("term_input", { conn: t.conn, sessionId: t.sid, data: cmd + "\r" }).catch((e) => banner(msg(e), "err"));
-    $("screen").focus();
+  // Histórico só consulta: copia o comando, nunca executa.
+  function copyCmd(cmd) {
+    (navigator.clipboard?.writeText(cmd) || Promise.reject()).then(() => banner("Comando copiado.", "ok"), () => banner("Não foi possível copiar.", "err"));
   }
 
   function open() {
