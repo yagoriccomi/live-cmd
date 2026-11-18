@@ -49,7 +49,7 @@ pub fn valid_key(k: &str) -> bool {
 impl Ssh {
     /// Código do primeiro campo inválido.
     pub fn check(&self) -> Result<(), &'static str> {
-        if !valid_user(&self.user) { return Err("INVALID_SSH_USER"); }
+        if !self.user.is_empty() && !valid_user(&self.user) { return Err("INVALID_SSH_USER"); }
         if !valid_host(&self.host) { return Err("INVALID_SSH_HOST"); }
         if self.port == 0 { return Err("INVALID_SSH_PORT"); }
         if self.key.as_deref().is_some_and(|k| !valid_key(k)) { return Err("INVALID_SSH_KEY"); }
@@ -59,7 +59,9 @@ impl Ssh {
 
     /// Argumentos do `ssh.exe`, um por item; o host vai por último, depois das opções.
     pub fn args(&self) -> Vec<String> {
-        let mut a = vec!["-p".to_owned(), self.port.to_string(), "-l".to_owned(), self.user.clone()];
+        let mut a = vec!["-p".to_owned(), self.port.to_string()];
+        // Sem usuário: o ssh usa o do `~/.ssh/config` ou o do Windows.
+        if !self.user.is_empty() { a.extend(["-l".to_owned(), self.user.clone()]); }
         if let Some(k) = &self.key { a.extend(["-i".to_owned(), k.clone()]); }
         // Número já validado: a opção vai inteira num argumento só, nunca texto do usuário.
         if self.keepalive_s > 0 { a.extend(["-o".to_owned(), format!("ServerAliveInterval={}", self.keepalive_s)]); }
