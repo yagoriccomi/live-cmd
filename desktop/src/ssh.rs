@@ -3,7 +3,7 @@
 //! só o caminho da chave privada, se houver.
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Ssh {
     pub user: String,
@@ -12,7 +12,19 @@ pub struct Ssh {
     /// Caminho absoluto da chave privada (`-i`); `None` = chaves padrão do ssh/agente.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
+    /// "Manter vivo": `-o ServerAliveInterval=<s>`; 0 = desligado, senão 5 a 3600 ([`valid_keepalive`]).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub keepalive_s: u16,
+    /// "Reconectar ao cair": o hub abre o ssh.exe de novo, com espera crescente, quando ele sai sozinho.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub auto_reconnect: bool,
 }
+
+fn is_zero(n: &u16) -> bool { *n == 0 }
+fn is_false(b: &bool) -> bool { !*b }
+
+/// Intervalo do "Manter vivo": 0 (desligado) ou 5 a 3600 s.
+pub fn valid_keepalive(s: u16) -> bool { s == 0 || (5..=3600).contains(&s) }
 
 /// Nome DNS, IPv4 ou IPv6 sem colchetes. Não começa com `-` (viraria opção do ssh).
 pub fn valid_host(h: &str) -> bool {
@@ -41,6 +53,7 @@ impl Ssh {
         if !valid_host(&self.host) { return Err("INVALID_SSH_HOST"); }
         if self.port == 0 { return Err("INVALID_SSH_PORT"); }
         if self.key.as_deref().is_some_and(|k| !valid_key(k)) { return Err("INVALID_SSH_KEY"); }
+        if !valid_keepalive(self.keepalive_s) { return Err("INVALID_SSH_KEEPALIVE"); }
         Ok(())
     }
 
@@ -48,6 +61,8 @@ impl Ssh {
     pub fn args(&self) -> Vec<String> {
         let mut a = vec!["-p".to_owned(), self.port.to_string(), "-l".to_owned(), self.user.clone()];
         if let Some(k) = &self.key { a.extend(["-i".to_owned(), k.clone()]); }
+        // Número já validado: a opção vai inteira num argumento só, nunca texto do usuário.
+        if self.keepalive_s > 0 { a.extend(["-o".to_owned(), format!("ServerAliveInterval={}", self.keepalive_s)]); }
         a.push(self.host.clone());
         a
     }
@@ -87,7 +102,7 @@ pub fn quote(arg: &str) -> String {
 mod tests {
     use super::*;
     fn ssh(user: &str, host: &str, port: u16, key: Option<&str>) -> Ssh {
-        Ssh { user: user.into(), host: host.into(), port, key: key.map(Into::into) }
+        Ssh { user: user.into(), host: host.into(), port, key: key.map(Into::into), ..Default::default() }
     }
 
     #[test]
@@ -105,12 +120,16 @@ mod tests {
         assert_eq!(ssh("u;x", "h", 22, None).check(), Err("INVALID_SSH_USER"));
         assert_eq!(ssh("u", "h x", 22, None).check(), Err("INVALID_SSH_HOST"));
         assert_eq!(ssh("u", "h", 22, Some("id")).check(), Err("INVALID_SSH_KEY"));
+        for (s, ok) in [(0, true), (5, true), (3600, true), (4, false), (3601, false)] {
+            assert_eq!(Ssh { keepalive_s: s, ..ssh("u", "h", 22, None) }.check().is_ok(), ok, "{s}");
+        }
     }
 
     #[test]
     fn argumentos_em_lista() {
         assert_eq!(ssh("root", "10.0.0.5", 2222, None).args(), ["-p", "2222", "-l", "root", "10.0.0.5"]);
         assert_eq!(ssh("u", "h", 22, Some(r"C:\Minhas Chaves\id")).args(), ["-p", "22", "-l", "u", "-i", r"C:\Minhas Chaves\id", "h"]);
+        assert_eq!(Ssh { keepalive_s: 30, ..ssh("u", "h", 22, None) }.args(), ["-p", "22", "-l", "u", "-o", "ServerAliveInterval=30", "h"]);
         let line = ssh("u", "h", 22, Some(r"C:\Minhas Chaves\id")).command_line();
         assert!(line.ends_with(r#" -p 22 -l u -i "C:\Minhas Chaves\id" h"#), "{line}");
         assert!(line.to_ascii_lowercase().contains("ssh.exe") && !line.contains("cmd"), "{line}");
@@ -133,5 +152,9 @@ mod tests {
         assert_eq!(s, ssh("u", "h", 22, None));
         assert!(serde_json::from_str::<Ssh>(r#"{"user":"u","host":"h","port":22,"password":"x"}"#).is_err());
         assert!(serde_json::from_str::<Ssh>(r#"{"user":"u","host":"h","port":70000}"#).is_err());
+        // Campos novos: opcionais na leitura (ssh.json e sessions.json antigos) e fora do JSON quando desligados.
+        let s: Ssh = serde_json::from_str(r#"{"user":"u","host":"h","port":22,"keepalive_s":60,"auto_reconnect":true}"#).unwrap();
+        assert!(s.auto_reconnect && s.keepalive_s == 60);
+        assert_eq!(serde_json::to_string(&ssh("u", "h", 22, None)).unwrap(), r#"{"user":"u","host":"h","port":22}"#);
     }
 }

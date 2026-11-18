@@ -146,6 +146,8 @@ impl Screen {
         std::mem::take(&mut self.vt.callbacks_mut().ev)
     }
     pub fn resize(&mut self, cols: u16, rows: u16) { self.vt.set_size(nz(rows), nz(cols)); }
+    /// Texto visível da tela (sem cores), para achar pedidos de confirmação do agente.
+    pub fn text(&self) -> String { self.vt.screen().contents() }
     /// Bytes ANSI (≤ `SNAP_MAX`) que reproduzem a tela atual num emulador limpo do mesmo tamanho, com região de rolagem,
     /// DECOM e cursor salvo. Se a tela formatada não couber, vai só o texto das linhas de baixo que couberem.
     /// ponytail: na tela alternativa (vim) só ela é reproduzida; a tela principal fica vazia ao sair. Ver E7.
