@@ -179,12 +179,15 @@ test(`client over ${MAX_CLIENTS} gets busy; the others continue`, () => {
   s.send(s.mobile, 'close', { reason: 'done' });
   assert.equal(s.client().c.messages.at(-1).payload.status, 'ready', 'a freed slot admits a new client');
 });
-test('second host gets busy without disturbing attempts', () => {
+// Regression: host socket died without a close frame (sleep, network drop); the restarted host got busy forever.
+test('new host replaces a stale host; clients reconnect to the new one', () => {
   const s = setup(); s.negotiated();
   const second = s.socket(); s.room.add(second); s.send(second, 'hello', { role: 'host' });
-  assert.deepEqual(second.messages.map(m => [m.type, m.payload.code ?? m.payload.reason]), [['error', 'LIMIT_EXCEEDED'], ['close', 'busy']]);
-  assert.ok(second.closed); assert.ok(!s.host.closed); assert.ok(!s.mobile.closed);
-  s.room.left(second); assert.equal(s.room.peers.length, 2, 'late close of busy socket is ignored');
+  assert.ok(s.host.closed, 'stale host dropped'); assert.ok(s.mobile.closed, 'its attempts end with peer_left');
+  assert.ok(!second.closed); assert.equal(second.messages.at(-1).payload.status, 'waiting');
+  assert.equal(s.room.host?.socket, second);
+  s.room.left(s.host); assert.equal(s.room.host?.socket, second, 'late close of the stale socket is ignored');
+  assert.equal(s.client().c.messages.at(-1).payload.status, 'ready', 'a new client reaches the new host');
 });
 test('clients waiting for the host all get ready when it arrives', () => {
   const s = setup(); s.send(s.mobile, 'hello', { role: 'mobile' }); const b = s.client();

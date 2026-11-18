@@ -90,7 +90,10 @@ export class Room {
         const id = p.role === 'mobile' && ROOM_UUID.test(m.connection_id) ? m.connection_id : null;
         if (peer.role || m.connection_id !== id || (p.role !== 'mobile' && p.role !== 'host') || (p.role === 'mobile' && id === null) ||
           this.clients().some(c => c.id === id)) throw Error();
-        if (p.role === 'host' ? this.host : this.clients().length >= MAX_CLIENTS) { this.busy(peer, requestId); return; }
+        // New host replaces the old one: a host socket that died without a close frame would otherwise answer busy forever.
+        // ponytail: two live hosts on one room would take turns; add a host token check if that ever happens.
+        if (p.role === 'host' && this.host) this.drop(this.host, 'peer_left');
+        else if (p.role === 'mobile' && this.clients().length >= MAX_CLIENTS) { this.busy(peer, requestId); return; }
         peer.role = p.role;
         const host = this.host;
         if (p.role === 'mobile') {
