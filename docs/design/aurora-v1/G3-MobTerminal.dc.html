@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Glass Aurora — terminal mobile</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;800&amp;family=Fira+Code:wght@400&amp;display=swap">
+<style>body{margin:0}a{color:#e0ccff}a:hover{color:#fff}</style>
+</helmet>
+<div style="width:390px;height:844px;box-sizing:border-box;position:relative;overflow:hidden;background:#140b2e;color:#f4efff;font-family:Sora,sans-serif">
+  <div style="position:absolute;width:420px;height:420px;right:-160px;top:-140px;border-radius:210px;background:#8b5cf6;filter:blur(100px);opacity:0.90"></div>
+  <div style="position:absolute;width:320px;height:320px;left:-140px;bottom:120px;border-radius:160px;background:#ff4fd8;filter:blur(110px);opacity:0.60"></div>
+  <div style="position:absolute;inset:0;display:flex;flex-direction:column;padding:52px 14px 28px;gap:12px;box-sizing:border-box">
+    <div style="display:flex;align-items:center;gap:10px">
+      <button aria-label="Voltar" style="width:44px;height:44px;border-radius:14px;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.1);color:#fff;font-size:18px">‹</button>
+      <div style="flex:1"><div style="font-weight:800;font-size:16px">claude · live-cmd</div><div style="font-size:11px;color:#5ef2b0">● rodando · contexto 41%</div></div>
+      <button aria-label="Mais opções" style="width:44px;height:44px;border-radius:14px;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.1);color:#fff">⋯</button>
+    </div>
+    <div style="flex:1;border-radius:24px;background:rgba(10,4,30,0.6);border:1px solid rgba(206,170,255,0.5);box-shadow:0 0 28px rgba(168,85,247,0.35),inset 0 1px 0 rgba(255,255,255,0.3);padding:16px;font-family:'Fira Code';font-size:12px;line-height:1.75;white-space:pre;color:#efe8ff;overflow:hidden">
+<span style="color:#ff9cf0">λ</span> claude --resume
+<span style="color:#b9a5ff">Sessão retomada</span> · 38 msg
+
+<span style="color:#ffd35c">▸</span> Analisando menu.ts
+<span style="color:#5ef2b0">✓</span> bandeja: duplo clique
+  <span style="color:#5ef2b0">+ on('double-click')</span>
+  <span style="color:#ff8fae">- on('click')</span>
+
+<span style="color:#ff9cf0">?</span> Fazer commit?</div>
+    <!-- approval card -->
+    <div style="border-radius:22px;padding:14px;background:rgba(40,20,90,0.75);border:1px solid rgba(255,255,255,0.25);backdrop-filter:blur(30px);display:flex;flex-direction:column;gap:10px">
+      <div style="font-size:13px;font-weight:600">O agente pede permissão</div>
+      <div style="font-family:'Fira Code';font-size:12px;color:#d6c8ff">git commit -m "fix: bandeja"</div>
+      <div style="display:flex;gap:8px">
+        <button style="flex:1;height:44px;border-radius:14px;border:1px solid rgba(255,255,255,0.3);background:transparent;color:#fff;font-family:Sora">Negar</button>
+        <button style="flex:2;height:44px;border-radius:14px;border:none;background:linear-gradient(135deg,#8b5cf6,#ff4fd8);color:#fff;font-family:Sora;font-weight:600">Permitir</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px">
+      <span style="height:44px;border-radius:12px;background:rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;font-size:11px">Esc</span>
+      <span style="height:44px;border-radius:12px;background:rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;font-size:11px">Tab</span>
+      <span style="height:44px;border-radius:12px;background:#fff;color:#2a1460;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">Ctrl</span>
+      <span style="height:44px;border-radius:12px;background:rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center">↑</span>
+      <span style="height:44px;border-radius:12px;background:rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center">↓</span>
+      <span style="height:44px;border-radius:12px;background:rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center">⌫</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

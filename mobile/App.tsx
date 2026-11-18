@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Linking, SafeAreaView, StyleSheet, View } from 'react-native';
+import { Linking, SafeAreaView, StyleSheet, Vibration, View } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { getRandomBytes } from 'expo-crypto';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useFonts } from 'expo-font';
+import { StatusBar } from 'expo-status-bar';
 import { b64d, b64e, parseQr } from './src/auth.ts';
 import { Conn, type Pin } from './src/conn.ts';
 import { Pill } from './src/screens/common.tsx';
@@ -11,7 +13,11 @@ import { SessionsScreen } from './src/screens/SessionsScreen.tsx';
 import { AgentsScreen } from './src/screens/AgentsScreen.tsx';
 import { SshScreen } from './src/screens/SshScreen.tsx';
 import { HistoryScreen } from './src/screens/HistoryScreen.tsx';
+import { SettingsScreen } from './src/screens/SettingsScreen.tsx';
+import { DEFAULT_PREFS, loadPrefs, savePrefs, type Prefs } from './src/prefs.ts';
 import { C, errText } from './src/screens/theme.ts';
+import { Shell } from './src/screens/aurora.tsx';
+import { FONTS } from './src/screens/fonts.ts';
 
 // Mesmo servidor padrão do desktop (desktop/app/src/settings.rs DEFAULT_SERVER).
 const ALLOW = ['live-cmd-signaling.yago-riccomi-s.workers.dev'];
@@ -40,6 +46,13 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('sessoes');
   const [scan, setScan] = useState(false);
   const [, askCam] = useCameraPermissions();
+  // Sora/Fira Code: enquanto carregam, o texto usa a fonte do sistema (não bloqueia a abertura).
+  useFonts(FONTS);
+  const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+  const setPrefs = (p: Prefs) => { setPrefsState(p); savePrefs(p); };
+  useEffect(() => { loadPrefs().then(setPrefsState); }, []);
 
   useEffect(() => { SecureStore.getItemAsync('pin').then(p => p && setPin(JSON.parse(p))); }, []);
   // QR lido pela câmera do sistema abre o app via scheme remoteterm://
@@ -68,7 +81,7 @@ export default function App() {
         },
         output: b => setOut(o => (o + strip(dec.decode(b, { stream: true }))).slice(-MAX_OUT)),
         reset: () => setOut(''),
-        closed: code => { setStatus(code ? `fechado: ${code}` : 'desconectado'); conn.current = null; setLive(null); },
+        closed: code => { if (prefsRef.current.vibrate) Vibration.vibrate(60); setStatus(code ? `fechado: ${code}` : 'desconectado'); conn.current = null; setLive(null); },
       });
       conn.current = c;
       c.start();
@@ -91,17 +104,22 @@ export default function App() {
   );
 
   return (
-    <SafeAreaView style={st.root}>
+    <Shell bar={<TabBar tab={tab === 'historico' ? 'sessoes' : tab} onChange={setTab} />}>
+      <StatusBar style="light" />
       {tab === 'sessoes' && (
         <SessionsScreen status={status} on={!!conn.current} pin={pin} out={out} link={link} setLink={setLink}
           onPair={() => connect(true)} onScan={async () => { if ((await askCam()).granted) setScan(true); }}
-          onReconnect={() => connect(false)} onDisconnect={() => conn.current?.close()} send={send} />
+          onReconnect={() => connect(false)} onDisconnect={() => conn.current?.close()} send={send}
+          conn={live} onOpen={open} onHistory={() => setTab('historico')} termFont={prefs.termFont} />
       )}
       {tab === 'agentes' && <AgentsScreen conn={live} onOpen={open} />}
       {tab === 'ssh' && <SshScreen conn={live} onOpen={open} />}
       {tab === 'historico' && <HistoryScreen conn={live} onRan={() => setTab('sessoes')} />}
-      <TabBar tab={tab} onChange={setTab} />
-    </SafeAreaView>
+      {tab === 'ajustes' && (
+        <SettingsScreen conn={live} pin={pin} status={status} prefs={prefs} setPrefs={setPrefs} onOpenTerminals={() => setTab('sessoes')}
+          onUnpair={() => { conn.current?.close(); SecureStore.deleteItemAsync('pin'); setPin(null); }} />
+      )}
+    </Shell>
   );
 }
 

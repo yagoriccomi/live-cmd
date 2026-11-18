@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native';
-import { C, errText } from './theme.ts';
+import { C, F, errText } from './theme.ts';
 
 export function Glass({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
   return <View style={[s.glass, style]}>{children}</View>;
@@ -27,7 +27,7 @@ export function Notice({ text, color = C.muted }: { text: string; color?: string
 }
 
 export function Dot({ color, label }: { color: string; label: string }) {
-  return <View style={[s.dot, { backgroundColor: color }]} accessible accessibilityLabel={label} />;
+  return <View style={[s.dot, { backgroundColor: color, boxShadow: `0 0 8px ${color}` }]} accessible accessibilityLabel={label} />;
 }
 
 /** Botão pílula do tema; `primary` usa o acento. */
@@ -83,16 +83,16 @@ export const s = StyleSheet.create({
   subtitle: { color: C.muted, fontSize: 13, marginTop: 2 },
   reload: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: C.glass, borderColor: C.border, borderWidth: 1 },
   reloadText: { color: C.text, fontSize: 20 },
-  notice: { textAlign: 'center', marginVertical: 24, fontSize: 14 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
+  notice: { textAlign: 'center', marginVertical: 24, fontSize: 13, fontFamily: F.regular },
+  dot: { width: 8, height: 8, borderRadius: 4 },
   pill: { minHeight: 40, paddingHorizontal: 16, borderRadius: 20, justifyContent: 'center', alignItems: 'center', backgroundColor: C.glass, borderColor: C.border, borderWidth: 1 },
   pillPrimary: { backgroundColor: C.accent, borderColor: C.accent2 },
   pillText: { color: C.text, fontWeight: '600' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   name: { color: C.text, fontSize: 16, fontWeight: '600' },
-  meta: { color: C.muted, fontSize: 12 },
+  meta: { color: C.muted, fontSize: 12, fontFamily: F.regular },
   mono: { fontFamily: 'monospace', color: '#e6dcff', fontSize: 13 },
-  input: { borderWidth: 1, borderColor: C.border, borderRadius: 14, backgroundColor: C.glass, color: C.text, paddingHorizontal: 12, minHeight: 44, marginTop: 4 },
+  input: { borderWidth: 1, borderColor: C.border, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', color: C.text, fontFamily: F.regular, fontSize: 13, paddingHorizontal: 12, minHeight: 44, marginTop: 4 },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
   group: { color: C.accent2, fontSize: 13, fontWeight: '700', marginTop: 6, marginBottom: 6, letterSpacing: 0.5 },
 });

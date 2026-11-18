@@ -1,12 +1,12 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { C } from './theme.ts';
+import { C, F } from './theme.ts';
 
-export type Tab = 'sessoes' | 'agentes' | 'ssh' | 'historico';
+export type Tab = 'sessoes' | 'agentes' | 'ssh' | 'ajustes' | 'historico';
 export const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'sessoes', label: 'Sessões', icon: '▣' },
   { id: 'agentes', label: 'Agentes', icon: '✦' },
   { id: 'ssh', label: 'SSH', icon: '⇄' },
-  { id: 'historico', label: 'Histórico', icon: '↺' },
+  { id: 'ajustes', label: 'Ajustes', icon: '⚙' },
 ];
 
 /** Barra de abas inferior flutuante (vidro), item ativo em branco. */
@@ -18,7 +18,6 @@ export function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void
         return (
           <Pressable key={t.id} onPress={() => onChange(t.id)} style={[st.item, on && st.active]}
             accessibilityRole="tab" accessibilityLabel={t.label} accessibilityState={{ selected: on }}>
-            <Text style={[st.icon, on && st.activeText]} importantForAccessibility="no">{t.icon}</Text>
             <Text style={[st.label, on && st.activeText]} numberOfLines={1}>{t.label}</Text>
           </Pressable>
         );
@@ -28,14 +27,14 @@ export function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void
 }
 
 const st = StyleSheet.create({
+  // Mockup V1: barra de vidro de 62 px (+6 de padding e 1 de borda), 20 px das laterais e 26 px do fundo; item ativo branco de 50 px.
   bar: {
-    position: 'absolute', left: 16, right: 16, bottom: 16, flexDirection: 'row', padding: 6, gap: 4, borderRadius: 30,
-    backgroundColor: 'rgba(40,20,80,0.82)', borderColor: C.border, borderWidth: 1,
-    shadowColor: C.accent, shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 12,
+    marginHorizontal: 20, marginBottom: 26, height: 76, flexDirection: 'row', alignItems: 'center', padding: 6, gap: 4, borderRadius: 24,
+    backgroundColor: C.glass, borderColor: C.border, borderWidth: 1,
+    boxShadow: '0 0 28px rgba(168,85,247,0.35), inset 0 1px 0 rgba(255,255,255,0.22)',
   },
-  item: { flex: 1, minHeight: 52, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  item: { flex: 1, height: 50, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   active: { backgroundColor: C.activeBg },
-  icon: { color: C.muted, fontSize: 18 },
-  label: { color: C.muted, fontSize: 11, fontWeight: '600', marginTop: 2 },
-  activeText: { color: C.activeText },
+  label: { color: C.muted, fontFamily: F.regular, fontSize: 12, includeFontPadding: false },
+  activeText: { color: C.activeText, fontFamily: F.xbold },
 });

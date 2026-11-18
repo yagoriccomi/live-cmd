@@ -1,9 +1,10 @@
 import { useCallback, useState } from 'react';
-import { ScrollView, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Conn } from '../conn.ts';
-import { HISTORY_KINDS, groupByDay, historyClear, historyQuery, historyRun, type HistoryEntry } from '../extras.ts';
-import { Dot, Glass, Header, Notice, OFFLINE, OLD_HOST, Pill, confirm, s, useRemote } from './common.tsx';
-import { C, TAB_SPACE, errText } from './theme.ts';
+import { HISTORY_KINDS, groupByDay, historyClear, historyQuery, historyRun, summarizeSessions, type HistoryEntry } from '../extras.ts';
+import { Dot, Notice, OFFLINE, OLD_HOST, confirm, useRemote } from './common.tsx';
+import { Chip, GroupLabel, Hero, HeroBtn, IconBtn, ListPanel, Panel, Row, Section, TopBar, screen, tl as t } from './aurora.tsx';
+import { C, F, TAB_SPACE, errText } from './theme.ts';
 
 function exit(code: number | null): { color: string; text: string } {
   if (code === null) return { color: C.muted, text: 'sem código de saída' };
@@ -39,55 +40,90 @@ export function HistoryScreen({ conn, onRan }: { conn: Conn | null; onRan: () =>
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 40, paddingBottom: TAB_SPACE }} keyboardShouldPersistTaps="handled">
-      <Header title="Histórico" subtitle="Comandos gravados no PC" onReload={ok ? reload : undefined} busy={busy} />
-      {!conn && <Notice text={OFFLINE} />}
-      {conn && !ok && <Notice text={OLD_HOST} color={C.warn} />}
-      {ok && (
+    <View style={[screen, { flex: 1, paddingBottom: TAB_SPACE }]}>
+      <TopBar title="Histórico" glyph="↻" label="Atualizar Histórico" onPress={ok ? reload : undefined} busy={busy} />
+      <Hero icon="⌕" badge={ok ? { text: 'BUSCA', color: '#fff' } : null}
+        sub={!conn ? 'sem conexão com o PC' : !ok ? 'atualize o live-cmd no PC'
+          : data?.length ? `${data.length} comando${data.length > 1 ? 's' : ''}${data.length >= LIMIT ? ` (os ${LIMIT} mais recentes)` : ''}` : busy ? 'carregando…' : 'nenhum comando'}
+        subLive
+        top={<TextInput value={query} onChangeText={setQuery} onSubmitEditing={() => setApplied(query.trim())} returnKeyType="search" editable={ok}
+          placeholder="Buscar comandos" placeholderTextColor="rgba(244,239,255,0.75)" autoCapitalize="none" autoCorrect={false}
+          accessibilityLabel="Buscar no histórico de comandos" style={st.query} />}>
+        {ok && <HeroBtn title="Filtrar" primary onPress={() => setApplied(query.trim())} label="Buscar no histórico" />}
+        {ok && <HeroBtn title="Limpar histórico" disabled={!data?.length && !filtered} onPress={clear} />}
+      </Hero>
+      {ok && !!data?.length && (
         <>
-          <TextInput value={query} onChangeText={setQuery} onSubmitEditing={() => setApplied(query.trim())} returnKeyType="search"
-            placeholder="Buscar comandos" placeholderTextColor={C.muted} autoCapitalize="none" autoCorrect={false}
-            accessibilityLabel="Buscar no histórico de comandos" style={[s.input, { marginBottom: 10 }]} />
-          <View style={s.wrap}>
-            <Pill title="Últimos 7 dias" primary={week} onPress={() => setWeek(!week)} label={`Últimos 7 dias${week ? ', ligado' : ''}`} />
-            <Pill title="Só erros" primary={errors} onPress={() => setErrors(!errors)} label={`Só erros${errors ? ', ligado' : ''}`} />
-          </View>
-          <View style={s.wrap} accessibilityLabel="Tipo de sessão">
-            <Pill title="Todas" primary={!kind} onPress={() => setKind(null)} label="Todas as sessões" />
-            {Object.entries(HISTORY_KINDS).map(([k, t]) => <Pill key={k} title={t} primary={kind === k} onPress={() => setKind(kind === k ? null : k)} label={`Só ${t}`} />)}
-          </View>
-          <View style={[s.row, { justifyContent: 'space-between', marginBottom: 6 }]}>
-            <Text style={s.meta} accessibilityLiveRegion="polite">
-              {data?.length ? `${data.length} comando${data.length > 1 ? 's' : ''}${data.length >= LIMIT ? ` (os ${LIMIT} mais recentes)` : ''}` : ''}
-            </Text>
-            <Pill title="Limpar histórico" disabled={!data?.length && !filtered} onPress={clear} />
-          </View>
+          <Section text="Sessões" />
+          <ListPanel style={{ maxHeight: 132 }}>
+            <ScrollView nestedScrollEnabled contentContainerStyle={{ gap: 4 }}>
+              {summarizeSessions(data).map(x => {
+                const when = `${groupByDay([{ ...data[0], atMs: x.lastMs }])[0].day.toLowerCase()} ${new Date(Number(x.lastMs)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+                const on = kind === x.kind;
+                return (
+                  <Row key={x.kind + x.label} icon={x.kind === 'ssh' ? '⇄' : '›_'} title={x.label} sub={when} selected={on}
+                    status={{ color: C.ok, text: String(x.count) }} onPress={() => setKind(on ? null : x.kind)}
+                    label={`${x.label}: ${x.count} comando${x.count > 1 ? 's' : ''}, último ${when}. ${on ? 'Mostrar todas' : `Só ${HISTORY_KINDS[x.kind] ?? x.kind}`}`} />
+                );
+              })}
+            </ScrollView>
+          </ListPanel>
         </>
       )}
-      {!!err && <Notice text={err} color={C.err} />}
-      {!!msg && <Notice text={msg} color={C.err} />}
-      {ok && data?.length === 0 && <Notice text={filtered ? 'Nenhum comando encontrado com esses filtros.' : 'Nenhum comando gravado no PC.'} />}
-      {ok && data && groupByDay(data).map(g => (
-        <View key={g.day}>
-          <Text style={s.group} accessibilityRole="header">{g.day}</Text>
-          {g.entries.map(e => {
-            const x = exit(e.exitCode);
-            const time = new Date(Number(e.atMs)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-            return (
-              <Glass key={e.entryId}>
-                <View style={s.row}>
-                  <Dot color={x.color} label={x.text} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.mono} numberOfLines={2} selectable>{e.command}</Text>
-                    <Text style={s.meta} numberOfLines={2}>{[time, e.pc, e.label, HISTORY_KINDS[e.kind] ?? e.kind, e.cwd, x.text].filter(Boolean).join(' · ')}</Text>
+      {ok && (
+        <>
+          <Section text="Filtros" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 6 }} accessibilityLabel="Tipo de sessão">
+            <Chip title="Últimos 7 dias" on={week} onPress={() => setWeek(!week)} label={`Últimos 7 dias${week ? ', ligado' : ''}`} />
+            <Chip title="Só erros" on={errors} onPress={() => setErrors(!errors)} label={`Só erros${errors ? ', ligado' : ''}`} />
+            <Chip title="Todas" on={!kind} onPress={() => setKind(null)} label="Todas as sessões" />
+            {Object.entries(HISTORY_KINDS).map(([k, t]) => <Chip key={k} title={t} on={kind === k} onPress={() => setKind(kind === k ? null : k)} label={`Só ${t}`} />)}
+          </ScrollView>
+        </>
+      )}
+      <Panel title="Linha do tempo" style={{ flex: 1 }}>
+        <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
+          {!conn && <Notice text={OFFLINE} />}
+          {conn && !ok && <Notice text={OLD_HOST} color={C.warn} />}
+          {!!err && <Notice text={err} color={C.err} />}
+          {!!msg && <Notice text={msg} color={C.err} />}
+          {ok && data?.length === 0 && <Notice text={filtered ? 'Nenhum comando encontrado com esses filtros.' : 'Nenhum comando gravado no PC.'} />}
+          {ok && data && groupByDay(data).map(g => (
+            <View key={g.day}>
+              <GroupLabel text={g.day} />
+              {g.entries.map(e => {
+                const x = exit(e.exitCode);
+                const time = new Date(Number(e.atMs)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                const meta = [time, e.pc, e.label, HISTORY_KINDS[e.kind] ?? e.kind, e.cwd, x.text].filter(Boolean).join(' · ');
+                return (
+                  <View key={e.entryId} style={t.line} accessible={false}>
+                    <View style={t.main} accessible accessibilityLabel={`${e.command}. ${meta}`}>
+                      <Text style={t.time}>{time}</Text>
+                      <Dot color={x.color} label={x.text} />
+                      <Text style={t.cmd} numberOfLines={1} selectable>{mark(e.command, applied)}</Text>
+                      <Text style={t.kind} numberOfLines={1}>{e.exitCode ? `saída ${e.exitCode}` : e.label || (HISTORY_KINDS[e.kind] ?? e.kind)}</Text>
+                    </View>
+                    <IconBtn glyph="↻" label={`Reexecutar ${e.command}`} onPress={() => run(e)} />
                   </View>
-                  <Pill title="Reexecutar" onPress={() => run(e)} label={`Reexecutar ${e.command}`} />
-                </View>
-              </Glass>
-            );
-          })}
-        </View>
-      ))}
-    </ScrollView>
+                );
+              })}
+            </View>
+          ))}
+        </ScrollView>
+      </Panel>
+    </View>
   );
 }
+
+/** Destaca o termo buscado no comando (fundo rosa, como no mockup). */
+function mark(cmd: string, q: string) {
+  const i = q ? cmd.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (i < 0) return cmd;
+  return <>{cmd.slice(0, i)}<Text style={st.hit}>{cmd.slice(i, i + q.length)}</Text>{cmd.slice(i + q.length)}</>;
+}
+
+const st = StyleSheet.create({
+  // 44 px de alvo de toque sem empurrar o cartão (margem negativa; o Android aceita toque fora do pai com overflow visível).
+  query: { color: C.text, fontFamily: F.xbold, fontSize: 16, padding: 0, minHeight: 44, marginVertical: -10, includeFontPadding: false },
+  hit: { backgroundColor: 'rgba(255,79,216,0.45)', borderRadius: 3 },
+});

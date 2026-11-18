@@ -3,13 +3,14 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import type { Conn } from '../conn.ts';
 import { AGENTS, agentCreate, agentDefaultGet, agentDefaultSet, agentList, agentRemove, agentResume, baseName, groupByFolder, validArgs, type Agent, type AgentDefault, type AgentState } from '../extras.ts';
 import { Browser } from './Browser.tsx';
-import { Dot, Field, Glass, Header, Notice, OFFLINE, OLD_HOST, Pill, confirm, s, useRemote } from './common.tsx';
+import { Dot, Field, Notice, OFFLINE, OLD_HOST, confirm, s, useRemote } from './common.tsx';
+import { Chip, GroupLabel, Hero, HeroBtn, IconBtn, ListPanel, Panel, Row, Section, ToggleRow, TopBar, screen, tl as t } from './aurora.tsx';
 import { C, TAB_SPACE, ago, errText } from './theme.ts';
 
 const STATE: Record<AgentState, { color: string; text: string }> = {
   running: { color: C.ok, text: 'em execução' },
   waiting: { color: C.warn, text: 'esperando confirmação' },
-  saved: { color: C.warn, text: 'gravado' },
+  saved: { color: C.ok, text: 'gravado' },
   exited: { color: C.err, text: 'encerrado' },
 };
 
@@ -68,70 +69,83 @@ export function AgentsScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (ses
     finally { setActing(''); }
   }
 
+  const running = (data ?? []).filter(a => a.state === 'running');
+  const others = (data ?? []).filter(a => a.state !== 'running');
+  const hhmm = (ms: bigint) => new Date(Number(ms)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const sub = !conn ? 'sem conexão com o PC' : !ok ? 'atualize o live-cmd no PC' : data ? `${running.length} rodando · ${data.length} no PC` : 'carregando…';
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 40, paddingBottom: TAB_SPACE }} keyboardShouldPersistTaps="handled">
-      <Header title="Agentes" subtitle="Sessões de IA no PC, por pasta" onReload={ok ? reload : undefined} busy={busy} />
+    <ScrollView contentContainerStyle={[screen, { flexGrow: 1, paddingBottom: TAB_SPACE }]} keyboardShouldPersistTaps="handled">
+      <TopBar title="Agentes" label="Nova sessão de agente" disabled={!ok || !!form}
+        onPress={open} />
+      <Hero icon="✦" title="Sessões de IA no PC" sub={sub} subLive badge={running.length ? { text: 'AO VIVO', color: C.ok } : null}>
+        {ok && <HeroBtn title={busy ? 'Atualizando…' : 'Atualizar'} primary disabled={busy} onPress={reload} label="Atualizar Agentes" />}
+      </Hero>
       {!conn && <Notice text={OFFLINE} />}
       {conn && !ok && <Notice text={OLD_HOST} color={C.warn} />}
-      {ok && !form && <View style={[s.wrap, { justifyContent: 'flex-end' }]}><Pill title="Nova sessão de agente" primary onPress={open} /></View>}
       {ok && form && (
-        <Glass>
-          <Text style={s.name} accessibilityRole="header">Nova sessão de agente</Text>
-          <Text style={[s.meta, { marginTop: 8 }]}>Agente</Text>
-          <View style={[s.wrap, { marginTop: 4 }]} accessibilityRole="radiogroup">
-            {AGENTS.map(a => <Pill key={a} title={a} primary={form.agent === a} onPress={() => setForm({ ...form, agent: a })} label={`Agente ${a}`} />)}
+        <Panel title="Nova sessão de agente">
+          <Text style={s.meta}>Agente</Text>
+          <View style={s.wrap} accessibilityRole="radiogroup">
+            {AGENTS.map(a => <Chip key={a} title={a} on={form.agent === a} onPress={() => setForm({ ...form, agent: a })} label={`Agente ${a}`} />)}
           </View>
           <Field label="Pasta no PC (opcional)" value={form.cwd} onChangeText={cwd => setForm({ ...form, cwd })} placeholder="C:\projetos\app" />
           {canBrowse && (
             <View style={[s.wrap, { marginTop: -4 }]}>
-              <Pill title={form.browse ? 'Fechar pastas' : 'Procurar pasta no PC'} onPress={() => setForm({ ...form, browse: !form.browse })} />
+              <Chip title={form.browse ? 'Fechar pastas' : 'Procurar pasta no PC'} onPress={() => setForm({ ...form, browse: !form.browse })} />
             </View>
           )}
           {canBrowse && form.browse && <Browser conn={conn!} mode="folders" start={form.cwd.trim()} onPick={cwd => setForm(f => f && { ...f, cwd })} />}
           <Field label="Comandos extras (opcional)" value={form.args} onChangeText={args => setForm({ ...form, args })} placeholder="--model opus" />
-          {canDefault && (
-            <Pressable onPress={() => setForm({ ...form, save: !form.save })} accessibilityRole="checkbox" accessibilityState={{ checked: form.save }}
-              accessibilityLabel="Salvar como padrão" style={[s.row, { minHeight: 44, marginBottom: 6 }]}>
-              <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: C.accent2, backgroundColor: form.save ? C.accent : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-                {form.save && <Text style={{ color: '#fff', fontWeight: '700' }}>✓</Text>}
-              </View>
-              <Text style={{ color: C.text }}>Salvar como padrão</Text>
-            </Pressable>
-          )}
-          <View style={[s.wrap, { justifyContent: 'flex-end' }]}>
-            <Pill title="Cancelar" onPress={() => { setForm(null); setMsg(''); }} />
-            <Pill title={acting === 'new' ? 'Iniciando…' : 'Iniciar'} primary disabled={!!acting} onPress={create} />
+          {canDefault && <ToggleRow title="Salvar como padrão" value={form.save} onChange={save => setForm({ ...form, save })} last />}
+          <View style={[s.wrap, { justifyContent: 'flex-end', marginBottom: 0 }]}>
+            <HeroBtn title="Cancelar" onPress={() => { setForm(null); setMsg(''); }} />
+            <HeroBtn title={acting === 'new' ? 'Iniciando…' : 'Iniciar'} primary disabled={!!acting} onPress={create} />
           </View>
-        </Glass>
+        </Panel>
       )}
       {!!err && <Notice text={err} color={C.err} />}
       {!!msg && <Notice text={msg} color={C.err} />}
       {ok && data?.length === 0 && <Notice text="Nenhuma sessão de agente no PC." />}
-      {ok && data && groupByFolder(data).map(g => (
-        <View key={g.folder}>
-          <Text style={s.group} accessibilityRole="header">{g.folder === 'Sem pasta' ? g.folder : baseName(g.folder)}</Text>
-          {g.agents.map(a => {
-            const st = STATE[a.state];
-            const name = a.label || a.agent;
-            const go = a.state === 'running' ? 'Abrir' : 'Retomar';
-            return (
-              <Glass key={a.sessionId}>
-                <View style={s.row}>
-                  <Dot color={st.color} label={st.text} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.name} numberOfLines={1}>{name}</Text>
-                    <Text style={s.meta} numberOfLines={1}>{[a.agent + (a.args ? ` ${a.args}` : ''), st.text, ago(a.lastActivityMs)].join(' · ')}</Text>
+      {ok && running.length > 0 && (
+        <>
+          <Section text="Rodando" />
+          <ListPanel>
+            {running.map(a => {
+              const name = a.label || a.agent;
+              return (
+                <Row key={a.sessionId} icon="✦" title={name} sub={a.cwd ?? [a.agent, a.args].filter(Boolean).join(' ')} status={{ color: STATE.running.color, text: 'rodando' }}
+                  onPress={() => resume(a)} disabled={!!acting} label={`Abrir ${name}, ${STATE.running.text}, ${ago(a.lastActivityMs)}`}
+                  right={<IconBtn glyph="✕" label={`Remover ${name}`} disabled={!!acting} onPress={() => remove(a)} />} />
+              );
+            })}
+          </ListPanel>
+        </>
+      )}
+      {ok && others.length > 0 && (
+        <Panel title="Retomar" style={{ flexGrow: 1 }}>
+          {groupByFolder(others).map(g => (
+            <View key={g.folder}>
+              <GroupLabel text={g.folder === 'Sem pasta' ? g.folder : baseName(g.folder)} />
+              {g.agents.map(a => {
+                const st = STATE[a.state];
+                const name = a.label || a.agent;
+                return (
+                  <View key={a.sessionId} style={t.line}>
+                    <Pressable onPress={() => resume(a)} disabled={!!acting} style={({ pressed }) => [t.main, pressed && { opacity: 0.7 }]}
+                      accessibilityRole="button" accessibilityLabel={`Retomar ${name}, ${st.text}, ${ago(a.lastActivityMs)}`}>
+                      <Text style={t.time}>{hhmm(a.lastActivityMs)}</Text>
+                      <Dot color={st.color} label={st.text} />
+                      <Text style={t.cmd} numberOfLines={1}>{name}</Text>
+                      <Text style={t.kind} numberOfLines={1}>{a.agent}</Text>
+                    </Pressable>
+                    <IconBtn glyph="✕" label={`Remover ${name}`} disabled={!!acting} onPress={() => remove(a)} />
                   </View>
-                </View>
-                <View style={[s.wrap, { justifyContent: 'flex-end', marginTop: 8, marginBottom: 0 }]}>
-                  <Pill title="Remover" disabled={!!acting} onPress={() => remove(a)} label={`Remover ${name}`} />
-                  <Pill title={go} primary disabled={!!acting} onPress={() => resume(a)} label={`${go} ${name}`} />
-                </View>
-              </Glass>
-            );
-          })}
-        </View>
-      ))}
+                );
+              })}
+            </View>
+          ))}
+        </Panel>
+      )}
     </ScrollView>
   );
 }

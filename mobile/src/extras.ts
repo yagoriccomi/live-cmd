@@ -68,6 +68,22 @@ export const sshKeyList = (path?: string) => ({ type: 'ssh_key_list', api: API, 
 export const agentDefaultGet = () => ({ type: 'agent_default_get', api: API });
 export const agentDefaultSet = (agent: string, cwd: string | null, args: string) =>
   ({ type: 'agent_default_set', api: API, agent, ...(cwd && { cwd }), ...(args && { args }) });
+/** Sessões abertas no host (pedido base do pty-channel, sem `api`): alimenta a lista "Abas". */
+export const sessionList = () => ({ type: 'session_list' });
+
+const MONTHS = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
+
+/** Resumo "Sessões" do Histórico, calculado no cliente: comandos por sessão, a mais recente primeiro. */
+export function summarizeSessions(entries: HistoryEntry[]): { label: string; kind: string; count: number; lastMs: bigint }[] {
+  const m = new Map<string, { label: string; kind: string; count: number; lastMs: bigint }>();
+  for (const e of entries) {
+    const k = `${e.kind}\u0000${e.label}`;
+    const cur = m.get(k);
+    if (cur) { cur.count++; if (e.atMs > cur.lastMs) cur.lastMs = e.atMs; }
+    else m.set(k, { label: e.label || e.kind, kind: e.kind, count: 1, lastMs: e.atMs });
+  }
+  return [...m.values()].sort((a, b) => (b.lastMs > a.lastMs ? 1 : b.lastMs < a.lastMs ? -1 : 0));
+}
 
 // ---- respostas (host → app) ----
 /** 'waiting': rodando e parado esperando confirmação (só com `agentList(true)`). */
@@ -234,7 +250,9 @@ export function groupByDay(entries: HistoryEntry[], now = new Date()): { day: st
     const d = new Date(Number(ms));
     if (key(d) === key(now)) return 'Hoje';
     if (key(d) === key(y)) return 'Ontem';
-    return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+    // Mockup V1: "15 NOV"; o ano só aparece quando não é o atual.
+    const dm = `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]}`;
+    return d.getFullYear() === now.getFullYear() ? dm : `${dm} ${d.getFullYear()}`;
   };
   const out: { day: string; entries: HistoryEntry[] }[] = [];
   for (const e of entries) {
