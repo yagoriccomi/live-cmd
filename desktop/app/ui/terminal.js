@@ -794,7 +794,7 @@ function paste() {
   invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir }).then((name) => {
     if (!name) return;
     send(dir ? `"${dir.replace(/[\\/]+$/, "")}\\${name}"` : name);
-    banner(`Print enviado: ${name} em ${dir ?? "pasta padrão do outro PC"}.`);
+    banner(`Print enviado: ${name} em ${dir ?? "pasta do usuário no outro PC"}.`);
   }).catch((err) => banner(msg(err), "err"));
   $("screen").focus();
 }

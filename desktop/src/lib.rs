@@ -361,7 +361,10 @@ fn file_step(conn: ConnId, pk: &Pk, id: &str, host: &Host, m: FIn, out: &mpsc::U
             // C3 §7 vale aqui: todo pedido confere a trust store.
             if matches!(c, C::Request { .. }) { host.check_trusted(pk)?; }
             let sid = match &c { C::Request { req: F::FsList { session_id, .. } | F::UploadInit { session_id, .. } | F::BatchUploadInit { session_id, .. }, .. } => *session_id, _ => None };
-            Some((c, sid.and_then(|s| hub().cwds.get(&s).cloned())))
+            let mut cwd = sid.and_then(|s| hub().cwds.get(&s).cloned());
+            // Upload sem `target_dir` nem cwd conhecido (cmd não anuncia OSC 7): pasta do usuário em vez de NOT_FOUND.
+            if cwd.is_none() && matches!(c, C::Request { req: F::UploadInit { batch: None, .. }, .. }) { cwd = std::env::var_os("USERPROFILE").map(PathBuf::from); }
+            Some((c, cwd))
         }
         _ => None,
     };

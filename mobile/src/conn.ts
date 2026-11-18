@@ -56,6 +56,7 @@ export class Conn {
         if (m.connection_id !== this.id) throw new Error('signal');
         if (m.type === 'answer') await this.pc!.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: m.payload.sdp }));
         else if (m.type === 'ice') await this.pc!.addIceCandidate(new RTCIceCandidate(m.payload));
+        else if (m.type === 'close') this.close(m.payload?.reason === 'timeout' ? 'EXPIRED' : 'NET');
         else throw new Error('signal');
       } catch { this.close('NET'); }
     };
@@ -68,7 +69,13 @@ export class Conn {
     dc.binaryType = 'arraybuffer';
     (pc as any).addEventListener('icecandidate', (e: any) => e.candidate && send('ice', e.candidate.toJSON()));
     (pc as any).addEventListener('connectionstatechange', () => { if (pc.connectionState === 'failed') this.close('NET'); });
-    dc.addEventListener('open', () => this.auth().catch(e => this.close(e?.code ?? 'NET')));
+    // Canal aberto: a sinalização acabou. O Worker fecha o WS (`close done`) e isso não pode derrubar a conexão.
+    dc.addEventListener('open', () => {
+      const ws = this.ws!;
+      ws.onclose = ws.onerror = ws.onmessage = null;
+      ws.close();
+      this.auth().catch(e => this.close(e?.code ?? 'NET'));
+    });
     dc.addEventListener('close', () => this.close('NET'));
     const o = await pc.createOffer({});
     await pc.setLocalDescription(o);

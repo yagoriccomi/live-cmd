@@ -86,6 +86,8 @@ impl ConPty {
 /// Setas/Home/End viram win32-input-mode (o ConPTY sempre liga `?9001h`): programas que leem teclas cruas
 /// (ssh.exe) recebem VK de verdade. Em VT puro chegam ESC, `[`, `A` soltos e o lado remoto vê `[A`.
 fn win32_key(d: &[u8]) -> Option<Vec<u8>> {
+    // ESC sozinho: o ConPTY espera o resto de uma sequência e o programa nunca vê a tecla.
+    if d == b"\x1b" { return Some(b"\x1b[27;1;27;1;0;1_\x1b[27;1;27;0;0;1_".to_vec()); }
     let k = match d { [0x1b, b'[' | b'O', k] => *k, _ => return None };
     let (vk, sc) = match k { b'A' => (38, 72), b'B' => (40, 80), b'C' => (39, 77), b'D' => (37, 75), b'H' => (36, 71), b'F' => (35, 79), _ => return None };
     // Cs 256 = ENHANCED_KEY (setas fora do teclado numérico).
@@ -93,6 +95,7 @@ fn win32_key(d: &[u8]) -> Option<Vec<u8>> {
 }
 #[test]
 fn win32_key_setas() {
+    assert_eq!(win32_key(b"\x1b").unwrap(), b"\x1b[27;1;27;1;0;1_\x1b[27;1;27;0;0;1_");
     assert_eq!(win32_key(b"[A").unwrap(), b"[38;72;0;1;256;1_[38;72;0;0;256;1_");
     assert_eq!(win32_key(b"OB").unwrap(), b"[40;80;0;1;256;1_[40;80;0;0;256;1_");
     assert!(win32_key(b"[1;5A").is_none() && win32_key(b"a").is_none());
