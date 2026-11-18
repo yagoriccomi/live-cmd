@@ -5,7 +5,7 @@ import { AuthError } from './auth.ts';
 import { parseHostControl } from './pty.ts';
 import {
   capsProbe, agentList, agentResume, agentCreate, agentRemove, sshList, sshConnect, sshSave, sshRemove, sshProbe, sshReconnect,
-  historyQuery, historyRun, historyClear, parseExtraReply, isExtraReply, groupByFolder, groupByDay, baseName, sshFormError, validArgs,
+  historyQuery, historyRun, historyClear, settingsGet, settingsSet, parseExtraReply, isExtraReply, groupByFolder, groupByDay, baseName, sshFormError, validArgs,
   type Agent, type HistoryEntry,
 } from './extras.ts';
 
@@ -62,6 +62,36 @@ test('respostas: valores', () => {
   assert.ok(sv.t === 'ssh_save_ok' && sv.serverId.length > 0);
   const r = t('ssh_connect_ok');
   assert.ok(r.t === 'ssh_connect_ok' && r.sessionId === SID);
+});
+
+test('funções dos mockups: pedidos com ext e aparência', () => {
+  assert.deepEqual(agentList(true), body('agent_list_ext'));
+  assert.deepEqual(sshList(true), body('ssh_list_ext'));
+  assert.deepEqual(historyQuery({ ext: true }), body('history_query_ext'));
+  assert.deepEqual(settingsGet(), body('settings_get'));
+  assert.deepEqual(settingsSet({ theme: 'cosmo', fontSize: 14, glow: false }), body('settings_set'));
+  assert.deepEqual(settingsSet({ theme: 'light', fontFamily: 'Consolas', fontSize: 10, opacity: 60, blur: 0, glow: true, animations: false }), body('settings_set_tudo'));
+  for (const n of ['agent_list_ext', 'ssh_list_ext', 'history_query_ext', 'settings_get', 'settings_set', 'settings_set_tudo'])
+    assert.equal(fx.requests.find((c: any) => c.name === n).result, 'ok', n);
+  const s = sshSave({ label: 'x', user: 'u', host: 'h', port: 22, key: null, keepaliveS: 30, autoReconnect: true });
+  assert.deepEqual([s.keepalive_s, s.auto_reconnect], [30, true]);
+  assert.ok(!('keepalive_s' in sshSave({ label: 'x', user: 'u', host: 'h', port: 22, key: null })), 'sem o cap, corpo antigo');
+});
+
+test('funções dos mockups: respostas', () => {
+  const t = (n: string) => parseExtraReply(fx.replies.find((c: any) => c.name === n).text, fx.connection_id);
+  const al = t('agent_list_ext');
+  assert.ok(al.t === 'agent_list_ok' && al.agents[0].state === 'waiting');
+  const sl = t('ssh_list_ext');
+  assert.ok(sl.t === 'ssh_list_ok' && sl.servers[0].keepaliveS === 30 && sl.servers[0].autoReconnect === true);
+  const hq = t('history_query_ext');
+  assert.ok(hq.t === 'history_query_ok');
+  assert.deepEqual(hq.sessions?.map(g => [g.label, g.day, g.count, g.lastMs]), [['PowerShell', '2023-11-14', 1, 1_700_000_000_000n], ['srv', '1969-12-31', 1, 7n]]);
+  const sg = t('settings_set_ok');
+  assert.ok(sg.t === 'settings_set_ok' && sg.settings.theme === 'cosmo' && sg.settings.fontFamily === 'Fira Code');
+  const w = t('agent_waiting');
+  assert.deepEqual(w, { t: 'agent_waiting', sessionId: SID, label: 'api', waiting: true });
+  assert.equal(isExtraReply(fx.replies.find((c: any) => c.name === 'agent_waiting').text), true);
 });
 
 test('isExtraReply separa respostas extras das C3', () => {
