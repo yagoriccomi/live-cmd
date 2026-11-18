@@ -461,7 +461,15 @@ const AI_SUG = {
 };
 // Agente de IA: pergunta agente, pasta e args; o host salva e retoma pelo id da sessão.
 async function newAi(conn) {
-  const d = JSON.parse(localStorage.getItem("ai-default") || "{}");
+  // "Salvar como padrão" fica no PC (`agent-default.json`), o mesmo que o celular lê e grava.
+  // Versão anterior guardava no localStorage: migra uma vez.
+  let d = await invoke("agent_default_get").catch(() => null);
+  const old = localStorage.getItem("ai-default");
+  if (!d && old) {
+    try { const o = JSON.parse(old); d = await invoke("agent_default_set", { agent: o.agent || "claude", cwd: o.cwd || null, args: o.args || "" }); } catch { d = null; }
+  }
+  if (old) localStorage.removeItem("ai-default");
+  d = d || {};
   $("ai-agent").value = d.agent || "claude"; $("ai-cwd").value = d.cwd || ""; $("ai-args").value = d.args || ""; $("ai-def").checked = false;
   const sug = () => $("ai-sug").replaceChildren(...(AI_SUG[$("ai-agent").value] || []).map((v) => { const o = el("option"); o.value = v; return o; }));
   $("ai-agent").onchange = sug; sug();
@@ -483,7 +491,7 @@ async function newAi(conn) {
   });
   if (!ok) return;
   const agent = $("ai-agent").value, cwd = $("ai-cwd").value.trim() || null, args = $("ai-args").value.trim();
-  if ($("ai-def").checked) localStorage.setItem("ai-default", JSON.stringify({ agent, cwd, args }));
+  if ($("ai-def").checked) await invoke("agent_default_set", { agent, cwd, args }).catch((e) => banner(msg(e), "err"));
   const p = conns[conn].profiles[0];
   if (!p) return banner(msg("NOT_FOUND"), "err");
   // Grupo = nome da pasta raiz.

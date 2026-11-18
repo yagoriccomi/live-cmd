@@ -18,7 +18,9 @@ use std::sync::{Arc, LazyLock, RwLock};
 type R<T> = Result<T, Error>;
 pub const API: u64 = 1;
 /// Telas que este host entende, respondidas em `caps_ok`: cada uma cobre todos os pedidos `api: 1` dela.
-pub const CAPS: [&str; 3] = ["agents", "ssh", "history"];
+/// `folders`: navegador de pastas do PC (`folder_list`); `ssh_keys`: seletor da chave em `%USERPROFILE%\.ssh`
+/// (`ssh_key_list`); `agent_default`: "Salvar como padrão" do agente (`agent_default_get`/`agent_default_set`).
+pub const CAPS: [&str; 6] = ["agents", "ssh", "history", "folders", "ssh_keys", "agent_default"];
 /// Sessão reservada da pergunta de capacidades (UUID v4 válido que o host nunca gera).
 pub const CAPS_PROBE: &str = "00000000-0000-4000-8000-000000000001";
 /// `session_attach` para [`CAPS_PROBE`]? (Antes de ir ao hub: nunca anexa nada.)
@@ -30,6 +32,22 @@ const MAX_BODY: usize = 60_000;
 const MAX_TEXT: usize = 512;
 /// Tipos de sessão do histórico (`hist.rs` no app).
 pub const HISTORY_KINDS: [&str; 5] = ["pwsh", "cmd", "wsl", "ssh", "outro"];
+/// Itens por listagem de pastas ou chaves (o mesmo teto do `dir_list` do desktop).
+pub const MAX_ENTRIES: usize = 500;
+/// Arquivo maior que isso não é chave privada.
+const MAX_KEY_FILE: u64 = 64 << 10;
+/// Arquivos do `.ssh` que não são chave privada (comparados em minúsculas).
+const NOT_KEYS: [&str; 6] = ["config", "known_hosts", "known_hosts.old", "authorized_keys", "authorized_keys2", "environment"];
+
+/// "Salvar como padrão" da nova sessão de agente: o mesmo registro nas duas telas (`agent-default.json` no app).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AgentDefault { pub agent: String, pub cwd: Option<String>, pub args: String }
+
+/// Entrada nova numa sessão deste host, venha de qual cliente vier (terminal desktop, outro PC, celular).
+/// `line`: linha do cursor na tela do host quando `data` tem Enter e a tela é a normal; `None` na tela alternativa.
+/// Sessões de agente de IA não chegam aqui (lá se digita prompt, não comando).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Input<'a> { pub session_id: [u8; 16], pub data: &'a str, pub line: Option<String>, pub label: String, pub cwd: Option<String>, pub ssh: bool }
 
 /// Filtros do histórico, os mesmos da tela desktop.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -55,12 +73,18 @@ pub enum Req {
     HistoryQuery(HistoryFilter),
     HistoryRun { entry_id: String, session_id: [u8; 16] },
     HistoryClear,
+    /// Subpastas de `path` (vazio: unidades), como o `dir_list` do terminal desktop.
+    FolderList(String),
+    /// Chaves e subpastas dentro de `%USERPROFILE%\.ssh` (vazio: a própria `.ssh`).
+    SshKeyList(String),
+    AgentDefaultGet,
+    AgentDefaultSet(AgentDefault),
     /// `api` numérico diferente de 1: o host responde `VERSION_UNSUPPORTED` com `request_id`.
     Unsupported,
 }
 
-const KNOWN: [&str; 13] = ["agent_list", "agent_resume", "agent_create", "agent_remove", "ssh_list", "ssh_connect", "ssh_save", "ssh_remove",
-    "ssh_probe", "ssh_reconnect", "history_query", "history_run", "history_clear"];
+const KNOWN: [&str; 17] = ["agent_list", "agent_resume", "agent_create", "agent_remove", "ssh_list", "ssh_connect", "ssh_save", "ssh_remove",
+    "ssh_probe", "ssh_reconnect", "history_query", "history_run", "history_clear", "folder_list", "ssh_key_list", "agent_default_get", "agent_default_set"];
 
 /// `None`: o tipo não é extra. `Some(Err)`: é extra, mas inválido.
 pub fn parse(ty: &str, o: &Map<String, Value>) -> Option<R<Req>> {
@@ -130,6 +154,19 @@ fn parse_known(ty: &str, o: &Map<String, Value>) -> R<Req> {
         }
         "history_run" => { fields(&["entry_id", "session_id"], &[])?; Req::HistoryRun { entry_id: id("entry_id")?, session_id: sid("session_id")? } }
         "history_clear" => { fields(&[], &[])?; Req::HistoryClear }
+        "folder_list" => { fields(&["path"], &[])?; Req::FolderList(text(s("path")?.trim(), 0, 1024)?) }
+        "ssh_key_list" => { fields(&[], &["path"])?; Req::SshKeyList(opt_s("path")?.map(|p| text(p.trim(), 0, 1024)).transpose()?.unwrap_or_default()) }
+        "agent_default_get" => { fields(&[], &[])?; Req::AgentDefaultGet }
+        "agent_default_set" => {
+            // Mesmas regras do `agent_create`: agente conhecido, args sem efeito de shell, pasta como texto curto.
+            fields(&["agent"], &["cwd", "args"])?;
+            let agent = s("agent")?;
+            if !crate::proto::AGENTS.contains(&agent) { return Err(InvalidMessage); }
+            let args = opt_s("args")?.unwrap_or("").trim().to_owned();
+            if !crate::proto::valid_args(&args) { return Err(InvalidMessage); }
+            let cwd = match o.get("cwd") { None | Some(Value::Null) => None, Some(_) => Some(text(s("cwd")?.trim(), 0, 1024)?).filter(|c| !c.is_empty()) };
+            Req::AgentDefaultSet(AgentDefault { agent: agent.to_owned(), cwd, args })
+        }
         _ => return Err(InvalidMessage),
     })
 }
@@ -175,6 +212,14 @@ pub trait Provider: Send + Sync {
     fn history(&self, _f: &HistoryFilter) -> Vec<HistoryEntry> { vec![] }
     fn history_command(&self, _entry_id: &str) -> Option<String> { None }
     fn history_clear(&self) -> Result<(), String> { Ok(()) }
+    /// Ponto comum do histórico: toda entrada nova (frame `01` aceito ou "Reexecutar") de sessão sem agente.
+    fn session_input(&self, _i: &Input) {}
+    /// `command_completed` (OSC 133;D) da sessão: código de saída do último comando gravado.
+    fn command_done(&self, _session_id: &[u8; 16], _code: Option<i32>) {}
+    /// A sessão saiu da tabela: o provedor solta o que guardava dela.
+    fn session_gone(&self, _session_id: &[u8; 16]) {}
+    fn agent_default(&self) -> Option<AgentDefault> { None }
+    fn agent_default_save(&self, _d: &AgentDefault) -> Result<(), String> { Err("NOT_FOUND".into()) }
 }
 struct Empty;
 impl Provider for Empty {}
@@ -188,8 +233,9 @@ pub fn code(c: &str) -> Error { Error::from_code(c).unwrap_or(InvalidMessage) }
 
 fn clip(s: &str) -> String { if s.chars().count() <= MAX_TEXT { s.into() } else { s.chars().take(MAX_TEXT - 1).chain(['…']).collect() } }
 /// Corta a lista até o corpo caber numa mensagem.
-fn fit(ty: &str, key: &str, mut items: Vec<Value>, extra: Map<String, Value>) -> Value {
-    items.truncate(MAX_ITEMS);
+fn fit(ty: &str, key: &str, items: Vec<Value>, extra: Map<String, Value>) -> Value { fit_max(ty, key, items, extra, MAX_ITEMS) }
+fn fit_max(ty: &str, key: &str, mut items: Vec<Value>, extra: Map<String, Value>, max: usize) -> Value {
+    items.truncate(max);
     loop {
         let mut body = json!({"type": ty, "api": API, key: items});
         for (k, v) in &extra { body[k] = v.clone(); }
@@ -227,6 +273,58 @@ pub fn ssh_save_ok(server_id: &str) -> Value { json!({"type": "ssh_save_ok", "ap
 /// Resposta sem dados (`history_run_ok`, `history_clear_ok`, `agent_remove_ok`, `ssh_remove_ok`, `ssh_probe_ok`).
 pub fn empty_ok(ty: &str) -> Value { json!({"type": ty, "api": API}) }
 pub fn history_run_ok() -> Value { empty_ok("history_run_ok") }
+/// Subpastas de `path` (até [`MAX_ENTRIES`], cortadas para caber na mensagem).
+pub fn folder_list_ok(path: &str, dirs: &[String]) -> Value {
+    let mut extra = Map::new();
+    extra.insert("path".into(), path.into());
+    fit_max("folder_list_ok", "dirs", dirs.iter().map(|d| Value::from(clip(d))).collect(), extra, MAX_ENTRIES)
+}
+/// Chaves e subpastas de `path`, dentro de `root` (a `.ssh`); `path == root` no topo.
+pub fn ssh_key_list_ok(root: &str, path: &str, dirs: &[String], keys: &[String]) -> Value {
+    let mut extra = Map::new();
+    extra.insert("root".into(), root.into());
+    extra.insert("path".into(), path.into());
+    // As chaves vão inteiras (são poucas); as pastas é que se cortam para caber.
+    extra.insert("keys".into(), keys.iter().take(MAX_ITEMS).map(|k| Value::from(clip(k))).collect::<Vec<_>>().into());
+    fit_max("ssh_key_list_ok", "dirs", dirs.iter().map(|d| Value::from(clip(d))).collect(), extra, MAX_ENTRIES)
+}
+/// Padrão salvo, ou `agent: null` se nunca foi salvo.
+pub fn agent_default_ok(d: Option<&AgentDefault>) -> Value {
+    match d {
+        Some(d) => json!({"type": "agent_default_ok", "api": API, "agent": d.agent, "cwd": d.cwd, "args": d.args}),
+        None => json!({"type": "agent_default_ok", "api": API, "agent": null, "cwd": null, "args": ""}),
+    }
+}
+
+/// `%USERPROFILE%\.ssh` deste usuário (`None` sem perfil).
+pub fn ssh_root() -> Option<std::path::PathBuf> { std::env::var_os("USERPROFILE").map(|h| std::path::PathBuf::from(h).join(".ssh")) }
+
+/// Lista do `ssh_key_list`: `path` vazio é `root`; fora de `root` (inclusive por `..` ou link) é `NOT_FOUND`.
+/// Devolve `(caminho mostrado, subpastas, chaves)`; chave é arquivo de até 64 KiB que não é `.pub`, `config`, `known_hosts`…
+pub fn ssh_keys(root: &std::path::Path, path: &str) -> R<(String, Vec<String>, Vec<String>)> {
+    let croot = std::fs::canonicalize(root).map_err(|_| NotFound)?;
+    let want = if path.is_empty() { root.to_path_buf() } else { std::path::PathBuf::from(path) };
+    if !want.is_absolute() { return Err(NotFound); }
+    let cwant = std::fs::canonicalize(&want).map_err(|_| NotFound)?;
+    if !cwant.starts_with(&croot) || !cwant.is_dir() { return Err(NotFound); }
+    // Caminho como o usuário vê (sem `\\?\`): a raiz mais o trecho relativo já conferido.
+    let shown = root.join(cwant.strip_prefix(&croot).unwrap_or(std::path::Path::new("")));
+    let shown = shown.to_string_lossy().trim_end_matches(['\\', '/']).to_owned();
+    let rd = std::fs::read_dir(&cwant).map_err(|_| IoError)?;
+    let (mut dirs, mut keys) = (vec![], vec![]);
+    for e in rd.flatten() {
+        let Ok(name) = e.file_name().into_string() else { continue };
+        if name.chars().any(char::is_control) { continue; }
+        // Pasta que é link para fora da `.ssh` aparece, mas abrir dá NOT_FOUND (a canonização acima confere).
+        let Ok(m) = std::fs::metadata(e.path()) else { continue };
+        let lower = name.to_lowercase();
+        if m.is_dir() { if dirs.len() < MAX_ENTRIES { dirs.push(name); } }
+        else if m.is_file() && m.len() <= MAX_KEY_FILE && !lower.ends_with(".pub") && !NOT_KEYS.contains(&lower.as_str()) && keys.len() < MAX_ENTRIES { keys.push(name); }
+    }
+    dirs.sort_by_key(|n| n.to_lowercase());
+    keys.sort_by_key(|n| n.to_lowercase());
+    Ok((shown, dirs, keys))
+}
 
 /// Rótulo padrão de nova sessão de agente: `<pasta> · <agente>` (mesma regra do diálogo desktop).
 pub fn agent_label(cwd: Option<&str>, agent: &str) -> String {
@@ -273,6 +371,13 @@ mod tests {
             ("history_query_filtros", json!({"type":"history_query","api":1,"limit":200,"days":7,"kind":"pwsh","errors":true})),
             ("history_run", json!({"type":"history_run","api":1,"entry_id":"h_42","session_id":SID})),
             ("history_clear", json!({"type":"history_clear","api":1})),
+            ("folder_list", json!({"type":"folder_list","api":1,"path":"C:\\proj"})),
+            ("folder_list_unidades", json!({"type":"folder_list","api":1,"path":""})),
+            ("ssh_key_list", json!({"type":"ssh_key_list","api":1})),
+            ("ssh_key_list_pasta", json!({"type":"ssh_key_list","api":1,"path":"C:\\Users\\eu\\.ssh\\work"})),
+            ("agent_default_get", json!({"type":"agent_default_get","api":1})),
+            ("agent_default_set", json!({"type":"agent_default_set","api":1,"agent":"claude","cwd":"C:\\proj\\api","args":"--model opus"})),
+            ("agent_default_set_minimo", json!({"type":"agent_default_set","api":1,"agent":"codex"})),
             ("api_2", json!({"type":"agent_list","api":2})),
             ("sem_api", json!({"type":"agent_list"})),
             ("api_string", json!({"type":"agent_list","api":"1"})),
@@ -298,6 +403,14 @@ mod tests {
             ("query_erros_texto", json!({"type":"history_query","api":1,"errors":"true"})),
             ("run_sem_sessao", json!({"type":"history_run","api":1,"entry_id":"h_42"})),
             ("clear_com_campo", json!({"type":"history_clear","api":1,"all":true})),
+            ("folder_sem_path", json!({"type":"folder_list","api":1})),
+            ("folder_path_1025", json!({"type":"folder_list","api":1,"path":"x".repeat(1025)})),
+            ("folder_path_controle", json!({"type":"folder_list","api":1,"path":"C:\\a\nb"})),
+            ("chave_path_numero", json!({"type":"ssh_key_list","api":1,"path":1})),
+            ("chave_campo_extra", json!({"type":"ssh_key_list","api":1,"filter":"*"})),
+            ("padrao_agente_desconhecido", json!({"type":"agent_default_set","api":1,"agent":"bash"})),
+            ("padrao_args_shell", json!({"type":"agent_default_set","api":1,"agent":"claude","args":"& calc"})),
+            ("padrao_sem_agente", json!({"type":"agent_default_set","api":1,"args":"--verbose"})),
         ]
     }
 
@@ -312,7 +425,8 @@ mod tests {
     fn pedidos() {
         let wrap = |mut v: Value| { v["v"] = 1.into(); v["connection_id"] = CID.into(); v["request_id"] = RID.into(); v.to_string() };
         let ok = ["agent_list", "agent_resume", "agent_create", "agent_create_minimo", "agent_remove", "ssh_list", "ssh_connect", "ssh_save", "ssh_save_editar",
-            "ssh_remove", "ssh_probe", "ssh_reconnect", "history_query", "history_query_vazio", "history_query_filtros", "history_run", "history_clear", "api_2"];
+            "ssh_remove", "ssh_probe", "ssh_reconnect", "history_query", "history_query_vazio", "history_query_filtros", "history_run", "history_clear", "api_2",
+            "folder_list", "folder_list_unidades", "ssh_key_list", "ssh_key_list_pasta", "agent_default_get", "agent_default_set", "agent_default_set_minimo"];
         let mut cases = vec![];
         for (name, body) in requests() {
             let r = parse_control(&wrap(body.clone()), CID);
@@ -326,6 +440,10 @@ mod tests {
         assert_eq!(get("ssh_connect"), Req::SshConnect { server_id: "srv-1".into(), cols: 80, rows: 24 });
         assert_eq!(get("history_run"), Req::HistoryRun { entry_id: "h_42".into(), session_id: sid() });
         assert_eq!(get("agent_create_minimo"), Req::AgentCreate { agent: "codex".into(), args: String::new(), cwd: None, label: None, cols: 80, rows: 24 });
+        assert_eq!(get("ssh_key_list"), Req::SshKeyList(String::new()));
+        assert_eq!(get("folder_list"), Req::FolderList("C:\\proj".into()));
+        assert_eq!(get("agent_default_set_minimo"), Req::AgentDefaultSet(AgentDefault { agent: "codex".into(), cwd: None, args: String::new() }));
+        assert_eq!(get("agent_default_set"), Req::AgentDefaultSet(AgentDefault { agent: "claude".into(), cwd: Some("C:\\proj\\api".into()), args: "--model opus".into() }));
         assert_eq!(get("ssh_save"), Req::SshSave { server_id: None, label: "Produção".into(), target: crate::ssh::Ssh { user: "deploy".into(), host: "10.0.0.5".into(), port: 22, key: None } });
         // Pergunta de capacidades: um `session_attach` que o host 0.1.8 já entende (responde NOT_FOUND, não fatal).
         let probe = json!({"type": "session_attach", "session_id": CAPS_PROBE, "from_offset": null});
@@ -363,6 +481,20 @@ mod tests {
             ("history_query_vazia", wrap(history_query_ok(&[])), "ok"),
             ("history_run_ok", wrap(history_run_ok()), "ok"),
             ("history_clear_ok", wrap(empty_ok("history_clear_ok")), "ok"),
+            ("folder_list_ok", wrap(folder_list_ok("C:\\proj", &["api".into(), "web".into()])), "ok"),
+            ("folder_list_unidades", wrap(folder_list_ok("", &["C:\\".into(), "D:\\".into()])), "ok"),
+            ("ssh_key_list_ok", wrap(ssh_key_list_ok("C:\\Users\\eu\\.ssh", "C:\\Users\\eu\\.ssh", &["work".into()], &["id_ed25519".into(), "id_rsa".into()])), "ok"),
+            ("ssh_key_list_vazia", wrap(ssh_key_list_ok("C:\\Users\\eu\\.ssh", "C:\\Users\\eu\\.ssh\\work", &[], &[])), "ok"),
+            ("agent_default_ok", wrap(agent_default_ok(Some(&AgentDefault { agent: "claude".into(), cwd: Some("C:\\proj\\api".into()), args: "--model opus".into() }))), "ok"),
+            ("agent_default_sem_cwd", wrap(agent_default_ok(Some(&AgentDefault { agent: "codex".into(), cwd: None, args: String::new() }))), "ok"),
+            ("agent_default_nunca_salvo", wrap(agent_default_ok(None)), "ok"),
+            ("agent_default_set_ok", wrap(empty_ok("agent_default_set_ok")), "ok"),
+            ("folder_dir_numero", wrap(json!({"type":"folder_list_ok","api":1,"path":"C:\\","dirs":[1]})), "INVALID_MESSAGE"),
+            ("folder_sem_path", wrap(json!({"type":"folder_list_ok","api":1,"dirs":[]})), "INVALID_MESSAGE"),
+            ("chave_sem_keys", wrap(json!({"type":"ssh_key_list_ok","api":1,"root":"C:\\","path":"C:\\","dirs":[]})), "INVALID_MESSAGE"),
+            ("chave_nome_com_barra", wrap(json!({"type":"ssh_key_list_ok","api":1,"root":"C:\\s","path":"C:\\s","dirs":[],"keys":["..\\x"]})), "INVALID_MESSAGE"),
+            ("padrao_agente_desconhecido", wrap(json!({"type":"agent_default_ok","api":1,"agent":"bash","cwd":null,"args":""})), "INVALID_MESSAGE"),
+            ("padrao_sem_args", wrap(json!({"type":"agent_default_ok","api":1,"agent":"claude","cwd":null})), "INVALID_MESSAGE"),
             ("api_2", wrap(with(history_run_ok(), &["api"], 2.into())), "VERSION_UNSUPPORTED"),
             ("sem_api", wrap(json!({"type":"history_run_ok"})), "INVALID_MESSAGE"),
             ("sem_request_id", encode_control(CID, None, history_run_ok()), "INVALID_MESSAGE"),
@@ -399,6 +531,44 @@ mod tests {
     }
 
     #[test]
+    fn chaves_so_dentro_da_ssh() {
+        let base = std::env::temp_dir().join(format!("live-cmd-chaves-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join(".ssh");
+        std::fs::create_dir_all(root.join("work")).unwrap();
+        std::fs::create_dir_all(base.join("fora")).unwrap();
+        for f in ["id_ed25519", "id_ed25519.pub", "config", "known_hosts", "Known_Hosts.old", "authorized_keys", "B_rsa"] { std::fs::write(root.join(f), "k").unwrap(); }
+        std::fs::write(root.join("grande"), vec![b'x'; 65 << 10]).unwrap();
+        std::fs::write(root.join("work").join("deploy"), "k").unwrap();
+        let (shown, dirs, keys) = ssh_keys(&root, "").unwrap();
+        assert_eq!(shown, root.to_string_lossy());
+        assert_eq!(dirs, vec!["work"]);
+        assert_eq!(keys, vec!["B_rsa", "id_ed25519"], "sem .pub, config, known_hosts, authorized_keys nem arquivo grande");
+        let (shown, _, keys) = ssh_keys(&root, &root.join("work").to_string_lossy()).unwrap();
+        assert_eq!((shown, keys), (root.join("work").to_string_lossy().into_owned(), vec!["deploy".to_owned()]));
+        // Fora da `.ssh`, relativo, inexistente ou arquivo: NOT_FOUND.
+        for p in [base.join("fora").to_string_lossy().into_owned(), root.join("..").join("fora").to_string_lossy().into_owned(), "work".into(),
+            root.join("nada").to_string_lossy().into_owned(), root.join("id_ed25519").to_string_lossy().into_owned(), r"C:\Windows".into()] {
+            assert_eq!(ssh_keys(&root, &p), Err(NotFound), "{p}");
+        }
+        assert_eq!(ssh_keys(&base.join("sem-ssh"), ""), Err(NotFound));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn listas_cabem_numa_mensagem() {
+        let dirs: Vec<String> = (0..800).map(|i| format!("{i}-{}", "d".repeat(300))).collect();
+        let v = folder_list_ok("C:\\x", &dirs);
+        assert!(v.to_string().len() <= MAX_BODY);
+        assert!(!v["dirs"].as_array().unwrap().is_empty());
+        let few: Vec<String> = (0..800).map(|i| format!("p{i}")).collect();
+        assert_eq!(folder_list_ok("C:\\x", &few)["dirs"].as_array().unwrap().len(), MAX_ENTRIES);
+        let v = ssh_key_list_ok("r", "r", &dirs, &["id".into()]);
+        assert!(v.to_string().len() <= MAX_BODY);
+        assert_eq!(v["keys"][0], "id");
+    }
+
+    #[test]
     fn rotulo_padrao_do_agente() {
         assert_eq!(agent_label(Some(r"C:\proj\api\"), "claude"), "api · claude");
         assert_eq!(agent_label(None, "codex"), "~ · codex");
@@ -419,6 +589,8 @@ mod tests {
     fn provedor_padrao_vazio() {
         let p = Empty;
         assert!(p.ssh_servers().is_empty() && p.history(&HistoryFilter::default()).is_empty() && p.saved_agents().is_empty());
+        assert_eq!(p.agent_default(), None);
+        assert_eq!(p.agent_default_save(&AgentDefault::default()), Err("NOT_FOUND".into()));
         assert_eq!(p.ssh_target("srv-1"), None);
         assert_eq!(code("NOT_FOUND"), NotFound);
         assert_eq!(code("INVALID_SSH_USER"), InvalidMessage);

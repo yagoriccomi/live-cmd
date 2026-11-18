@@ -181,7 +181,7 @@ impl Client {
             Wire::Local { conn, .. } => {
                 let mut h = hub();
                 let r = match &f.op {
-                    Op::Input(d) => h.s.input(*conn, f.session_id, self.shared.next_seq(f.session_id), d, now_ms()).map(|a| a.map(Out::Ctl)),
+                    Op::Input(d) => h.input(*conn, f.session_id, self.shared.next_seq(f.session_id), d, now_ms()).map(|a| a.map(Out::Ctl)),
                     Op::Resize { cols, rows } => h.s.resize(*conn, f.session_id, *cols, *rows).map(|_| None),
                     _ => Ok(None),
                 };

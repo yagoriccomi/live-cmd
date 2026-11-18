@@ -59,6 +59,49 @@ pub fn record(dir: &Path, mut a: Agent) -> Result<(), String> {
     edit(dir, |l| { l.retain(|x| !(x.conn == a.conn && x.session_id == a.session_id)); l.insert(0, a); })
 }
 
+/// "Salvar como padrão" da nova sessão de agente (`agent-default.json`): o diálogo desktop e o celular
+/// (`agent_default_get`/`agent_default_set`, via `mobile.rs`) leem e gravam o mesmo arquivo.
+const DEFAULT_FILE: &str = "agent-default.json";
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct AiDefault {
+    pub agent: String,
+    #[serde(default)] pub cwd: Option<String>,
+    #[serde(default)] pub args: String,
+}
+
+/// Mesmas regras do host para agente, comandos extras e pasta; apara espaços e pasta vazia vira `None`.
+fn checked(mut d: AiDefault) -> Result<AiDefault, String> {
+    d.args = d.args.trim().into();
+    d.cwd = d.cwd.map(|c| c.trim().to_owned()).filter(|c| !c.is_empty());
+    let cwd_ok = d.cwd.as_ref().is_none_or(|c| c.chars().count() <= 1024 && !c.chars().any(char::is_control));
+    if !live_cmd_echo::AGENTS.contains(&d.agent.as_str()) || !live_cmd_echo::valid_args(&d.args) || !cwd_ok { return Err("INVALID_MESSAGE".into()); }
+    Ok(d)
+}
+
+/// Padrão salvo; ausente, ilegível ou inválido (arquivo editado à mão) = nenhum.
+pub fn read_default(dir: &Path) -> Option<AiDefault> {
+    std::fs::read(dir.join(DEFAULT_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).and_then(|d| checked(d).ok())
+}
+
+pub fn save_default(dir: &Path, d: AiDefault) -> Result<AiDefault, String> {
+    let d = checked(d)?;
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::fs::create_dir_all(dir).map_err(|_| "IO_ERROR")?;
+    let tmp = dir.join("agent-default.json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec(&d).map_err(|_| "IO_ERROR")?).map_err(|_| "IO_ERROR")?;
+    std::fs::rename(&tmp, dir.join(DEFAULT_FILE)).map_err(|_| "IO_ERROR")?;
+    Ok(d)
+}
+
+#[tauri::command]
+pub fn agent_default_get() -> Option<AiDefault> { read_default(&settings::data_dir().ok()?) }
+
+#[tauri::command]
+pub fn agent_default_set(agent: String, cwd: Option<String>, args: String) -> Result<AiDefault, String> {
+    save_default(&settings::data_dir()?, AiDefault { agent, cwd, args })
+}
+
 pub fn remove_entry(dir: &Path, conn: &str, sid: &str) -> Result<(), String> {
     edit(dir, |l| l.retain(|x| !(x.conn == conn && x.session_id == sid)))
 }

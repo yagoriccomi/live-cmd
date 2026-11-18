@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, TextInput, View } from 'react-native';
 import type { Conn } from '../conn.ts';
 import { SSH_MSG, sshConnect, sshFormError, sshList, sshProbe, sshReconnect, sshRemove, sshSave, type SshServer, type SshSession, type SshStatus } from '../extras.ts';
+import { Browser } from './Browser.tsx';
 import { Dot, Field, Glass, Header, Notice, OFFLINE, OLD_HOST, Pill, confirm, s, useRemote } from './common.tsx';
 import { C, TAB_SPACE, errText } from './theme.ts';
 
@@ -18,13 +19,14 @@ function status(st: SshStatus, ms: number | null): { color: string; text: string
 }
 const sshErr = (e: any) => SSH_MSG[e?.code ?? e?.message] ?? errText(e);
 
-type Form = { serverId?: string; label: string; user: string; host: string; port: string; key: string };
+type Form = { serverId?: string; label: string; user: string; host: string; port: string; key: string; browse?: boolean };
 const EMPTY: Form = { label: '', user: '', host: '', port: '22', key: '' };
 
 /** Servidores SSH do PC com as mesmas ações da tela desktop (ssh.js): buscar, conectar, testar, adicionar, editar,
  *  remover, e as sessões SSH abertas no PC (as restauradas voltam desconectadas, com Reconectar). Nunca pede senha. */
 export function SshScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (sessionId: string) => Promise<void> }) {
   const ok = !!conn && conn.caps.includes('ssh');
+  const canKeys = !!conn && conn.caps.includes('ssh_keys');
   const load = useCallback(() => conn!.extra(sshList()).then(r => ({ servers: r.servers as SshServer[], sessions: r.sessions as SshSession[] })), [conn]);
   const { data, err, busy, reload } = useRemote(ok ? load : null);
   const [acting, setActing] = useState('');
@@ -80,6 +82,13 @@ export function SshScreen({ conn, onOpen }: { conn: Conn | null; onOpen: (sessio
           <Field label="Host" value={form.host} maxLength={253} onChangeText={host => setForm({ ...form, host })} placeholder="srv.exemplo.com" />
           <Field label="Porta" value={form.port} keyboardType="number-pad" maxLength={5} onChangeText={port => setForm({ ...form, port })} />
           <Field label="Chave privada no PC (opcional)" value={form.key} onChangeText={key => setForm({ ...form, key })} placeholder="C:\Users\voce\.ssh\id_ed25519" />
+          {canKeys && (
+            <View style={[s.wrap, { marginTop: -4 }]}>
+              <Pill title={form.browse ? 'Fechar' : 'Escolher chave no PC'} onPress={() => setForm({ ...form, browse: !form.browse })} label={form.browse ? 'Fechar a lista de chaves' : 'Escolher chave no PC'} />
+              {!!form.key && <Pill title="Sem chave" onPress={() => setForm({ ...form, key: '' })} label="Remover a chave" />}
+            </View>
+          )}
+          {canKeys && form.browse && <Browser conn={conn!} mode="keys" onPick={key => setForm(f => f && { ...f, key, browse: false })} />}
           <Text style={s.meta}>A senha é pedida no terminal e nunca é salva.</Text>
           <View style={[s.wrap, { justifyContent: 'flex-end', marginTop: 10 }]}>
             <Pill title="Cancelar" onPress={() => { setForm(null); setMsg(''); }} />

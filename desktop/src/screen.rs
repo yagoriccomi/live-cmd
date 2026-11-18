@@ -146,6 +146,8 @@ impl Screen {
         std::mem::take(&mut self.vt.callbacks_mut().ev)
     }
     pub fn resize(&mut self, cols: u16, rows: u16) { self.vt.set_size(nz(rows), nz(cols)); }
+    /// Linha lógica do cursor (histórico); `None` na tela alternativa (vim, less…), que não grava.
+    pub fn cursor_line(&self) -> Option<String> { (!self.vt.screen().alternate_screen()).then(|| cursor_line(self.vt.screen())) }
     /// Bytes ANSI (≤ `SNAP_MAX`) que reproduzem a tela atual num emulador limpo do mesmo tamanho, com região de rolagem,
     /// DECOM e cursor salvo. Se a tela formatada não couber, vai só o texto das linhas de baixo que couberem.
     /// ponytail: na tela alternativa (vim) só ela é reproduzida; a tela principal fica vazia ao sair. Ver E7.
@@ -194,6 +196,18 @@ impl Screen {
 }
 
 fn nz(n: u16) -> NonZeroU16 { NonZeroU16::new(n).unwrap_or(NonZeroU16::MIN) }
+
+/// Linha lógica onde está o cursor (junta as linhas quebradas pela largura), sem espaços no fim.
+pub fn cursor_line(s: &vt100::Screen) -> String {
+    let cols = s.size().1.get();
+    let mut r = s.cursor_position().0;
+    let mut text = s.rows(0, cols).nth(r as usize).unwrap_or_default();
+    while r > 0 && s.row_wrapped(r - 1) {
+        r -= 1;
+        text = s.rows(0, cols).nth(r as usize).unwrap_or_default() + &text;
+    }
+    text.trim_end().to_owned()
+}
 
 pub fn event_body(session_id: &[u8; 16], e: &Event) -> Value {
     let sid = crate::proto::uuid_str(session_id);

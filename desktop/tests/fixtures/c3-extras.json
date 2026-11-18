@@ -2,11 +2,14 @@
   "caps": [
     "agents",
     "ssh",
-    "history"
+    "history",
+    "folders",
+    "ssh_keys",
+    "agent_default"
   ],
   "caps_probe": {
     "auth_ok_host_antigo": "{\"type\":\"auth_ok\",\"v\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\"}",
-    "reply": "{\"api\":1,\"caps\":[\"agents\",\"ssh\",\"history\"],\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"caps_ok\",\"v\":1}",
+    "reply": "{\"api\":1,\"caps\":[\"agents\",\"ssh\",\"history\",\"folders\",\"ssh_keys\",\"agent_default\"],\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"caps_ok\",\"v\":1}",
     "reply_host_antigo": "{\"code\":\"NOT_FOUND\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"error\",\"v\":1}",
     "request": {
       "from_offset": null,
@@ -95,6 +98,76 @@
       "name": "history_clear_ok",
       "result": "ok",
       "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"history_clear_ok\",\"v\":1}"
+    },
+    {
+      "name": "folder_list_ok",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"dirs\":[\"api\",\"web\"],\"path\":\"C:\\\\proj\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"folder_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "folder_list_unidades",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"dirs\":[\"C:\\\\\",\"D:\\\\\"],\"path\":\"\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"folder_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "ssh_key_list_ok",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"dirs\":[\"work\"],\"keys\":[\"id_ed25519\",\"id_rsa\"],\"path\":\"C:\\\\Users\\\\eu\\\\.ssh\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"root\":\"C:\\\\Users\\\\eu\\\\.ssh\",\"type\":\"ssh_key_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "ssh_key_list_vazia",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"dirs\":[],\"keys\":[],\"path\":\"C:\\\\Users\\\\eu\\\\.ssh\\\\work\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"root\":\"C:\\\\Users\\\\eu\\\\.ssh\",\"type\":\"ssh_key_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "agent_default_ok",
+      "result": "ok",
+      "text": "{\"agent\":\"claude\",\"api\":1,\"args\":\"--model opus\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"cwd\":\"C:\\\\proj\\\\api\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_default_ok\",\"v\":1}"
+    },
+    {
+      "name": "agent_default_sem_cwd",
+      "result": "ok",
+      "text": "{\"agent\":\"codex\",\"api\":1,\"args\":\"\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"cwd\":null,\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_default_ok\",\"v\":1}"
+    },
+    {
+      "name": "agent_default_nunca_salvo",
+      "result": "ok",
+      "text": "{\"agent\":null,\"api\":1,\"args\":\"\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"cwd\":null,\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_default_ok\",\"v\":1}"
+    },
+    {
+      "name": "agent_default_set_ok",
+      "result": "ok",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_default_set_ok\",\"v\":1}"
+    },
+    {
+      "name": "folder_dir_numero",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"dirs\":[1],\"path\":\"C:\\\\\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"folder_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "folder_sem_path",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"dirs\":[],\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"folder_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "chave_sem_keys",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"dirs\":[],\"path\":\"C:\\\\\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"root\":\"C:\\\\\",\"type\":\"ssh_key_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "chave_nome_com_barra",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"dirs\":[],\"keys\":[\"..\\\\x\"],\"path\":\"C:\\\\s\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"root\":\"C:\\\\s\",\"type\":\"ssh_key_list_ok\",\"v\":1}"
+    },
+    {
+      "name": "padrao_agente_desconhecido",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"agent\":\"bash\",\"api\":1,\"args\":\"\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"cwd\":null,\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_default_ok\",\"v\":1}"
+    },
+    {
+      "name": "padrao_sem_args",
+      "result": "INVALID_MESSAGE",
+      "text": "{\"agent\":\"claude\",\"api\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"cwd\":null,\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"agent_default_ok\",\"v\":1}"
     },
     {
       "name": "api_2",
@@ -360,6 +433,69 @@
     },
     {
       "body": {
+        "api": 1,
+        "path": "C:\\proj",
+        "type": "folder_list"
+      },
+      "name": "folder_list",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "path": "",
+        "type": "folder_list"
+      },
+      "name": "folder_list_unidades",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "type": "ssh_key_list"
+      },
+      "name": "ssh_key_list",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "path": "C:\\Users\\eu\\.ssh\\work",
+        "type": "ssh_key_list"
+      },
+      "name": "ssh_key_list_pasta",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "api": 1,
+        "type": "agent_default_get"
+      },
+      "name": "agent_default_get",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "agent": "claude",
+        "api": 1,
+        "args": "--model opus",
+        "cwd": "C:\\proj\\api",
+        "type": "agent_default_set"
+      },
+      "name": "agent_default_set",
+      "result": "ok"
+    },
+    {
+      "body": {
+        "agent": "codex",
+        "api": 1,
+        "type": "agent_default_set"
+      },
+      "name": "agent_default_set_minimo",
+      "result": "ok"
+    },
+    {
+      "body": {
         "api": 2,
         "type": "agent_list"
       },
@@ -613,6 +749,78 @@
         "type": "history_clear"
       },
       "name": "clear_com_campo",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "type": "folder_list"
+      },
+      "name": "folder_sem_path",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "path": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "type": "folder_list"
+      },
+      "name": "folder_path_1025",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "path": "C:\\a\nb",
+        "type": "folder_list"
+      },
+      "name": "folder_path_controle",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "path": 1,
+        "type": "ssh_key_list"
+      },
+      "name": "chave_path_numero",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "filter": "*",
+        "type": "ssh_key_list"
+      },
+      "name": "chave_campo_extra",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "agent": "bash",
+        "api": 1,
+        "type": "agent_default_set"
+      },
+      "name": "padrao_agente_desconhecido",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "agent": "claude",
+        "api": 1,
+        "args": "& calc",
+        "type": "agent_default_set"
+      },
+      "name": "padrao_args_shell",
+      "result": "INVALID_MESSAGE"
+    },
+    {
+      "body": {
+        "api": 1,
+        "args": "--verbose",
+        "type": "agent_default_set"
+      },
+      "name": "padrao_sem_agente",
       "result": "INVALID_MESSAGE"
     }
   ]

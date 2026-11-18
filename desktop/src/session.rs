@@ -203,6 +203,13 @@ impl Sessions {
         Ok(json!({"type":"session_close_ok"}))
     }
 
+    /// O frame `01` com este `seq` seria escrito agora (não é reenvio nem fora de ordem)?
+    pub fn fresh(&self, conn: ConnId, sid: &Sid, seq: u64) -> bool {
+        let Some(x) = self.s.get(sid) else { return false };
+        let Some(a) = x.att.get(&conn) else { return false };
+        x.exit.is_none() && x.input_seq.get(&a.pk).copied().unwrap_or(0).checked_add(1) == Some(seq)
+    }
+
     /// Frame `01`. `Ok(None)`: sessão `exited` ou já fechada (corrida com outro cliente), descartado sem ACK.
     pub fn input(&mut self, conn: ConnId, sid: Sid, seq: u64, data: &[u8], now: u64) -> R<Option<Value>> {
         let Some(x) = self.s.get_mut(&sid) else { return Ok(None) };

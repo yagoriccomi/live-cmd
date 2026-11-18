@@ -10,7 +10,8 @@ import { parseU64 } from './pty.ts';
 export const API = 1;
 /** Sessão reservada da pergunta de capacidades (desktop/src/extras.rs CAPS_PROBE). */
 export const CAPS_PROBE = '00000000-0000-4000-8000-000000000001';
-export type Cap = 'agents' | 'ssh' | 'history';
+/** `folders`: navegador de pastas do PC; `ssh_keys`: seletor da chave em %USERPROFILE%\.ssh; `agent_default`: "Salvar como padrão". */
+export type Cap = 'agents' | 'ssh' | 'history' | 'folders' | 'ssh_keys' | 'agent_default';
 const MAX_MSG = 65536;
 const fail = (c: Code): never => { throw new AuthError(c); };
 const bad = (): never => fail('INVALID_MESSAGE');
@@ -42,6 +43,13 @@ export const historyQuery = (f: HistoryFilter = {}) => ({
 });
 export const historyRun = (entryId: string, sessionId: string) => ({ type: 'history_run', api: API, entry_id: entryId, session_id: sessionId });
 export const historyClear = () => ({ type: 'history_clear', api: API });
+/** Subpastas de `path` no PC (vazio: unidades), a mesma listagem do navegador de pastas do desktop. */
+export const folderList = (path: string) => ({ type: 'folder_list', api: API, path });
+/** Chaves e subpastas dentro de %USERPROFILE%\.ssh do PC (sem `path`: a própria .ssh). */
+export const sshKeyList = (path?: string) => ({ type: 'ssh_key_list', api: API, ...(path && { path }) });
+export const agentDefaultGet = () => ({ type: 'agent_default_get', api: API });
+export const agentDefaultSet = (agent: string, cwd: string | null, args: string) =>
+  ({ type: 'agent_default_set', api: API, agent, ...(cwd && { cwd }), ...(args && { args }) });
 
 // ---- respostas (host → app) ----
 export type AgentState = 'running' | 'exited' | 'saved';
@@ -50,6 +58,7 @@ export interface Agent { sessionId: string; agent: string; args: string; label: 
 export interface SshServer { serverId: string; label: string; host: string; user: string; port: number; key: string | null; latencyMs: number | null; status: SshStatus }
 export interface SshSession { sessionId: string; label: string; connected: boolean }
 export interface HistoryEntry { entryId: string; command: string; cwd: string | null; atMs: bigint; exitCode: number | null; kind: string; label: string; pc: string }
+export interface AgentDefault { agent: string; cwd: string | null; args: string }
 export type ExtraMsg =
   | { t: 'agent_list_ok'; requestId: string; agents: Agent[] }
   | { t: 'agent_resume_ok' | 'agent_create_ok' | 'ssh_connect_ok' | 'ssh_reconnect_ok'; requestId: string; sessionId: string }
@@ -57,11 +66,15 @@ export type ExtraMsg =
   | { t: 'ssh_save_ok'; requestId: string; serverId: string }
   | { t: 'caps_ok'; requestId: string; caps: string[] }
   | { t: 'history_query_ok'; requestId: string; entries: HistoryEntry[] }
-  | { t: 'history_run_ok' | 'history_clear_ok' | 'agent_remove_ok' | 'ssh_remove_ok' | 'ssh_probe_ok'; requestId: string };
+  | { t: 'folder_list_ok'; requestId: string; path: string; dirs: string[] }
+  | { t: 'ssh_key_list_ok'; requestId: string; root: string; path: string; dirs: string[]; keys: string[] }
+  | { t: 'agent_default_ok'; requestId: string; value: AgentDefault | null }
+  | { t: 'history_run_ok' | 'history_clear_ok' | 'agent_remove_ok' | 'ssh_remove_ok' | 'ssh_probe_ok' | 'agent_default_set_ok'; requestId: string };
 
 const SESSION_REPLIES = ['agent_resume_ok', 'agent_create_ok', 'ssh_connect_ok', 'ssh_reconnect_ok'];
-const EMPTY_REPLIES = ['history_run_ok', 'history_clear_ok', 'agent_remove_ok', 'ssh_remove_ok', 'ssh_probe_ok'];
-const REPLIES = ['caps_ok', 'agent_list_ok', 'ssh_list_ok', 'ssh_save_ok', 'history_query_ok', ...SESSION_REPLIES, ...EMPTY_REPLIES];
+const EMPTY_REPLIES = ['history_run_ok', 'history_clear_ok', 'agent_remove_ok', 'ssh_remove_ok', 'ssh_probe_ok', 'agent_default_set_ok'];
+const REPLIES = ['caps_ok', 'agent_list_ok', 'ssh_list_ok', 'ssh_save_ok', 'history_query_ok', 'folder_list_ok', 'ssh_key_list_ok', 'agent_default_ok',
+  ...SESSION_REPLIES, ...EMPTY_REPLIES];
 const SSH_STATUS: SshStatus[] = ['unknown', 'testing', 'ok', 'dns', 'timeout', 'offline'];
 const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const isObj = (x: unknown): x is Record<string, any> => typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -73,6 +86,15 @@ const strOrNull = (x: unknown): string | null => x === null ? null : str(x);
 const uuid = (x: unknown): string => typeof x === 'string' && UUID4.test(x) ? x : bad();
 const int = (x: unknown, lo: number, hi: number): number => Number.isInteger(x) && (x as number) >= lo && (x as number) <= hi ? x as number : bad();
 const list = <T>(x: unknown, f: (o: Record<string, any>) => T): T[] => Array.isArray(x) ? x.map(i => isObj(i) ? f(i) : bad()) : bad();
+/** Lista de nomes (pasta ou arquivo): texto sem controle; `plain` também recusa barra, `.` e `..` (um nome só, nunca um caminho). */
+const names = (x: unknown, plain: boolean, max = 500): string[] => {
+  if (!Array.isArray(x) || x.length > max) bad();
+  return (x as unknown[]).map(n => {
+    const v = str(n);
+    if (!v || /[\u0000-\u001f\u007f]/.test(v) || (plain && (/[\\/]/.test(v) || v === '.' || v === '..'))) bad();
+    return v;
+  });
+};
 
 /** Tipo de resposta extra? (`conn.ts` usa para escolher o parser.) */
 export function isExtraReply(text: string): boolean {
@@ -122,6 +144,24 @@ export function parseExtraReply(text: string, connectionId: string): ExtraMsg {
       return { t, requestId, caps: c };
     }
     case 'ssh_save_ok': { const requestId = reply(['server_id']); return { t, requestId, serverId: str(o.server_id) }; }
+    case 'folder_list_ok': {
+      const requestId = reply(['path', 'dirs']);
+      const path = str(o.path);
+      // Na raiz vêm as unidades (`C:\`); dentro de uma pasta, só nomes.
+      return { t, requestId, path, dirs: names(o.dirs, path !== '') };
+    }
+    case 'ssh_key_list_ok': {
+      const requestId = reply(['root', 'path', 'dirs', 'keys']);
+      return { t, requestId, root: str(o.root), path: str(o.path), dirs: names(o.dirs, true), keys: names(o.keys, true, 200) };
+    }
+    case 'agent_default_ok': {
+      const requestId = reply(['agent', 'cwd', 'args']);
+      if (o.agent === null) { if (o.cwd !== null || str(o.args) !== '') bad(); return { t, requestId, value: null }; }
+      const agent = (AGENTS as readonly string[]).includes(o.agent) ? o.agent as string : bad();
+      const args = str(o.args);
+      if (!validArgs(args)) bad();
+      return { t, requestId, value: { agent, cwd: strOrNull(o.cwd), args } };
+    }
     default: {
       const requestId = reply(['entries']);
       return { t: 'history_query_ok', requestId, entries: list(o.entries, e => {
@@ -183,6 +223,14 @@ export const SSH_MSG: Record<string, string> = {
 
 /** Args extras do agente: mesma regra do host (desktop/src/proto.rs valid_args). */
 export const validArgs = (a: string) => a.length <= 512 && /^[A-Za-z0-9 ._=/:,-]*$/.test(a);
+
+/** Caminho do item `name` dentro de `base` no PC (raiz vazia: `name` já é a unidade). */
+export const joinPath = (base: string, name: string) => base ? `${base.replace(/[\\/]+$/, '')}\\${name}` : name;
+/** Pasta de cima, como o navegador do desktop: `C:\a\b` → `C:\a\`, `C:\` → '' (unidades). */
+export function parentPath(p: string): string {
+  const base = p.replace(/[\\/]+$/, '');
+  return base.includes('\\') ? base.slice(0, base.lastIndexOf('\\') + 1) : '';
+}
 
 /** Último trecho do caminho, para títulos curtos. */
 export const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
