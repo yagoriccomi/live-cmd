@@ -14,9 +14,9 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::host::{Client, ClientEvent, RemotePin, parse_pair_link};
-use crate::{App, clip, settings};
+use crate::{App, agents, clip, settings};
 
-const LOCAL: &str = "local";
+pub(crate) const LOCAL: &str = "local";
 const WIN: &str = "terminal";
 const FILE: &str = "remotes.json";
 
@@ -181,10 +181,13 @@ fn on_event(app: &AppHandle, conn: &str, e: ClientEvent) {
         ClientEvent::Control(c) if c["type"] == "command_completed" => {
             let k = key(conn, c["session_id"].as_str().unwrap_or_default());
             if let Some(v) = t.views.lock().unwrap().get_mut(&k) { v.osc = true; v.busy = false; }
+            // Abas deste PC: o host já entrega o código ao histórico (`mobile.rs`).
+            if conn != LOCAL { crate::hist::record_done(app, &k, c["exit_code"].as_i64()); }
             let _ = app.emit_to(WIN, "term-cmd-done", json!({ "key": k, "code": c["exit_code"] }));
         }
         // F4: pasta atual (OSC 7 no host) para "Nova sessão aqui".
         ClientEvent::Control(c) if c["type"] == "cwd_changed" => {
+            if conn != LOCAL { crate::hist::record_cwd(app, &key(conn, c["session_id"].as_str().unwrap_or_default()), c["cwd"].as_str()); }
             let _ = app.emit_to(WIN, "term-cwd", json!({ "key": key(conn, c["session_id"].as_str().unwrap_or_default()), "cwd": c["cwd"] }));
         }
         ClientEvent::Control(_) => {}
@@ -230,7 +233,7 @@ pub fn shutdown(app: &AppHandle) {
     t.views.lock().unwrap().clear();
 }
 
-fn client(app: &AppHandle, conn: &str) -> Result<Arc<Client>, String> {
+pub(crate) fn client(app: &AppHandle, conn: &str) -> Result<Arc<Client>, String> {
     let t = app.state::<Term>();
     if conn == LOCAL {
         let mut l = t.local.lock().unwrap();
@@ -264,13 +267,21 @@ pub fn term_list(app: AppHandle, conn: String) -> Result<Value, String> {
 }
 
 #[tauri::command(async)]
-pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: String, cols: u16, rows: u16, cwd: Option<String>, agent: Option<String>, args: Option<String>) -> Result<String, String> {
+pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: String, cols: u16, rows: u16, cwd: Option<String>, agent: Option<String>, args: Option<String>, resume_id: Option<String>) -> Result<String, String> {
     let label: String = label.chars().take(64).collect();
     let mut req = json!({ "type": "session_create", "profile_id": profile_id, "label": label, "cols": cols, "rows": rows });
-    if let Some(d) = cwd { req["cwd"] = d.into(); }
-    if let Some(a) = agent { req["agent"] = a.into(); req["args"] = args.unwrap_or_default().into(); }
+    if let Some(d) = &cwd { req["cwd"] = d.clone().into(); }
+    if let Some(a) = &agent { req["agent"] = a.clone().into(); req["args"] = args.clone().unwrap_or_default().into(); }
+    if let Some(r) = resume_id { req["resume_id"] = r.into(); }
     let v = client(&app, &conn)?.request(req)?;
-    Ok(v["session_id"].as_str().unwrap_or_default().to_owned())
+    let sid = v["session_id"].as_str().unwrap_or_default().to_owned();
+    // Tela Agentes: lembra a sessão para retomar depois do close. Falha ao gravar não desfaz a sessão criada.
+    // Neste PC quem grava é o host (`mobile::AppProvider::agent_started`), para valer também para o celular;
+    // aqui só as sessões em PC remoto, que o host de lá não registra neste app.
+    if let (Some(agent), Ok(dir), false) = (agent, settings::data_dir(), conn == LOCAL) {
+        let _ = agents::record(&dir, agents::Agent { conn, session_id: sid.clone(), profile_id, agent, args: args.unwrap_or_default(), cwd, label, used_ms: 0 });
+    }
+    Ok(sid)
 }
 
 /// Anexa do começo do buffer numa tela nova (também ao reconectar).
@@ -298,22 +309,42 @@ pub fn term_close(app: AppHandle, conn: String, session_id: String) -> Result<()
 
 #[tauri::command(async)]
 pub fn term_input(app: AppHandle, conn: String, session_id: String, data: String) -> Result<(), String> {
-    with_view(&app, &conn, &session_id, |v| { v.vt.screen_mut().set_scrollback(0); v.busy |= data.contains('\r'); });
+    // Histórico: linha do cursor antes do envio (tela alternativa, como vim, não grava).
+    // Neste PC quem grava é o host (ponto comum com o celular); aqui só as abas de outro PC.
+    let mut line = None;
+    with_view(&app, &conn, &session_id, |v| {
+        v.vt.screen_mut().set_scrollback(0);
+        v.busy |= data.contains('\r');
+        if data.contains('\r') && !v.vt.screen().alternate_screen() { line = Some(crate::hist::cursor_line(&v.vt)); }
+    });
+    if conn != LOCAL { crate::hist::record_input(&app, &key(&conn, &session_id), &conn, &data, line); }
     client(&app, &conn)?.input(&session_id, data.as_bytes())
 }
 
 /// `Ctrl+Shift+V`: texto do clipboard, com bracketed paste se o programa pediu.
 #[tauri::command(async)]
 /// Remoto com print no clipboard: envia o PNG para `target_dir` do outro PC e devolve o nome do arquivo.
-pub fn term_paste(app: AppHandle, conn: String, session_id: String, target_dir: Option<String>) -> Result<Option<String>, String> {
+pub fn term_paste(app: AppHandle, conn: String, session_id: String, target_dir: Option<String>, ssh_id: Option<String>) -> Result<Option<String>, String> {
     let text = clip::read_text()?.replace("\r\n", "\r").replace('\n', "\r");
     // Sem texto (print/imagem): manda Ctrl+V cru; o programa (claude, codex…) lê a imagem do clipboard.
     if text.is_empty() {
-        if conn == LOCAL && let (Some(dir), Some(png)) = (target_dir.as_deref(), clip::read_png()?) {
+        if conn == LOCAL && let Some(png) = clip::read_png()? {
             let name = format!("print-{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "IO_ERROR")?.as_millis());
-            let d = Path::new(dir).join(".live-cmd");
+            // Aba SSH: envia por scp para a home do servidor e cola `~/print-….png`.
+            if let Some(id) = ssh_id {
+                let srv = settings::ssh_servers(&app.state::<App>().data_dir)?.into_iter().find(|s| s.id == id).ok_or("NOT_FOUND")?;
+                srv.target().check()?;
+                let tmp = std::env::temp_dir().join(&name);
+                std::fs::write(&tmp, png).map_err(|_| "IO_ERROR")?;
+                let r = scp(&srv, &tmp, &name);
+                let _ = std::fs::remove_file(&tmp);
+                return r.map(|()| Some(format!("~/{name}")));
+            }
+            // Sem pasta conhecida (cmd/PowerShell não avisam a pasta por OSC 7): antes caía no Ctrl+V cru e nada
+            // acontecia; agora salva em %TEMP%\live-cmd e cola o caminho absoluto.
+            let d = target_dir.as_deref().map_or_else(|| std::env::temp_dir().join("live-cmd"), |dir| Path::new(dir).join(".live-cmd"));
             std::fs::create_dir_all(&d).and_then(|()| std::fs::write(d.join(&name), png)).map_err(|_| "IO_ERROR")?;
-            return Ok(Some(format!(".live-cmd\\{name}")));
+            return Ok(Some(if target_dir.is_some() { format!(".live-cmd\\{name}") } else { d.join(&name).to_string_lossy().into_owned() }));
         }
         if conn != LOCAL && let Some(png) = clip::read_png()? {
             let name = format!("print-{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "IO_ERROR")?.as_millis());
@@ -329,6 +360,21 @@ pub fn term_paste(app: AppHandle, conn: String, session_id: String, target_dir: 
     with_view(&app, &conn, &session_id, |v| { bracketed = v.vt.screen().bracketed_paste(); v.vt.screen_mut().set_scrollback(0); });
     let data = if bracketed { format!("\x1b[200~{text}\x1b[201~") } else { text };
     client(&app, &conn)?.input(&session_id, data.as_bytes()).map(|()| None)
+}
+
+/// `scp` do OpenSSH, argumento a argumento (sem shell). `BatchMode`: sem chave/agente falha em vez de pedir senha.
+/// ponytail: servidor só com senha não recebe print; aceitar senha exigiria askpass.
+fn scp(s: &settings::SshServer, file: &Path, name: &str) -> Result<(), String> {
+    let mut c = std::process::Command::new(live_cmd_echo::ssh::exe().replace("ssh.exe", "scp.exe"));
+    c.args(["-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-P", &s.port.to_string()]);
+    if let Some(k) = &s.key { c.arg("-i").arg(k); }
+    // Alias fixo + HostName: IPv6 (`::1`) e host de uma letra (`c:`) não viram caminho local no scp do Windows.
+    c.arg("-o").arg(format!("HostName={}", s.host));
+    if !s.user.is_empty() { c.arg("-o").arg(format!("User={}", s.user)); }
+    let dest = format!("lcmd:{name}");
+    #[cfg(windows)] { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
+    let out = c.arg(file).arg(dest).output().map_err(|_| "SCP_MISSING")?;
+    if out.status.success() { Ok(()) } else { Err("SCP_FAILED".into()) }
 }
 
 #[tauri::command(async)]

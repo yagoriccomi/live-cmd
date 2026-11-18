@@ -15,6 +15,8 @@ const MSG = {
   INVALID_MESSAGE: "Mensagem inválida. Tente conectar de novo.",
   LIMIT_EXCEEDED: "Limite atingido. Aguarde e tente novamente.",
   NOT_FOUND: "Não encontrado.",
+  SCP_FAILED: "Não deu para enviar o print: o servidor precisa aceitar sua chave SSH (sem senha).",
+  SCP_MISSING: "scp.exe não encontrado (instale o Cliente OpenSSH do Windows).",
   NOT_CONNECTED: "Sem conexão com este PC.",
   IO_ERROR: "Não foi possível gravar os dados do app.",
   CLIPBOARD: "Não foi possível usar a área de transferência.",
@@ -192,7 +194,7 @@ function renameSession(conn, sid, span, label) {
   if (!span) return;
   editInline(span, cur, async (v) => {
     await invoke("term_rename", { conn, sessionId: sid, label: v });
-    for (const t of tabs) if (t.conn === conn && t.sid === sid) { t.label = v; t.title = titleOf(conn, { label: v }); }
+    for (const t of tabs) if (t.conn === conn && t.sid === sid) { t.label = v; t.title = titleOf(conn, { label: v }); window.histMeta?.(conn, { session_id: sid, label: v }); }
     await refresh(conn);
     renderTabs();
   });
@@ -230,6 +232,7 @@ async function split(t, conn, sid) {
   const key = conn + "/" + sid, { cols, rows } = size();
   if (!tabs.some((x) => x.key === key)) {
     try { await invoke("term_attach", { conn, sessionId: sid, cols, rows }); } catch (e) { return banner(msg(e), "err"); }
+    window.histMeta?.(conn, conns[conn]?.sessions.find((s) => s.session_id === sid) || { session_id: sid });
   }
   if (t.split) unsplit(t, false);
   t.split = { key, conn, sid };
@@ -290,6 +293,7 @@ async function openSession(conn, s) {
     try { ok = await invoke("term_attach", { conn, sessionId: s.session_id, cols, rows }); }
     catch (e) { return banner(msg(e), "err"); }
     tabs.push({ key, conn, sid: s.session_id, label: s.label, title: titleOf(conn, s), exited: ok.state === "exited" ? ok.exit_code ?? 0 : null });
+    window.histMeta?.(conn, s);
   }
   activate(key);
 }
@@ -358,14 +362,25 @@ setInterval(async () => {
   if (changed) renderSidebar();
 }, 5000);
 
+// Tipo da sessão só para o visual (ícone e filtro da lista): agente, SSH ou shell, pelo rótulo.
+const KIND_ICON = { agent: "✦", ssh: "⇄", shell: "›_" };
+const sessionKind = (label = "") => /\b(claude|openclaude|codex)\b/i.test(label) ? "agent" : /\bssh\b|@/i.test(label) ? "ssh" : "shell";
+let sideFilter = "";
 function sessionItem(conn, s) {
   const li = el("li"), b = el("button");
   b.type = "button";
   const key = conn + "/" + s.session_id;
   if (key === active) b.setAttribute("aria-current", "true");
-  const name = el("span", null, s.label || "Terminal");
+  const name = el("span", "card-t", s.label || "Terminal");
   name.ondblclick = (e) => { e.stopPropagation(); renameSession(conn, s.session_id, name); };
-  b.append(el("span", s.state === "exited" ? "muted" : "dot-ok", s.state === "exited" ? "○" : "●"), name);
+  // Visual V1 Aurora: ícone pelo tipo, pasta atual (OSC 7) e estado por extenso.
+  const kind = sessionKind(s.label);
+  li.dataset.kind = kind;
+  const txt = el("span", "card-txt");
+  txt.append(name, el("span", "card-s mono", dropCwds[key] || (s.state === "exited" ? "sessão encerrada" : "")));
+  const st = el("span", s.state === "exited" ? "card-st muted" : "card-st dot-ok", s.state === "exited" ? "● parado" : "● ativo");
+  b.append(el("span", "tile", KIND_ICON[kind]), txt, st);
+  b.firstChild.setAttribute("aria-hidden", "true");
   if (busy.has(key)) b.append(actDot());
   b.onclick = () => openSession(conn, s);
   b.oncontextmenu = (e) => { e.preventDefault(); menu(b, [["Renomear", () => renameSession(conn, s.session_id, name)], ["Encerrar sessão", () => endSession(conn, s)]]); };
@@ -384,7 +399,8 @@ function newButton(conn) {
 
 function renderSidebar() {
   if ($("sidebar").querySelector("input.rename")) { tabsLater = true; return; }
-  $("local-ul").replaceChildren(...conns[LOCAL].sessions.map((s) => sessionItem(LOCAL, s)));
+  $("local-ul").replaceChildren(...conns[LOCAL].sessions.filter((s) => !sideFilter || sessionKind(s.label) === sideFilter).map((s) => sessionItem(LOCAL, s)));
+  window.auroraTerm?.();
   $("remote-ul").replaceChildren(...remoteOrder.map((id) => {
     const c = conns[id], st = c.status.state, li = el("li"), b = el("button");
     b.type = "button";
@@ -462,7 +478,15 @@ const AI_SUG = {
 };
 // Agente de IA: pergunta agente, pasta e args; o host salva e retoma pelo id da sessão.
 async function newAi(conn) {
-  const d = JSON.parse(localStorage.getItem("ai-default") || "{}");
+  // "Salvar como padrão" fica no PC (`agent-default.json`), o mesmo que o celular lê e grava.
+  // Versão anterior guardava no localStorage: migra uma vez.
+  let d = await invoke("agent_default_get").catch(() => null);
+  const old = localStorage.getItem("ai-default");
+  if (!d && old) {
+    try { const o = JSON.parse(old); d = await invoke("agent_default_set", { agent: o.agent || "claude", cwd: o.cwd || null, args: o.args || "" }); } catch { d = null; }
+  }
+  if (old) localStorage.removeItem("ai-default");
+  d = d || {};
   $("ai-agent").value = d.agent || "claude"; $("ai-cwd").value = d.cwd || ""; $("ai-args").value = d.args || ""; $("ai-def").checked = false;
   const sug = () => $("ai-sug").replaceChildren(...(AI_SUG[$("ai-agent").value] || []).map((v) => { const o = el("option"); o.value = v; return o; }));
   $("ai-agent").onchange = sug; sug();
@@ -484,7 +508,7 @@ async function newAi(conn) {
   });
   if (!ok) return;
   const agent = $("ai-agent").value, cwd = $("ai-cwd").value.trim() || null, args = $("ai-args").value.trim();
-  if ($("ai-def").checked) localStorage.setItem("ai-default", JSON.stringify({ agent, cwd, args }));
+  if ($("ai-def").checked) await invoke("agent_default_set", { agent, cwd, args }).catch((e) => banner(msg(e), "err"));
   const p = conns[conn].profiles[0];
   if (!p) return banner(msg("NOT_FOUND"), "err");
   // Grupo = nome da pasta raiz.
@@ -791,10 +815,12 @@ function paste() {
   if (!t || t.exited != null) return $("screen").focus();
   const dir = dropCwds[t.key] ?? null;
   // Print: local vai para <pasta>\.live-cmd; remoto é enviado ao outro PC. Cola o caminho (claude/codex anexam pelo caminho).
-  invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir }).then((name) => {
+  const sshId = window.sshTabs?.[t.sid] ?? null;
+  invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir, sshId }).then((name) => {
     if (!name) return;
-    send(dir ? `"${dir.replace(/[\\/]+$/, "")}\\${name}"` : name);
-    banner(`Print enviado: ${name} em ${dir ?? "pasta do usuário no outro PC"}.`);
+    const local = t.conn === LOCAL;
+    send(sshId ? name : dir ? `"${dir.replace(/[\\/]+$/, "")}\\${name}"` : local ? `"${name}"` : name);
+    banner(sshId ? `Print enviado ao servidor: ${name}.` : local ? `Print salvo: ${name}.` : `Print enviado: ${name} em ${dir ?? "pasta do usuário no outro PC"}.`);
   }).catch((err) => banner(msg(err), "err"));
   $("screen").focus();
 }
@@ -856,7 +882,8 @@ $("tb-pal").onclick = action("palette");
 $("tb-help").onclick = () => help();
 
 // Fonte: Ctrl+roda, Ctrl+=/-/0; salva por PC no localStorage e recalcula cols/rows.
-const FONT0 = 13.6;
+let FONT0 = 13; // V1 Aurora: Fira Code 13 px; a aparência (aparencia.js) troca o padrão
+window.setFontBase = (n) => { if (n === FONT0) return; FONT0 = n; font = 0; applyFont(); };
 const fontKey = () => "term-font:" + (curTab()?.conn ?? LOCAL);
 let font = FONT0;
 function applyFont() {

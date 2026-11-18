@@ -5,9 +5,11 @@ import { randomUUID } from 'expo-crypto';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { Offerer, b64d, parseMsg, toJson, uuidBytes, type Bytes } from './auth.ts';
 import { encodeFrame, parseFrame, parseHostControl, encodeControl } from './pty.ts';
+import { capsProbe, isExtraReply, parseExtraReply, type ExtraMsg } from './extras.ts';
 
 export interface Pin { hostPk: string; room: string; server: string }
-export interface Handlers { status(s: string): void; output(b: Bytes): void; closed(code?: string): void }
+/** `reset`: a sessão exibida mudou (agente retomado, SSH, troca de aba); limpar a tela. */
+export interface Handlers { status(s: string): void; output(b: Bytes): void; closed(code?: string): void; reset?(): void }
 
 const signalUrl = (server: string) => {
   const host = server.split(':')[0];
@@ -35,8 +37,16 @@ export class Conn {
   private dc?: any;
   private id = randomUUID();
   private sid?: Bytes;
+  /** Sessão exibida (texto), para `history_run` e troca de sessão. */
+  sessionId?: string;
   private seq = 0n;
   private pending = new Map<string, (m: any) => void>();
+  /** Evento `agent_waiting` (após `agentList(true)` com o cap `agent_waiting`): agente pede ou deixou de pedir confirmação. */
+  onAgentWaiting?: (e: Extract<ExtraMsg, { t: 'agent_waiting' }>) => void;
+  /** `command_completed` (OSC 133;D) da sessão exibida: o host já repassa às conexões anexadas. */
+  onCommandDone?: (exitCode?: number) => void;
+  /** Hora (ms) do último Enter enviado: mede a duração do comando para "Vibrar ao concluir". */
+  lastEnterMs?: number;
   private done = false;
 
   constructor(private pin: Pin, private seed: Bytes, private otk: Bytes | undefined, private h: Handlers) {}
@@ -100,13 +110,38 @@ export class Conn {
     });
     this.otk = undefined;
     this.dc.onmessage = (e: any) => this.recv(e.data);
+    // Host antigo responde NOT_FOUND (não fatal) à pergunta de capacidades: abas extras pedem atualização.
+    this.caps = await this.request(capsProbe()).then((r: any) => r.t === 'caps_ok' ? r.caps as string[] : [], () => []);
     const list = await this.request({ type: 'session_list' });
     const profile = list.profiles[0]?.profile_id;
     const created = await this.request({ type: 'session_create', profile_id: profile, label: 'Celular', cols: 80, rows: 24 });
     const att = await this.request({ type: 'session_attach', session_id: created.session_id, from_offset: null, cols: 80, rows: 24 });
     this.sid = uuidBytes(created.session_id)!;
+    this.sessionId = created.session_id;
     this.seq = BigInt(att.last_input_seq);
     this.h.status('conectado');
+  }
+
+  /** Telas extras que o host entende (`caps_ok`); vazio = host antigo (abas pedem atualização). */
+  caps: string[] = [];
+
+  /** Pedido das abas Agentes/SSH/Histórico (corpo de `extras.ts`); resposta já validada. */
+  extra(body: Record<string, unknown>): Promise<any> {
+    if (!this.sid || this.done) return Promise.reject(Object.assign(new Error('NOT_CONNECTED'), { code: 'NOT_CONNECTED' }));
+    return this.request(body);
+  }
+
+  /** Passa a exibir outra sessão do host: solta a atual e anexa a nova (com replay do buffer). */
+  async switchTo(sessionId: string) {
+    if (!this.sid || this.done || sessionId === this.sessionId) return;
+    const old = this.sessionId;
+    this.sid = undefined;
+    if (old) await this.request({ type: 'session_detach', session_id: old }).catch(() => {});
+    this.h.reset?.();
+    const att = await this.request({ type: 'session_attach', session_id: sessionId, from_offset: null, cols: 80, rows: 24 });
+    this.sid = uuidBytes(sessionId)!;
+    this.sessionId = sessionId;
+    this.seq = BigInt(att.last_input_seq);
   }
 
   private request(body: Record<string, unknown>): Promise<any> {
@@ -121,22 +156,32 @@ export class Conn {
   private recv(data: string | ArrayBuffer) {
     try {
       if (typeof data === 'string') {
+        if (isExtraReply(data)) {
+          const x = parseExtraReply(data, this.id);
+          if (x.t === 'agent_waiting') { this.onAgentWaiting?.(x); return; }
+          const w = this.pending.get(x.requestId);
+          if (w) { this.pending.delete(x.requestId); w(x); }
+          return;
+        }
         parseHostControl(data, this.id);
         const m = JSON.parse(data);
         if (m.type === 'error' && !('request_id' in m)) return this.close(m.code);
+        if (m.type === 'command_completed') { if (m.session_id === this.sessionId) this.onCommandDone?.(m.exit_code); return; }
         const w = m.request_id && this.pending.get(m.request_id);
         if (w) { this.pending.delete(m.request_id); w(m); }
         return;
       }
       const b = new Uint8Array(data), f = parseFrame(b);
+      const mine = !!this.sid && f.sessionId.every((x, i) => x === this.sid![i]);
       if (f.op.t === 'heartbeat') this.dc.send(b);
-      else if (f.op.t === 'output') this.h.output(f.op.data);
-      else if (f.op.t === 'exited') this.close(`saiu ${f.op.code}`);
+      else if (f.op.t === 'output' && mine) this.h.output(f.op.data);
+      else if (f.op.t === 'exited' && mine) this.close(`saiu ${f.op.code}`);
     } catch (e: any) { this.close(e?.code ?? 'INVALID_MESSAGE'); }
   }
 
   input(data: Bytes) {
     if (!this.sid || this.done) return;
+    if (data.includes(13)) this.lastEnterMs = Date.now();
     for (let i = 0; i < data.length; i += 16384) {
       this.seq += 1n;
       this.dc.send(encodeFrame({ sessionId: this.sid, seq: this.seq, op: { t: 'input', data: data.slice(i, i + 16384) } }));

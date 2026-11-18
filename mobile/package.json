@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --require ../desktop/scripts/hidden-processes.cjs --experimental-strip-types --test src/auth.test.ts src/pty.test.ts",
+    "test": "node --require ../desktop/scripts/hidden-processes.cjs --experimental-strip-types --test src/auth.test.ts src/pty.test.ts src/extras.test.ts src/keys.test.ts src/done.test.ts",
     "typecheck": "tsc --noEmit",
     "android": "expo run:android"
   },
@@ -15,6 +15,7 @@
     "expo-camera": "~58.0.14",
     "expo-crypto": "~58.0.8",
     "expo-dev-client": "~58.0.20",
+    "expo-font": "~58.0.12",
     "expo-secure-store": "~58.0.3",
     "expo-status-bar": "~58.0.5",
     "react": "19.3.0",

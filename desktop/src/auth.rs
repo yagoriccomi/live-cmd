@@ -143,6 +143,7 @@ impl Msg {
                 if let Some(m) = mac_o { v["mac_o"] = e(m); }
                 v
             }
+            // Sem campo novo: clientes antigos recusam campo desconhecido. Capacidades vão por `extras::CAPS_PROBE`.
             Msg::AuthOk => json!({"type":"auth_ok"}),
             Msg::Fail(c) => json!({"type":"error","code":c.code()}),
         };
@@ -418,6 +419,17 @@ impl Offerer {
 mod tests {
     use super::*;
     const CID: &str = "00010203-0405-0607-0809-0a0b0c0d0e0f"; // vetor 3.1: bytes 00..0f
+
+    /// `auth_ok` no formato da versão 0.1.8: sem campo novo (cliente antigo recusaria) e estrito.
+    #[test]
+    fn auth_ok_igual_ao_antigo() {
+        let old = format!(r#"{{"type":"auth_ok","v":1,"connection_id":"{CID}"}}"#);
+        let v: Value = serde_json::from_str(&Msg::AuthOk.to_json(CID)).unwrap();
+        assert_eq!(v, serde_json::from_str::<Value>(&old).unwrap());
+        assert_eq!(parse_msg(&old, CID), Ok(Msg::AuthOk));
+        let caps = format!(r#"{{"type":"auth_ok","v":1,"connection_id":"{CID}","caps":["ssh"]}}"#);
+        assert_eq!(parse_msg(&caps, CID), Err(InvalidMessage));
+    }
 
     fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
     fn unhex(s: &str) -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() }
