@@ -1,7 +1,7 @@
 // F4: temas (as duas janelas), paleta de comandos, favoritos e "Nova sessão aqui" (só no terminal).
 // Usa os globais de terminal.js (invoke, tabs, active, conns, openSession, refresh, banner, msg, el).
 (() => {
-  const THEMES = { dark: "Escuro", cosmo: "Cosmo", light: "Claro", contrast: "Alto contraste" };
+  const THEMES = { dark: "Aurora", ametista: "Ametista", magenta: "Magenta", cosmo: "Cosmo" };
   const getTheme = () => (THEMES[localStorage.theme] ? localStorage.theme : "dark");
   const setTheme = (t) => { localStorage.theme = t; applyTheme(); };
   function applyTheme() {

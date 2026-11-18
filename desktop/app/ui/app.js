@@ -17,6 +17,7 @@ function tab(name) {
   for (const p of new Set(Object.values(PANES))) $(p).hidden = p !== pane;
   const now = pane === "cfg-pane" ? "settings" : "pair";
   // Trocar de painel, fechar ou minimizar não invalida a OTK (P13): reabre a pendente; sem ela, gera outra.
+  if (now === "pair") ppView(name === "devices" ? "devs" : "qr");
   if (now === "pair" && (current !== "pair" || !expires)) pair(true);
   if (now === "pair") loadDevices();
   if (now === "settings") loadSettings();
@@ -32,6 +33,14 @@ function closePane() {
 }
 window.liveTab = tab;
 $("pp-x").onclick = closePane;
+$("pp-cancel").onclick = closePane;
+// Visões do painel: QR code (passos + aparelhos), Código (copiar o link) e Aparelhos (só a lista).
+function ppView(v) {
+  for (const b of $("pp-tabs").querySelectorAll("[data-v]")) b.setAttribute("aria-pressed", String(b.dataset.v === v));
+  $("pp-steps").hidden = v === "devs";
+  $("pair-pane").dataset.view = v;
+}
+$("pp-tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-v]"); if (b) ppView(b.dataset.v); });
 $("cfg-x").onclick = closePane;
 for (const p of ["pair-pane", "cfg-pane"]) $(p).addEventListener("keydown", (e) => {
   if (e.key === "Escape" && $("rm-scrim").hidden) { e.preventDefault(); closePane(); }
@@ -72,7 +81,7 @@ async function pair(reuse = false) {
     $("pair-hint").hidden = false;
     $("copy").hidden = false;
     show(["pair-busy", "pair-show", "pair-done", "pair-error"], "pair-show");
-    paneState("aguardando leitura do QR Code…", "ESPERANDO", "");
+    paneState("aguardando leitura…", "ESPERANDO", "");
     clearInterval(ticker);
     ticker = setInterval(tick, 1000);
     tick();
@@ -139,24 +148,26 @@ async function loadDevices() {
     const ul = $("dev-ul");
     ul.replaceChildren(...list.map((d) => {
       const li = document.createElement("li");
-      li.className = "device-row";
-      const info = document.createElement("div");
-      const name = document.createElement("strong");
-      name.textContent = d.label;
-      const status = document.createElement("div");
-      status.className = "status muted";
-      if (d.connected) {
-        const dot = document.createElement("span");
-        dot.className = "dot-ok"; dot.setAttribute("aria-hidden", "true"); dot.textContent = "● ";
-        status.append(dot, `Conectado · pareado em ${fmtDate(d.paired_at_ms)}`);
-      } else status.textContent = `Desconectado · pareado em ${fmtDate(d.paired_at_ms)}`;
-      info.append(name, status);
+      li.className = "card device-row";
+      const tile = document.createElement("span");
+      tile.className = "tile"; tile.setAttribute("aria-hidden", "true"); tile.textContent = "▣";
+      const info = document.createElement("span");
+      info.className = "card-txt";
+      const name = document.createElement("span");
+      name.className = "card-t"; name.textContent = d.label;
+      const sub = document.createElement("span");
+      sub.className = "card-s mono";
+      sub.textContent = `pareado em ${new Date(d.paired_at_ms).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }).replace(".", "")}`;
+      info.append(name, sub);
+      const st = document.createElement("span");
+      st.className = "card-st " + (d.connected ? "dot-ok" : "muted");
+      st.textContent = d.connected ? "● online" : "● offline";
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = "Remover";
       btn.setAttribute("aria-label", `Remover ${d.label}`);
       btn.onclick = () => askRemove(d, btn);
-      li.append(info, btn);
+      li.append(tile, info, st, btn);
       return li;
     }));
     show(["dev-busy", "dev-list", "dev-empty", "dev-error"], list.length ? "dev-list" : "dev-empty");
@@ -197,7 +208,7 @@ $("rm-ok").onclick = async () => {
 };
 
 // ---------- Configurações ----------
-const THEME_NAME = { dark: "Tema Aurora", cosmo: "Tema Cosmo", light: "Tema Claro", contrast: "Alto contraste" };
+const THEME_NAME = { dark: "Tema Aurora", ametista: "Tema Ametista", magenta: "Tema Magenta", cosmo: "Tema Cosmo" };
 function themePicked() {
   const v = document.documentElement.dataset.theme || "dark";
   for (const i of document.querySelectorAll("[name=theme-pick]")) i.checked = i.value === v;
@@ -208,13 +219,15 @@ for (const i of document.querySelectorAll("[name=theme-pick]")) i.onchange = () 
   $("theme").dispatchEvent(new Event("change"));
   themePicked();
 };
+$("cfg-keys-n").textContent = `${$("keys-list").children.length} atalhos`;
 $("cfg-pane").addEventListener("click", (e) => {
   // Agentes e SSH têm painel próprio no trilho: o cartão abre o painel (o mesmo botão do trilho).
   const open = e.target.closest("[data-open]");
   if (open) return $(open.dataset.open).click();
   const go = e.target.closest("[data-go]");
   if (!go) return;
-  for (const c of $("cfg-pane").querySelectorAll(".cfg-nav .card")) { c.classList.toggle("on", c === go); c.toggleAttribute("aria-current", c === go); }
+  for (const c of $("cfg-pane").querySelectorAll(".cfg-nav .card")) { const on = c.dataset.go === go.dataset.go; c.classList.toggle("on", on); c.toggleAttribute("aria-current", on); }
+  for (const c of $("cfg-chips").querySelectorAll("[data-go]")) c.setAttribute("aria-pressed", String(c.dataset.go === go.dataset.go));
   const f = $(go.dataset.go);
   f.scrollIntoView({ block: "start", behavior: "smooth" });
   f.querySelector("input, select, button")?.focus({ preventScroll: true });

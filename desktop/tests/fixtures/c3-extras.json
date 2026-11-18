@@ -981,7 +981,7 @@
           "font_size": 10,
           "glow": true,
           "opacity": 60,
-          "theme": "light"
+          "theme": "magenta"
         },
         "type": "settings_set"
       },

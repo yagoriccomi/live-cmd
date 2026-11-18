@@ -3,7 +3,7 @@
 // #historico, #estados; na janela principal, #pair e #settings (as abas do app.js).
 (() => {
   const [screen = "terminal", theme] = location.hash.slice(1).split(":");
-  try { localStorage.theme = theme || "dark"; } catch {} // #terminal:light, #terminal:contrast
+  try { localStorage.theme = theme || "dark"; } catch {} // #terminal:ametista, #terminal:magenta, #terminal:cosmo
   const ls = []; // ouvintes de evento
   const sid = (n) => "00000000-0000-0000-0000-00000000000" + n;
   const now = Date.now(), H = 3600e3, D = 24 * H;
@@ -27,12 +27,13 @@
     agent_list: { online: true, groups: [
       { name: "live-cmd", path: "S:\\Projetos\\live-cmd", sessions: [
         { session_id: sid(1), agent: "claude", label: "claude · live-cmd", status: "rodando", used_ms: now - 5 * 60e3 },
-        { session_id: sid(7), agent: "claude", label: "Fix setas ConPTY", status: "encerrada", used_ms: now - D },
-        { session_id: sid(8), agent: "claude", label: "Menu da bandeja", status: "encerrada", used_ms: now - 2 * D },
+        { session_id: sid(7), agent: "claude", label: "Fix setas ConPTY", status: "encerrada", used_ms: daysAgo(1, 22, 10) },
+        { session_id: sid(8), agent: "claude", label: "Menu da bandeja", status: "encerrada", used_ms: daysAgo(3, 19, 2) },
+        { session_id: sid(10), agent: "claude", label: "Release 0.1.7", status: "encerrada", used_ms: daysAgo(9, 10, 15) },
       ] },
       { name: "api", path: "S:\\Projetos\\api", sessions: [
-        { session_id: sid(4), agent: "codex", label: "codex · refactor", status: "saiu", used_ms: now - 30 * 60e3 },
-        { session_id: sid(9), agent: "codex", label: "Migração do banco", status: "encerrada", used_ms: now - 5 * D },
+        { session_id: sid(4), agent: "codex", label: "codex · refactor", status: "rodando", used_ms: now - 30 * 60e3 },
+        { session_id: sid(9), agent: "codex", label: "Migração do banco", status: "encerrada", used_ms: daysAgo(6, 16, 40) },
       ] },
     ] },
     ssh_list: [
@@ -58,7 +59,7 @@
     status: { state: "ready", pairing_expires_ms: now + 292e3 },
     devices: [{ id: "p8", label: "Pixel 8", connected: false, paired_at_ms: daysAgo(15, 10, 0) }],
     get_settings: { autostart: true, server: "wss://sinal.livecmd.dev", scrollback: 10000, version: "0.1.16" },
-    get_appearance: { theme: "dark", font_family: "Fira Code", font_size: 13, opacity: 100, blur: 30, glow: true, animations: true },
+    get_appearance: { theme: "dark", font_family: "Fira Code", font_size: 13, opacity: 82, blur: 30, glow: true, animations: true },
     hist_sessions: [
       { label: "pwsh · live-cmd", kind: "pwsh", pc: "Este PC", day: isoDay(0), count: 2, errors: 1, last_ms: String(today(23, 41)) },
       { label: "prod-01", kind: "ssh", pc: "Este PC", day: isoDay(1), count: 1, errors: 0, last_ms: String(daysAgo(1, 18, 30)) },
@@ -99,7 +100,7 @@
       await new Promise((r) => setTimeout(r, 150));
       emit("term-screen", { key: "local/" + sid(1), rows, app_cursor: false });
     }
-    if (screen === "agentes") click("nav-agents");
+    if (screen === "agentes") { emit("agent-waiting", { session_id: sid(4), label: "codex · refactor", waiting: true }); click("nav-agents"); }
     if (screen === "ssh") click("ssh-open");
     if (screen === "historico") { document.getElementById("hist-q").value = "git push"; click("hist-open"); }
     setTimeout(() => document.activeElement?.blur(), 300);

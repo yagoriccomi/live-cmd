@@ -1,5 +1,5 @@
 /* V1 Glass Aurora (docs/design/aurora-v1/VD-*-1.dc.html): trilho + lista + destaque, medidas do mockup.
-   Tokens: o tema Aurora (padrão) usa os valores do mockup; claro e alto contraste reaproveitam os tokens deles. */
+   Tokens: o tema Aurora (padrão) usa os valores do mockup; Ametista, Magenta e Cosmo trocam só as cores (blocos mais abaixo). */
 :root {
   --glass:var(--surface); --glass-line:var(--border); --glass-glow:var(--shadow); --glass-blur:none;
   --ink:var(--on-accent); --chip:var(--surface-2); --card:var(--surface-2); --card-on:var(--accent); --card-on-ink:var(--on-accent);
@@ -21,7 +21,6 @@
   --term-bg:transparent; --term-fg:#e6dcff;
 }
 :root:not([data-theme=light]):not([data-theme=contrast]) body { background:#140b2e; }
-:root[data-theme=contrast] { --hero-btn-1:#000; --hero-btn-1-ink:#ff0; --hero-btn:var(--bg); --card-on:var(--accent); }
 
 /* Fundo: três manchas desfocadas (só no Aurora). */
 .aurora { position:fixed; inset:0; overflow:hidden; pointer-events:none; }
@@ -245,9 +244,9 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .swatch input:checked + i { border-color:var(--text); box-shadow:0 0 18px rgb(255 79 216 / .55); }
 .swatch input:focus-visible + i { outline:2px solid var(--focus, #fff); outline-offset:2px; }
 .sw-dark i { background:linear-gradient(135deg, #8b5cf6, #ff4fd8); }
-.sw-light i { background:linear-gradient(135deg, #f5f3ff, #d8b4fe); }
+.sw-ametista i { background:linear-gradient(135deg, #4c1d95, #8b5cf6); }
 .sw-cosmo i { background:linear-gradient(135deg, #3c6cff, #22d3ee); }
-.sw-contrast i { background:linear-gradient(135deg, #000 50%, #ffff00 50%); }
+.sw-magenta i { background:linear-gradient(135deg, #c026d3, #ff4fd8); }
 .toggle input[type=checkbox] { appearance:none; flex:none; width:38px; height:22px; border-radius:11px; background:var(--chip); border:1px solid var(--glass-line); position:relative; margin:2px 0 0; cursor:pointer; }
 .toggle input[type=checkbox]::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:var(--text-muted); transition:left .15s; }
 .toggle input[type=checkbox]:checked { background:var(--grad); }
@@ -272,7 +271,100 @@ body.term-body { font-family:var(--font); line-height:normal; }
 :root[data-theme=cosmo][data-theme] body { background:#0a1430; }
 :root[data-theme=cosmo] .aurora i:nth-child(2) { background:#22d3ee; }
 :root[data-theme=cosmo] .swatch input:checked + i { box-shadow:0 0 18px rgb(34 211 238 / .55); }
+/* Temas Ametista e Magenta (2º e 3º do mockup): o mesmo vidro, outras cores. */
+:root[data-theme=ametista][data-theme] {
+  --bg:#12072e; --accent:#6d3fd6; --text-muted:#d0c0ff; --border:rgb(190 160 255 / .5); --term-sel:#4c1d95; --term-fg:#e6dcff;
+  --glass-line:rgb(190 160 255 / .5); --glass-glow:0 0 28px rgb(109 63 214 / .4), inset 0 1px 0 rgb(255 255 255 / .22);
+  --shadow:0 0 28px rgb(109 63 214 / .4); --glow:0 0 28px rgb(109 63 214 / .4), inset 0 1px 0 rgb(255 255 255 / .3);
+  --hero-bg:linear-gradient(135deg, color-mix(in srgb, #4c1d95 87%, transparent), #8b5cf6aa); --hero-glow:0 0 40px #8b5cf666;
+  --grad:linear-gradient(135deg, #5b2bc0, #8b5cf6); --grad-glow:0 0 22px #8b5cf688; --off:#8f80b8;
+}
+:root[data-theme=ametista][data-theme] body { background:#12072e; }
+:root[data-theme=ametista] .aurora i:nth-child(2) { background:#8b5cf6; }
+:root[data-theme=ametista] .aurora i:nth-child(3) { background:#4c1d95; }
+:root[data-theme=magenta][data-theme] {
+  --bg:#1c0620; --accent:#c026d3; --text-muted:#ffc8f4; --border:rgb(255 150 235 / .5); --term-sel:#9d1aae; --term-fg:#ffe6fa;
+  --glass-line:rgb(255 150 235 / .5); --glass-glow:0 0 28px rgb(192 38 211 / .4), inset 0 1px 0 rgb(255 255 255 / .22);
+  --shadow:0 0 28px rgb(192 38 211 / .4); --glow:0 0 28px rgb(192 38 211 / .4), inset 0 1px 0 rgb(255 255 255 / .3);
+  --hero-bg:linear-gradient(135deg, color-mix(in srgb, #c026d3 87%, transparent), #ff4fd8aa); --hero-glow:0 0 40px #ff4fd866;
+  --grad:linear-gradient(135deg, #c026d3, #ff4fd8); --grad-glow:0 0 22px #ff4fd888; --ink:#4a0d52; --card-on-ink:#4a0d52; --hero-btn-1-ink:#4a0d52; --off:#c08ab8;
+}
+:root[data-theme=magenta][data-theme] body { background:#1c0620; }
+:root[data-theme=magenta] .aurora i:nth-child(3) { background:#ff4fd8; }
+:root[data-theme=ametista] .swatch input:checked + i, :root[data-theme=magenta] .swatch input:checked + i { box-shadow:0 0 18px rgb(255 79 216 / .5); }
 /* "Animações" desligado: o mesmo efeito de prefers-reduced-motion. */
 :root[data-anim=off] *, :root[data-anim=off] *::before, :root[data-anim=off] *::after { animation:none !important; transition:none !important; }
 /* Agente esperando confirmação (detecção pelo texto da tela no host). */
 .dot-wait { color:var(--warn); }
+
+/* SSH: seleção na lista e linhas da Configuração (VD-SSH-1). */
+.aurora-pane .ssh-list li.on { background:var(--card-on); color:var(--card-on-ink); cursor:default; }
+.aurora-pane .ssh-list li.on .small { color:#6b5a86; }
+.aurora-pane .ssh-list li:not(.on) { cursor:pointer; }
+.pane-x { display:none; }
+.cfg-rows { list-style:none; margin:0 0 8px; padding:0; }
+.cfg-row { border-top:1px solid var(--glass-line); font-size:14px; }
+.cfg-row:first-child { border-top:0; }
+.cfg-row .toggle { flex-direction:row-reverse; justify-content:space-between; align-items:center; margin:0; padding:10px 0; width:100%; }
+.cfg-link { display:flex; justify-content:space-between; width:100%; padding:12px 0; border:0; background:none; color:var(--text); font:inherit; text-align:left; cursor:pointer; }
+.cfg-link .cfg-v { color:var(--text-muted); }
+.cfg-link.danger { color:var(--danger); }
+
+/* Parear (VD-Pareamento-1): passos com estado, aparelhos na mesma lista, visões QR/Código/Aparelhos. */
+#pair-pane .hero { min-height:0; }
+.card-st.ok { color:var(--ok); }
+.card-st.now { color:#ff4fd8; }
+.pair-steps { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:10px; }
+.pair-steps + .pane-h + #devices, #devices { margin-top:10px; }
+.aurora-pane .card.device-row { position:relative; border:0; border-radius:18px; padding:13px 14px; min-height:66px; }
+.aurora-pane .device-row button { position:absolute; right:10px; top:50%; translate:0 -50%; opacity:0; pointer-events:none; }
+.aurora-pane .device-row:is(:hover, :focus-within) button { opacity:1; pointer-events:auto; }
+.card-st.dot-ok { color:var(--ok); }
+#pair-pane .code-only { display:none; }
+#pair-pane[data-view=code] .code-only { display:block; }
+#pair-pane[data-view=code] #qr-box, #pair-pane[data-view=code] #pair-hint { display:none; }
+#pair-pane[data-view=devs] .qr-card { opacity:.6; }
+#dev-ul { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:10px; }
+.pair-steps .card.on .tile, .cfg-nav .card.on .tile, .aurora-pane .ssh-list li.on > span[aria-hidden]:first-child { background:none; color:#1b1030; }
+.aurora-pane .card.device-row { border:0; }
+
+/* Histórico (VD-Historico-1): linha do tempo em uma linha por comando, resumo como busca. */
+.aurora-pane .hist-item { display:grid; grid-template-columns:auto auto minmax(0, 1fr) auto; align-items:center; gap:12px; position:relative; padding:4px; font-size:13px; }
+.hist-time { color:var(--text); font-size:13px; min-width:34px; }
+.hist-side { color:var(--text-muted); font-size:13px; text-align:right; white-space:nowrap; }
+.tl-dot.err { background:var(--danger); }
+.tl-dot.off { background:var(--off); }
+.aurora-pane .hist-item .hist-run { position:absolute; right:6px; top:50%; translate:0 -50%; opacity:0; pointer-events:none; }
+.aurora-pane .hist-item:is(:hover, :focus-within) .hist-run { opacity:1; pointer-events:auto; background:var(--card-on); color:var(--card-on-ink); }
+.aurora-pane .hist-item:is(:hover, :focus-within) .hist-side { visibility:hidden; }
+#hist-n { cursor:text; min-height:1.3em; }
+#hist-n:empty::before { content:"Buscar comandos"; }
+.side-sub.hist-q { background:none; border:0; padding:0; width:100%; min-height:1.3em; font-size:12px; color:var(--text); outline-offset:3px; }
+.hist-clear { align-self:flex-start; margin-top:auto; padding:7px 12px; border-radius:12px; font-size:12px; border:0; }
+.aurora-pane .hist-note { margin:0; }
+.aurora-pane .hist-item { min-height:35px; }
+.aurora-pane .hist-ul { gap:0; }
+.aurora-pane .ag-row:has(.dot-wait)::after { content:"● aguarda" / ""; color:var(--warn); }
+#ag-resume .tl { gap:0; }
+#ag-resume .tl-row { min-height:35px; }
+/* Alturas do cartão de destaque dos mockups: o resto da coluna não pula entre estados. */
+#ag-hero { min-height:196px; }
+#hero { min-height:168px; }
+
+/* Configurações (VD-Config-1): chips das seções, estado nas linhas e lista de atalhos. */
+.cfg-nav .card { position:relative; }
+.keys { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+.keys li { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-top:1px solid var(--glass-line); font-size:14px; }
+.keys li:first-child { border-top:0; }
+.keys kbd { font-family:var(--font-mono); font-size:12px; color:var(--text-muted); }
+.cfg-pane .hero, #pair-pane .hero { min-height:0; }
+.cfg-card .swatch { padding:8px 8px 10px; border:1px solid var(--glass-line); gap:6px; }
+.cfg-card .swatch i { height:70px; }
+.cfg-card .swatch span { font-size:11px; font-weight:400; }
+.cfg-card .swatch:has(input:checked) { border:2px solid #fff; }
+.cfg-card .toggle { min-height:49px; padding:0; border-top:1px solid var(--glass-line); }
+.cfg-card .toggle input[type=checkbox] { width:44px; height:24px; border-radius:12px; margin:0; }
+.cfg-card .toggle input[type=checkbox]::after { width:18px; height:18px; top:2px; }
+.cfg-card .toggle input[type=checkbox]:checked::after { left:22px; }
+.cfg-card .swatch i { border:0; border-radius:10px; }
+.cfg-card .swatches + select + .toggle { border-top:0; margin-top:-4px; }

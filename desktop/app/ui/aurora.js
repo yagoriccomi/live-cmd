@@ -105,35 +105,52 @@
   const AG_BADGE = { "dot-wait": ["ESPERANDO", "warn"], "dot-ok": ["RODANDO", ""], "dot-warn": ["TERMINOU", "warn"], "dot-err": ["SEM RESPOSTA", "err"], muted: ["ENCERRADA", "off"] };
   const dotOf = (row) => Object.keys(AG_BADGE).find((c) => row.querySelector(".ag-dot")?.classList.contains(c)) || "muted";
   function agents() {
-    const rows = [...$("ag-list").querySelectorAll(".ag-row")], groups = [...$("ag-list").querySelectorAll(".ag-group")];
+    const rows = [...$("ag-list").querySelectorAll(".ag-row")];
     const pick = rows.find((r) => dotOf(r) === "dot-wait") || rows.find((r) => dotOf(r) === "dot-ok") || rows[0];
     const [badge, tone] = pick ? AG_BADGE[dotOf(pick)] : [];
     hero($("ag-hero"), pick ? {
-      icon: "✦", title: txt(pick, ".ag-label"), sub: txt(pick.closest(".ag-group"), ".ag-path"), badge, tone,
-      note: txt(pick, ".ag-info .small"), buttons: [...pick.querySelectorAll("button")],
+      icon: "✦", title: txt(pick, ".ag-label"), sub: pick.dataset.dir, badge, tone,
+      note: txt(pick, ".ag-info .sr-only"), buttons: [...pick.querySelectorAll("button")],
     } : {});
     const run = rows.filter((r) => ["dot-ok", "dot-wait"].includes(dotOf(r))).length;
-    stats($("ag-stats"), [["Rodando", run, run ? "abertas agora" : "nenhuma aberta"], ["Sessões salvas", rows.length, "--resume"], ["Pastas", groups.length, "raiz dos projetos"]]);
-    $("ag-dirs").replaceChildren(...groups.map((g) => {
+    const dirs = new Set(rows.map((r) => r.dataset.dir));
+    stats($("ag-stats"), [["Rodando", run, run ? "abertas agora" : "nenhuma aberta"], ["Sessões salvas", rows.length, "--resume"], ["Pastas", dirs.size, "raiz dos projetos"]]);
+    // Linha do tempo do que se retoma: um dia por bloco, mais recentes primeiro.
+    const saved = rows.filter((r) => !r.dataset.live).sort((p, q) => (+q.dataset.ms || 0) - (+p.dataset.ms || 0));
+    const box = $("ag-resume"), kids = [];
+    let cur = null, ul = null;
+    for (const r of saved) {
+      const d = new Date(+r.dataset.ms || 0), t = new Date(), y = new Date();
+      y.setDate(t.getDate() - 1);
+      const g = d.toDateString() === t.toDateString() ? "Hoje" : d.toDateString() === y.toDateString() ? "Ontem"
+        : d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }).replace(".", "").replace(" de ", " ");
+      if (g !== cur) { cur = g; ul = el("ul", "tl"); kids.push(el("h3", "hist-day", g), ul); }
       const li = el("li", "tl-row");
-      li.append(el("span", "tl-dot ok"), el("span", "tl-c mono", txt(g, "h3")), el("span", "tl-m", txt(g, ".ag-path")), el("span", "tl-r", plural(g.querySelectorAll(".ag-row").length, "sessão", "sessões")));
-      return li;
-    }));
+      li.append(el("span", "hist-time", d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })), el("span", "tl-dot ok"),
+        el("span", "tl-c mono", txt(r, ".ag-label")), el("span", "hist-side", r.dataset.agent));
+      li.querySelector(".hist-side").style.marginLeft = "auto";
+      ul.append(li);
+    }
+    box.replaceChildren(...kids);
   }
 
   // ---------- SSH ----------
   function ssh() {
     const rows = [...$("ssh-list").children], sess = [...$("ssh-sess").children];
-    const pick = rows[0];
+    const pick = rows.find((r) => r.classList.contains("on")) || rows[0];
     const st = pick?.querySelector(".ssh-st");
-    const tone = !st ? "" : pick.querySelector(".dot-ok") ? "" : pick.querySelector(".dot-err") ? "err" : "off";
+    const isOk = !!pick?.querySelector(".dot-ok");
+    const tone = !st ? "" : isOk ? "" : pick.querySelector(".dot-err") ? "err" : "off";
+    const want = ["Conectar", "Editar", "Copiar comando"];
     hero($("ssh-hero"), pick ? {
-      icon: "⇄", title: txt(pick, ".ssh-name"), sub: txt(pick, ".ssh-dest"), badge: st?.textContent.toUpperCase(), tone,
-      buttons: [...pick.querySelectorAll(".ssh-acts button")].slice(0, 3),
+      icon: "⇄", title: txt(pick, ".ssh-name"), sub: pick.dataset.sub, badge: isOk ? "ONLINE" : st?.textContent.toUpperCase(), tone,
+      buttons: want.map((w) => [...pick.querySelectorAll(".ssh-acts button")].find((b) => b.textContent === w)).filter(Boolean),
     } : {});
-    const on = rows.filter((r) => r.querySelector(".dot-ok")).length;
-    const conn = sess.filter((r) => r.querySelector(".dot-ok")).length;
-    stats($("ssh-stats"), [["Servidores", rows.length, "salvos neste PC"], ["Online", on, "responderam ao teste"], ["Sessões", sess.length, `${conn} conectadas`]]);
+    const mine = pick ? sess.filter((r) => txt(r, ".ssh-name") === txt(pick, ".ssh-name")) : [];
+    const key = pick?.dataset.key || "";
+    stats($("ssh-stats"), [["Latência", pick?.dataset.ms ? pick.dataset.ms + " ms" : "–", "último teste"],
+      ["Sessões", mine.length, `${mine.filter((r) => r.querySelector(".dot-ok")).length} conectadas`],
+      ["Chave", key ? key.split(/[\/]/).pop() : "padrão", key || "chaves do OpenSSH do Windows"]]);
     $("ssh-sess-none").hidden = sess.length > 0;
   }
 
@@ -152,7 +169,9 @@
     const q = $("hist-q").value.trim(), first = items[0];
     hero($("hist-hero"), first ? {
       icon: "⌕", title: q || txt(first, ".hist-cmd"), sub: `${plural(items.length, "comando", "comandos")} em ${plural(by.size, "sessão", "sessões")}`,
-      badge: "CTRL+SHIFT+F", tone: "key", buttons: [first.querySelector(".hist-run")].filter(Boolean),
+      badge: "CTRL+SHIFT+F", tone: "key",
+      buttons: [Object.assign(el("button", null, "Rodar de novo"), { onclick: () => first.querySelector(".hist-run")?.click() }),
+        Object.assign(el("button", null, "Copiar"), { onclick: () => navigator.clipboard?.writeText(first.dataset.cmd).then(() => banner("Comando copiado.", "ok"), () => banner("Não foi possível copiar.", "err")) })],
     } : {});
     stats($("hist-stats"), [["Sucesso", ok, items.length ? `${Math.round((ok * 100) / items.length)}%` : ""], ["Erros", err, "saída ≠ 0"], ["Sessões", by.size, "no histórico"]]);
     if (window.histSessions) return histSessions();
@@ -187,7 +206,7 @@
       const li = el("li", "card"), k = x.kind === "ssh" ? "ssh" : sessionKind(x.label);
       li.dataset.kind = k;
       const t = el("span", "card-txt");
-      t.append(el("span", "card-t", x.label), el("span", "card-s mono", `${dayName(x.day)} · ${x.pc}`));
+      t.append(el("span", "card-t", x.label), el("span", "card-s mono", `${dayName(x.day).toLowerCase()} ${new Date(+x.last_ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`));
       const n = el("span", "card-st " + (x.errors ? "dot-err" : "dot-ok"), `● ${x.count}`);
       n.setAttribute("aria-label", `${plural(x.count, "comando", "comandos")}${x.errors ? `, ${x.errors} com erro` : ""} em ${dayName(x.day)}`);
       const i = el("span", "tile", KIND_ICON[k] || KIND_ICON.shell);

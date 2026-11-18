@@ -8,7 +8,7 @@ import { Hero, HeroBtn, ListPanel, Panel, Row, Section, SettingRow, ToggleRow, T
 import { C, TAB_SPACE, errText } from './theme.ts';
 
 /** Nomes dos temas do PC como a tela Configurações do desktop os mostra. */
-const THEME_NAME: Record<string, string> = { dark: 'Escuro', cosmo: 'Cosmo', light: 'Claro', contrast: 'Alto contraste' };
+const THEME_NAME: Record<string, string> = { dark: 'Aurora', ametista: 'Ametista', magenta: 'Magenta', cosmo: 'Cosmo' };
 /** Próximo valor da lista (volta ao começo): cada toque avança um passo, como o tamanho da fonte do terminal. */
 const next = <T,>(list: readonly T[], v: T) => list[(list.indexOf(v) + 1) % list.length];
 /** Próximo degrau acima do valor atual (valor fora dos degraus, como 82%, sobe para o seguinte). */
