@@ -766,6 +766,16 @@ fn with_cmd_prompt(p: Profile) -> Profile {
     if p.osc || !matches!(p.command.trim().to_ascii_lowercase().as_str(), "cmd" | "cmd.exe") { return p; }
     Profile { command: format!("{} /k prompt {}", p.command.trim(), screen::CMD_PROMPT), osc: true, ..p }
 }
+/// Log de conexão do host em `<dados>/host.log` (sem chaves, SDP nem dados do terminal); acima de 1 MB recomeça.
+// ponytail: arquivo simples com corte por tamanho; trocar por crate de log se precisar de níveis/rotação.
+pub fn hlog(msg: &str) {
+    use std::io::Write;
+    let Ok(dir) = default_data_dir() else { return };
+    let p = dir.join("host.log");
+    if std::fs::metadata(&p).is_ok_and(|m| m.len() > 1 << 20) { let _ = std::fs::rename(&p, dir.join("host.log.1")); }
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) { let _ = writeln!(f, "{ts} {msg}"); }
+}
 /// Fase da tentativa atual, lida por [`Service::status`] e pelo backoff do laço de presença.
 #[derive(Default)]
 struct Link { state: std::sync::atomic::AtomicU8, ready: AtomicBool }
@@ -782,7 +792,8 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
     let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(65536)).max_frame_size(Some(65536));
     let connected = tokio::time::timeout(Duration::from_secs(5), tokio_tungstenite::connect_async_with_config(format!("{url}/v1/ws/{room}"), Some(config), false)).await;
-    let Ok(Ok((mut ws, _))) = connected else { return Err("signaling unreachable".into()) };
+    let Ok(Ok((mut ws, _))) = connected else { hlog(&format!("sinalização inacessível: {url}")); return Err("signaling unreachable".into()) };
+    hlog("presença: WS conectado");
     ws.send(json!({"v":1,"type":"hello","connection_id":null,"request_id":"host","payload":{"role":"host"}}).to_string().into()).await?;
     // Saída de todas as tentativas passa por um único escritor (este laço).
     let (out, mut out_rx) = mpsc::unbounded_channel::<String>();
@@ -804,13 +815,14 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
                 if routes.contains_key(id) || (once && first.is_some()) { return Err("signal phase".into()); }
                 link.state.store(RUNNING, Relaxed);
                 link.ready.store(true, Relaxed);
+                hlog(&format!("ready: cliente {id}"));
                 let (tx, inbox) = mpsc::unbounded_channel();
                 routes.insert(id.clone(), tx);
                 let task = tokio::spawn(attempt(id.clone(), rid, host.clone(), stop.clone(), out.clone(), inbox));
                 if once { first = Some(task); } else { attempts.retain(|h| !h.is_finished()); attempts.push(task); }
             }
             // Papel de host já ocupado: `error` LIMIT_EXCEEDED + `close busy` (§4); o laço espera com backoff.
-            (Some("error"), _, Value::Null) if m["payload"]["code"] == "LIMIT_EXCEEDED" => return Err("busy".into()),
+            (Some("error"), _, Value::Null) if m["payload"]["code"] == "LIMIT_EXCEEDED" => { hlog("presença: papel de host ocupado (busy)"); return Err("busy".into()) }
             // Envelope de uma tentativa: só a dona recebe. Id já encerrado: descartado (§3.6).
             (_, _, Value::String(id)) if m["type"] != "hello" => { if let Some(tx) = routes.get(id) { let _ = tx.send(raw.to_string()); } }
             (Some("close"), _, Value::Null) => return Ok(()),
@@ -823,6 +835,7 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
 async fn attempt(id: String, rid: [u8; 16], host: Arc<Host>, stop: tokio::sync::watch::Receiver<bool>, out: mpsc::UnboundedSender<String>, inbox: mpsc::UnboundedReceiver<String>) -> Result<()> {
     let result = negotiate(&id, rid, host, stop, &out, inbox).await;
     let reason = if result.is_ok() { "done" } else { "protocol_error" };
+    hlog(&format!("tentativa {id}: {}", result.as_ref().err().map_or("fim ok".into(), |e| format!("erro {e}"))));
     let _ = out.send(message("close", json!({"reason":reason}), &id));
     result
 }
@@ -863,7 +876,7 @@ async fn negotiate(id: &str, rid: [u8; 16], host: Arc<Host>, mut stop: tokio::sy
                 _ = handler.failed.notified() => return Err("callback overflow".into()),
                 event = rx.recv() => match event.ok_or("events closed")? {
                     Event::Failed => return Err("connection closed".into()),
-                    Event::Connected => { connected_at.get_or_insert_with(Instant::now); continue }
+                    Event::Connected => { hlog(&format!("tentativa {id}: DTLS conectado")); connected_at.get_or_insert_with(Instant::now); continue }
                     Event::Channel(c) => {
                         let slot = match c.label().await?.as_str() { "pty-channel" => &mut channel, "file-channel" => &mut file, _ => return Err("channel properties".into()) };
                         if slot.is_some() || !c.ordered().await? || c.max_retransmits().await?.is_some() || c.max_packet_life_time().await?.is_some() || !c.protocol().await?.is_empty() { return Err("channel properties".into()); }
@@ -890,7 +903,7 @@ async fn negotiate(id: &str, rid: [u8; 16], host: Arc<Host>, mut stop: tokio::sy
                 // ponytail: revogação vista ao reler o arquivo a cada 1 s; trocar por IPC se precisar de menos.
                 _ = revocation.tick(), if client_pk.is_some() => {
                     match host.reload().map_err(|_| auth::Error::IoError).and_then(|_| host.check_trusted(&client_pk.unwrap())) {
-                        Err(e) => { if e != auth::Error::IoError { hub().s.revoke(&client_pk.unwrap(), now_ms()); files_revoke(&client_pk.unwrap()); } e }
+                        Err(e) => { hlog(&format!("tentativa {id}: revogação/reload {e:?}")); if e != auth::Error::IoError { hub().s.revoke(&client_pk.unwrap(), now_ms()); files_revoke(&client_pk.unwrap()); } e }
                         Ok(()) => continue,
                     }
                 }
@@ -1216,7 +1229,9 @@ async fn presence(i: &Inner) {
     let mut attempts = Vec::new();
     while !*stop.borrow() {
         i.link.ready.store(false, Relaxed);
-        let failed = run(&i.server, &i.room, i.host.clone(), &i.link, stop.clone(), &mut attempts, false).await.is_err();
+        let r = run(&i.server, &i.room, i.host.clone(), &i.link, stop.clone(), &mut attempts, false).await;
+        hlog(&format!("presença saiu: {}", r.as_ref().err().map_or("ok".into(), |e| e.to_string())));
+        let failed = r.is_err();
         let ready = i.link.ready.load(Relaxed);
         if ready { backoff = Duration::from_secs(1); } else if failed { i.link.state.store(ERROR, Relaxed); }
         tokio::select! { _ = tokio::time::sleep(backoff) => {}, _ = stopped(&mut stop) => break }
@@ -2583,6 +2598,8 @@ a=max-message-size:1024
             let allowed = [
                 r#"println!("{}", qrcode::QrCode::new(qr.as_bytes())?.render::<qrcode::render::unicode::Dense1x2>().build());"#,
                 r#"if result.is_err() { eprintln!("Echo attempt failed"); std::process::exit(1); }"#,
+                // host.log: só fase, connection_id, URL do Worker e texto do erro; nunca chave, OTK, SDP ou terminal.
+                r#"if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) { let _ = writeln!(f, "{ts} {msg}"); }"#,
             ];
             for line in prod.lines().filter(|l| ["print!", "println!", "eprint", "log::", "tracing::", "dbg!", "write!(", "writeln!(", "stdout", "stderr"].iter().any(|m| l.contains(m))) {
                 assert!(allowed.contains(&line.trim()), "print/log não revisado: {line}");
