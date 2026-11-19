@@ -1851,11 +1851,15 @@ mod tests {
         let d = tmp();
         let Some(u) = unc(&d) else { return };
         let mut f = files(&d);
-        f.lim.net_ms = 50;
         let (data, fid) = (bytes(10), new_fid());
+        // init e chunks rodam com o prazo padrão: com 50 ms, carga na máquina estourava o prazo no meio do envio (flaky).
         init(&mut f, &fid, &u.join("dst"), "x", &data, false);
         f.env.pre_verify = |_| std::thread::sleep(std::time::Duration::from_millis(300));
-        assert_eq!(types(&send_all(&mut f, fid, &data)), ["file_ack", "error:EXPIRED"]);
+        let mut out = vec![];
+        for i in 0..total_chunks(data.len() as u64) as u32 { out.extend(send(&mut f, fid, i, piece(&data, i), NOW).unwrap()); }
+        f.lim.net_ms = 50; // só a finalização (commit por tempo) roda com prazo curto; a pausa de 300 ms sempre o excede
+        out.extend(ticked(&mut f, NOW + 100));
+        assert_eq!(types(&out), ["file_ack", "error:EXPIRED"]);
         let empty = || fs::read_dir(d.0.join("dst")).unwrap().count() == 0;
         for _ in 0..100 { if empty() { break; } std::thread::sleep(std::time::Duration::from_millis(50)); }
         assert!(empty(), "thread abandonada não renomeia e apaga o temporário");
