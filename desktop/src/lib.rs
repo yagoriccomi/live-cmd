@@ -1155,7 +1155,10 @@ async fn negotiate(id: &str, rid: [u8; 16], host: Arc<Host>, mut stop: tokio::sy
             };
             if let Some(ch) = &channel {
                 // Drena o erro antes do close da PeerConnection; sem isso o peer pode ver só o OnClose.
-                let _ = tokio::time::timeout(Duration::from_secs(2), async {
+                // N12: revogação fecha em ≤ 1 s (poll de 250 ms + isto). Com upload em voo o ack do Fail pode esperar um RTO de SCTP (~1 s,
+                // perda no loopback/rede), então a revogação só espera 400 ms pelo ack; o cliente vê o fechamento de qualquer jeito.
+                let drain = if auth_error == auth::Error::Revoked { Duration::from_millis(400) } else { Duration::from_secs(2) };
+                let _ = tokio::time::timeout(drain, async {
                     ch.send_text(&Msg::Fail(auth_error).to_json(id)).await?;
                     while ch.outstanding_bytes().await? > 0 { tokio::time::sleep(Duration::from_millis(10)).await; }
                     Ok::<(), webrtc::error::Error>(())
@@ -1568,6 +1571,7 @@ mod tests {
         const MESSAGE_BYTES: usize = 16384;
         const MAX_MESSAGES: usize = 1024;
         const BUFFER_LIMIT: usize = 32768;
+        const RESUME_DEADLINE_SECS: u64 = 20;
         let started = std::time::Instant::now();
         let (tx_a, mut rx_a) = mpsc::channel(260);
         let (tx_b, mut rx_b) = mpsc::channel(260);
@@ -1654,9 +1658,11 @@ mod tests {
                 let resumed_at = std::time::Instant::now();
                 let resume = async {
                     // Reutiliza a MESMA future: o timeout anterior não cancela o envio.
-                    tokio::time::timeout(Duration::from_secs(5), &mut pending).await??;
+                    // Receptor sem poll fecha a janela SCTP; quem reabre é a sonda de janela zero no RTO (1 s, dobra a cada
+                    // tentativa, sem knob no rtc-sctp). A retomada cai no 1º, 2º ou 3º disparo (~1/3/7 s após a drenagem
+                    // começar, mais com CPU disputada): o prazo cobre o backoff, não o tempo de cópia. Sem retomada = falha.
+                    tokio::time::timeout(Duration::from_secs(RESUME_DEADLINE_SECS), &mut pending).await.map_err(|_| "retomada: send pendente não concluiu no prazo")??;
                     let elapsed = resumed_at.elapsed();
-                    if elapsed > Duration::from_secs(5) { return Err("retomada excedeu 5s".into()); }
                     eprintln!("loopback_backpressure: retomada={elapsed:?}");
                     Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
                 };
@@ -1699,7 +1705,7 @@ mod tests {
                     Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
                 };
                 let drain_bounded = async {
-                    tokio::time::timeout(Duration::from_secs(10), drain).await?
+                    tokio::time::timeout(Duration::from_secs(RESUME_DEADLINE_SECS + 5), drain).await.map_err(|_| "drenagem não concluiu no prazo")?
                 };
                 tokio::try_join!(resume, drain_bounded)?;
                 return Ok(());
@@ -2429,7 +2435,12 @@ a=max-message-size:1024
     pub(crate) static HEAVY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     /// Staging de teste único por processo (`FILES` é global): todo teste que abre `Service` chama antes, senão `FILES` fica num diretório que o teste apaga.
     pub(crate) fn fdir() -> PathBuf {
-        files_open(&std::env::temp_dir().join(format!("live-cmd-d4c-{}", std::process::id())));
+        static FRESH: std::sync::Once = std::sync::Once::new();
+        let dir = std::env::temp_dir().join(format!("live-cmd-d4c-{}", std::process::id()));
+        // O PID do Windows é reaproveitado e nada apaga esta pasta: o staging de um processo anterior com o mesmo PID
+        // (file_id fixo dos testes) fazia o `file_upload_init` virar INVALID_MESSAGE. Começa sempre do zero.
+        FRESH.call_once(|| { let _ = std::fs::remove_dir_all(&dir); });
+        files_open(&dir);
         files().as_ref().unwrap().f.data_dir().to_path_buf()
     }
     fn new_fid(n: u8) -> [u8; 16] { let mut b = [n; 16]; (b[6], b[8]) = ((b[6] & 0x0f) | 0x40, (b[8] & 0x3f) | 0x80); b }
