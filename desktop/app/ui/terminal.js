@@ -134,7 +134,9 @@ function renderTabs() {
     x.onclick = (e) => { e.stopPropagation(); closeTab(t.key); };
     b.append(x);
     b.onclick = () => { if (t.key !== active) activate(t.key); };
-    b.onauxclick = (e) => { if (e.button === 1) closeTab(t.key); };
+    // Botão do meio: sem preventDefault no mousedown o WebView2 entra em autoscroll e o auxclick some.
+    b.onmousedown = (e) => { if (e.button === 1) e.preventDefault(); };
+    b.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t.key); } };
     return b;
   }));
   $("empty").hidden = tabs.length > 0;
@@ -340,6 +342,9 @@ async function newSession(conn, profile) {
 }
 
 const dropCwds = {}; // pasta atual por aba (OSC 7), para arrastar/colar em remoto
+// Destino SSH da aba local (`{user, host, port}` vindo do host), ou null.
+const sshOf = (t) => t?.conn === LOCAL ? conns[LOCAL].sessions.find((s) => s.session_id === t.sid)?.ssh ?? null : null;
+const sshGit = {}; // git da pasta remota por aba SSH (ssh_git)
 
 // ---------- Lista lateral ----------
 async function refresh(conn) {
@@ -357,6 +362,16 @@ async function refreshRemotes() {
   for (const r of v.remotes) conns[r.id] = { sessions: [], profiles: [], ...conns[r.id], name: r.name, status: r.status };
   renderSidebar();
 }
+
+// Git da aba em foco (branch/pendências) a cada 15 s.
+setInterval(() => { const c = active?.split("/")[0]; if (c && conns[c] && !document.hidden) refresh(c); }, 15000);
+// Aba SSH em foco: git roda no servidor pelo próprio ssh (só com pasta conhecida pelo OSC 7).
+setInterval(async () => {
+  const t = activeTab(), ssh = sshOf(t), cwd = t && dropCwds[t.key];
+  if (!ssh || !cwd || document.hidden) return;
+  const g = await invoke("ssh_git", { target: ssh, cwd }).catch(() => null);
+  if (JSON.stringify(g) !== JSON.stringify(sshGit[t.key] ?? null)) { sshGit[t.key] = g; renderSidebar(); }
+}, 15000);
 
 // Item 14: latência e tipo de rota de cada PC conectado, a cada 5 s.
 setInterval(async () => {
@@ -386,7 +401,27 @@ function sessionItem(conn, s) {
   const kind = sessionKind(s.label);
   li.dataset.kind = kind;
   const txt = el("span", "card-txt");
-  txt.append(name, el("span", "card-s mono", dropCwds[key] || (s.state === "exited" ? "sessão encerrada" : "")));
+  const cwd = dropCwds[key] || s.cwd;
+  txt.append(name, el("span", "card-s mono", cwd || (s.state === "exited" ? "sessão encerrada" : "")));
+  // Aba em foco: dados do projeto, clique copia.
+  if (key === active) {
+    const chips = el("span", "card-chips");
+    const chip = (text, val, title) => {
+      const c = el("span", "chip mono", text);
+      c.title = title + " (clique copia)";
+      c.onclick = (e) => { e.stopPropagation(); invoke("clip_copy", { text: String(val) }).then(() => banner("Copiado: " + val), (err) => banner(msg(err), "err")); };
+      chips.append(c);
+    };
+    if (cwd) chip("📁 pasta", cwd, cwd);
+    const git = s.ssh ? sshGit[key] : s.git;
+    if (git) {
+      chip("⎇ " + (git.branch || "HEAD solto"), git.branch, "Branch atual");
+      chip(git.dirty ? `● ${git.dirty} pendente${git.dirty > 1 ? "s" : ""}` : "✓ limpo", git.dirty ? `${git.dirty} arquivo(s) sem commit` : "sem pendências", "Pendências de commit");
+    }
+    const ms = Number(s.created_at_ms);
+    if (ms) { const d = new Date(ms).toLocaleString("pt-BR"); chip("🕒 " + d, d, "Criado em"); }
+    txt.append(chips);
+  }
   const st = el("span", s.state === "exited" ? "card-st muted" : "card-st dot-ok", s.state === "exited" ? "● parado" : "● ativo");
   b.append(el("span", "tile", KIND_ICON[kind]), txt, st);
   b.firstChild.setAttribute("aria-hidden", "true");
@@ -408,7 +443,24 @@ function newButton(conn) {
 
 function renderSidebar() {
   if ($("sidebar").querySelector("input.rename")) { tabsLater = true; return; }
-  $("local-ul").replaceChildren(...conns[LOCAL].sessions.filter((s) => !sideFilter || sessionKind(s.label) === sideFilter).map((s) => sessionItem(LOCAL, s)));
+  const shown = conns[LOCAL].sessions.filter((s) => !sideFilter || (s.ssh ? "ssh" : sessionKind(s.label)) === sideFilter);
+  $("local-ul").replaceChildren(...shown.filter((s) => !s.ssh).map((s) => sessionItem(LOCAL, s)));
+  // Categoria SSH: um card por servidor (user@host:porta), abas embaixo, como os outros PCs.
+  const servers = new Map();
+  for (const s of shown.filter((s) => s.ssh)) {
+    const id = `${s.ssh.user}@${s.ssh.host}:${s.ssh.port}`;
+    servers.set(id, [...(servers.get(id) || []), s]);
+  }
+  $("h-ssh").hidden = !servers.size;
+  $("ssh-ul").replaceChildren(...[...servers].map(([id, list]) => {
+    const li = el("li"), b = el("button"), ul = el("ul");
+    b.type = "button";
+    b.append(el("span", "dot-ok", "⇄"), el("span", null, list[0].label || id), el("span", "muted small conn-q", id));
+    b.onclick = () => openSession(LOCAL, list[0]);
+    ul.append(...list.map((s) => sessionItem(LOCAL, s)));
+    li.append(b, ul);
+    return li;
+  }));
   window.auroraTerm?.();
   $("remote-ul").replaceChildren(...remoteOrder.map((id) => {
     const c = conns[id], st = c.status.state, li = el("li"), b = el("button");
@@ -825,12 +877,15 @@ function paste() {
   if (!t || t.exited != null) return $("screen").focus();
   const dir = dropCwds[t.key] ?? null;
   // Print: local vai para <pasta>\.live-cmd; remoto é enviado ao outro PC. Cola o caminho (claude/codex anexam pelo caminho).
-  const sshId = window.sshTabs?.[t.sid] ?? null;
-  invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir, sshId }).then((name) => {
+  const ssh = sshOf(t);
+  invoke("term_paste", { conn: t.conn, sessionId: t.sid, targetDir: dir, ssh }).then((name) => {
     if (!name) return;
     const local = t.conn === LOCAL;
-    send(sshId ? name : dir ? `"${dir.replace(/[\\/]+$/, "")}\\${name}"` : local ? `"${name}"` : name);
-    banner(sshId ? `Print enviado ao servidor: ${name}.` : local ? `Print salvo: ${name}.` : `Print enviado: ${name} em ${dir ?? "pasta do usuário no outro PC"}.`);
+    // Local e host novo já devolvem o caminho absoluto; host antigo devolve só o nome e o caminho é deduzido.
+    const abs = /^([A-Za-z]:)?[\\/]/.test(name);
+    const path = local || abs ? name : dir ? `${dir.replace(/[\\/]+$/, "")}\\screenshots\\${name}` : `~\\Pictures\\Screenshots\\${name}`;
+    send(`"${path}"`);
+    banner(ssh ? `Print enviado ao servidor: ${path}.` : local ? `Print salvo: ${name}.` : `Print enviado: ${path}.`);
   }).catch((err) => banner(msg(err), "err"));
   $("screen").focus();
 }
@@ -984,14 +1039,28 @@ window.__TAURI__.event.listen("term-cwd", (e) => { dropCwds[e.payload.key] = e.p
 window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload }) => {
   if (payload.type !== "drop" || !payload.paths?.length) return;
   const t = target();
+  const ssh = sshOf(t);
+  if (ssh) {
+    // SSH: grava no servidor (<pasta>/archives ou ~/Downloads/archives) e cola os caminhos remotos.
+    const out = [];
+    for (const [i, path] of payload.paths.entries()) {
+      const name = path.split(/[\\/]/).pop();
+      banner(`Enviando ${name} ao servidor (${i + 1}/${payload.paths.length})…`);
+      try { out.push(await invoke("term_upload", { conn: t.conn, path, sessionId: t.sid, ssh, cwd: dropCwds[t.key] ?? null })); }
+      catch (e) { return banner(`Falha ao enviar ${name}: ${msg(e)}`, "err"); }
+    }
+    send(out.map((p) => `"${p}"`).join(" "));
+    banner(`${out.length} arquivo(s) enviado(s) ao servidor.`);
+    return $("screen").focus();
+  }
   if (!t || t.conn === LOCAL) { send(payload.paths.map((p) => `"${p}"`).join(" ")); $("screen").focus(); return; }
   for (const [i, path] of payload.paths.entries()) {
     const name = path.split(/[\/]/).pop();
     banner(`Enviando ${name} (${i + 1}/${payload.paths.length})…`);
-    try { await invoke("term_upload", { conn: t.conn, path, targetDir: dropCwds[t.key] ?? null }); }
+    try { await invoke("term_upload", { conn: t.conn, path, sessionId: t.sid }); }
     catch (e) { return banner(`Falha ao enviar ${name}: ${msg(e)}`, "err"); }
   }
-  banner(`${payload.paths.length} arquivo(s) enviado(s) para ${dropCwds[t.key] ?? "a pasta padrão do outro PC"}.`);
+  banner(`${payload.paths.length} arquivo(s) enviado(s) para ${dropCwds[t.key] ? dropCwds[t.key].replace(/[\\/]+$/, "") + "\\archives" : "Downloads\\archives no outro PC"}.`);
 });
 
 // Ajuda (F1).
@@ -999,7 +1068,7 @@ const KEYS = [["Ctrl+C", "Copiar seleção (sem seleção: interrompe, ^C)"], ["
   ["Ctrl+Shift+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba"],
   ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+Shift+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
   ["Ctrl+roda do mouse", "Zoom da fonte"], ["Roda do mouse", "Rolar histórico"],
-  ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito", "Colar (com seleção: copiar)"], ["Shift+botão direito / Shift+F10 / ☰", "Menu do terminal"], ["Arrastar arquivo", "Local: cola o caminho · Remoto: envia ao outro PC"]];
+  ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito", "Colar (com seleção: copiar)"], ["Shift+botão direito / Shift+F10 / ☰", "Menu do terminal"], ["Arrastar arquivo", "Local: cola o caminho · Remoto/SSH: envia e cola o caminho"]];
 // Atalhos remapeáveis: ação fixa, tecla editável no F1 (clique na tecla e pressione a nova). Salvos no localStorage.
 const SHORTCUTS = {
   paste: ["Colar", () => paste(), "Ctrl+V"], find: ["Buscar", () => openFind(), "Ctrl+Shift+F"], clear: ["Limpar", () => clearTab(), "Ctrl+Shift+K"],

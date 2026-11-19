@@ -116,6 +116,96 @@ pub fn ssh_reconnect(app: AppHandle, session_id: String, cols: u16, rows: u16) -
     Ok(v["session_id"].as_str().unwrap_or_default().to_owned())
 }
 
+/// Servidor de uma aba SSH pelo destino que o host lista (`{user, host, port}`); a chave sai do `ssh.json`.
+pub fn server_for(app: &AppHandle, t: &Value) -> Result<settings::SshServer, String> {
+    let s = settings::ssh_servers(&app.state::<App>().data_dir)?.into_iter()
+        .find(|s| s.host == t["host"].as_str().unwrap_or_default() && s.user == t["user"].as_str().unwrap_or_default() && Some(s.port as u64) == t["port"].as_u64())
+        .ok_or("NOT_FOUND")?;
+    s.target().check()?;
+    Ok(s)
+}
+
+/// Texto entre aspas simples do sh remoto (`'` vira `'\''`).
+pub fn sq(s: &str) -> String { format!("'{}'", s.replace('\'', r"'\''")) }
+
+/// Roda `cmd` no sh do servidor sem PTY. `BatchMode`: só chave/agente; `timeout` mata o ssh.exe.
+// ponytail: uma conexão ssh por consulta (git/CPU a cada 15/3 s); OpenSSH do Windows não tem ControlMaster.
+pub fn exec(s: &settings::SshServer, cmd: &str, timeout: Duration) -> Option<String> { exec_in(s, cmd, None, timeout) }
+
+/// `exec` com `input` no stdin do comando remoto.
+pub fn exec_in(s: &settings::SshServer, cmd: &str, input: Option<Vec<u8>>, timeout: Duration) -> Option<String> {
+    let mut c = std::process::Command::new(live_cmd_echo::ssh::exe());
+    c.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-T", "-p", &s.port.to_string()]);
+    if !s.user.is_empty() { c.arg("-l").arg(&s.user); }
+    if let Some(k) = &s.key { c.arg("-i").arg(k); }
+    // `--` antes do host: nada depois vira opção do ssh.
+    c.arg("--").arg(&s.host).arg(cmd);
+    #[cfg(windows)] { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
+    let stdin = if input.is_some() { std::process::Stdio::piped() } else { std::process::Stdio::null() };
+    let mut ch = c.stdin(stdin).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().ok()?;
+    if let (Some(data), Some(mut w)) = (input, ch.stdin.take()) { std::thread::spawn(move || { let _ = std::io::Write::write_all(&mut w, &data); }); }
+    let mut out = ch.stdout.take()?;
+    let rd = std::thread::spawn(move || { let mut v = Vec::new(); std::io::Read::read_to_end(&mut out, &mut v).map(|_| v) });
+    let end = Instant::now() + timeout;
+    let st = loop {
+        if let Some(st) = ch.try_wait().ok()? { break st; }
+        if Instant::now() > end { let _ = ch.kill(); let _ = ch.wait(); return None; }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let v = rd.join().ok()?.ok()?;
+    st.success().then(|| String::from_utf8_lossy(&v).into_owned())
+}
+
+/// Grava `data` no servidor: `<cwd>/<sub>` ou `~/<fallback>` (cria a pasta). Devolve o caminho absoluto remoto.
+/// Vai pelo stdin do ssh (`cat >`), sem scp: o caminho remoto não passa por outra regra de aspas.
+pub fn put(s: &settings::SshServer, cwd: Option<&str>, sub: &str, fallback: &str, name: &str, data: Vec<u8>) -> Result<String, String> {
+    let name: String = name.chars().filter(|c| !matches!(c, '/' | '\\') && !c.is_control()).collect();
+    if name.is_empty() || name == "." || name == ".." { return Err("INVALID_MESSAGE".into()); }
+    let dir = match cwd { Some(d) => format!("{}/{sub}", sq(d)), None => format!("\"$HOME\"/{fallback}") };
+    let cmd = format!("d={dir} && mkdir -p \"$d\" && cd \"$d\" && cat > {} && printf '%s/%s' \"$PWD\" {}", sq(&name), sq(&name));
+    exec_in(s, &cmd, Some(data), Duration::from_secs(120)).filter(|p| p.starts_with('/')).ok_or_else(|| "SCP_FAILED".into())
+}
+
+/// Branch e pendências da pasta remota (`{branch, dirty}`); `null` fora de repositório ou sem acesso.
+#[tauri::command(async)]
+pub fn ssh_git(app: AppHandle, target: Value, cwd: String) -> Result<Value, String> {
+    let s = server_for(&app, &target)?;
+    let Some(out) = exec(&s, &format!("git -C {} status --porcelain -b", sq(&cwd)), Duration::from_secs(3)) else { return Ok(Value::Null) };
+    Ok(parse_git(&out))
+}
+
+/// `## main...origin/main` + uma linha por arquivo pendente.
+pub fn parse_git(out: &str) -> Value {
+    let mut l = out.lines();
+    let head = l.next().and_then(|h| h.strip_prefix("## ")).unwrap_or_default();
+    let branch = head.split("...").next().unwrap_or_default();
+    let branch = if branch.starts_with("HEAD (") { "" } else { branch.strip_prefix("No commits yet on ").unwrap_or(branch) };
+    json!({ "branch": branch, "dirty": l.filter(|x| !x.is_empty()).count() })
+}
+
+/// CPU (%) e memória do servidor Linux, no formato de `sys_stats`; outro SO devolve `null`.
+/// CPU = diferença de `/proc/stat` em 0,5 s.
+#[tauri::command(async)]
+pub fn ssh_stats(app: AppHandle, target: Value) -> Result<Value, String> {
+    let s = server_for(&app, &target)?;
+    let cmd = "head -1 /proc/stat; sleep 0.5; head -1 /proc/stat; nproc; grep -E '^(MemTotal|MemAvailable):' /proc/meminfo; hostname";
+    Ok(exec(&s, cmd, Duration::from_secs(4)).map_or(Value::Null, |o| parse_stats(&o)))
+}
+
+pub fn parse_stats(out: &str) -> Value {
+    let l: Vec<&str> = out.lines().collect();
+    let cpu = |x: &str| -> Option<(u64, u64)> {
+        let n: Vec<u64> = x.strip_prefix("cpu ")?.split_whitespace().filter_map(|v| v.parse().ok()).collect();
+        Some((n.iter().sum(), n.get(3)? + n.get(4).unwrap_or(&0)))
+    };
+    let (Some((t1, i1)), Some((t2, i2))) = (l.first().and_then(|x| cpu(x)), l.get(1).and_then(|x| cpu(x))) else { return Value::Null };
+    let kb = |k: &str| l.iter().find_map(|x| x.strip_prefix(k)?.split_whitespace().next()?.parse::<u64>().ok()).map(|v| v * 1024);
+    let (Some(total), Some(avail)) = (kb("MemTotal:"), kb("MemAvailable:")) else { return Value::Null };
+    let dt = (t2 - t1).max(1);
+    json!({ "cpu": 100.0 * (dt - (i2 - i1).min(dt)) as f64 / dt as f64, "cores": l.get(2).and_then(|x| x.trim().parse::<u64>().ok()),
+        "mem_total": total, "mem_used": total - avail.min(total), "host": l.get(5).map(|h| h.trim()) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +231,27 @@ Host c
         assert_eq!(c.iter().map(|s| (s.name.as_str(), s.host.as_str(), s.port, s.user.as_str())).collect::<Vec<_>>(),
             [("a", "10.0.0.1", 2222, ""), ("b", "10.0.0.1", 2222, ""), ("c", "c", 22, "deploy")]);
         assert_eq!(probe("h", 0, Duration::from_secs(1))["code"], "INVALID_SSH_HOST");
+    }
+
+    #[test]
+    fn remoto_git_cpu_aspas() {
+        assert_eq!(sq("/a b/it's"), r"'/a b/it'\''s'");
+        assert_eq!(parse_git("## main...origin/main [ahead 1]
+ M a
+?? b
+"), json!({"branch":"main","dirty":2}));
+        assert_eq!(parse_git("## HEAD (no branch)
+"), json!({"branch":"","dirty":0}));
+        assert_eq!(parse_git("## No commits yet on dev
+"), json!({"branch":"dev","dirty":0}));
+        let v = parse_stats("cpu  100 0 100 800 0 0 0 0 0 0
+cpu  150 0 150 900 0 0 0 0 0 0
+4
+MemTotal: 1000 kB
+MemAvailable: 250 kB
+srv
+");
+        assert_eq!((v["cpu"].as_f64().unwrap().round(), v["cores"].as_u64(), v["mem_used"].as_u64(), v["host"].as_str()), (50.0, Some(4), Some(768000), Some("srv")));
+        assert_eq!(parse_stats("Darwin"), Value::Null);
     }
 }

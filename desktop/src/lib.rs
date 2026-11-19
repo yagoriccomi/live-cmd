@@ -146,7 +146,11 @@ impl Hub {
     /// Sessão SSH: o PTY roda o `ssh.exe` direto (argumentos já validados), sem shell.
     #[allow(clippy::too_many_arguments)]
     fn open_ssh(&mut self, sid: Option<Sid>, ssh: ssh::Ssh, cwd: Option<PathBuf>, label: Option<String>, cols: u16, rows: u16, now: u64) -> std::result::Result<Sid, auth::Error> {
-        let p = Profile { label: "SSH".into(), command: ssh.command_line(), osc: false };
+        // osc: true lê o OSC 7 (pasta) e 133 que o shell remoto emitir; sem eles a aba só fica sem pasta.
+        // Id definido antes do PTY: nomeia o tmux da aba (`live-<8 hex>`), igual ao reconectar.
+        let sid = Some(match sid { Some(s) => s, None => session::new_sid().map_err(|_| auth::Error::NotFound)? });
+        let tag: String = sid.unwrap()[..4].iter().map(|b| format!("{b:02x}")).collect();
+        let p = Profile { label: "SSH".into(), command: ssh.command_line(&format!("live-{tag}")), osc: true };
         let sid = self.open_with(sid, SSH_PROFILE, p, cwd, label, cols, rows, now)?;
         self.ssh.insert(sid, ssh);
         Ok(sid)
@@ -165,7 +169,7 @@ impl Hub {
     /// Não reconecta sozinho (evitaria pedir senha de novo sem ninguém olhando); `ssh_reconnect` abre o ssh.exe.
     #[allow(clippy::too_many_arguments)]
     fn open_ssh_dormant(&mut self, sid: Sid, ssh: ssh::Ssh, cwd: Option<PathBuf>, label: Option<String>, cols: u16, rows: u16, now: u64) -> std::result::Result<Sid, auth::Error> {
-        let sid = self.register(Some(sid), Box::new(Dormant), SSH_PROFILE, false, cwd, label, cols, rows, now)?;
+        let sid = self.register(Some(sid), Box::new(Dormant), SSH_PROFILE, true, cwd, label, cols, rows, now)?;
         self.ssh.insert(sid, ssh);
         Ok(sid)
     }
@@ -203,7 +207,7 @@ impl Hub {
         let list: Vec<(Saved, Vec<u8>)> = self.s.saved(SAVED_TAIL).into_iter().filter_map(|(sid, label, cols, rows, tail)| Some((Saved {
             id: proto::uuid_str(&sid), profile: self.prof.get(&sid)?.clone(), label, cwd: self.cwds.get(&sid).cloned(), cols, rows, tail: String::new(),
             agent: self.ai.get(&sid).map(|a| a.0.clone()), args: self.ai.get(&sid).map(|a| a.1.clone()).unwrap_or_default(),
-            ssh: self.ssh.get(&sid).cloned(),
+            ssh: self.ssh.get(&sid).cloned(), created: self.s.created(&sid).unwrap_or(0),
         }, tail))).collect();
         Some((path, (SAVE_SEQ.fetch_add(1, Relaxed) + 1, list)))
     }
@@ -222,6 +226,7 @@ impl Hub {
                 None => self.open(Some(sid), &x.profile, cwd, label, cols, rows, now_ms()),
             };
             if opened.is_err() { continue; }
+            if x.created > 0 { self.s.set_created(sid, x.created); }
             // Arquivo antigo (texto puro) não decifra: usa como veio.
             let raw = B64.decode(&x.tail).unwrap_or_default();
             let mut out = dpapi(&raw, false).unwrap_or(raw);
@@ -375,12 +380,26 @@ impl Hub {
                 if let Some(a) = agent { self.start_ai(sid, a, args.unwrap_or_default(), resume_id.is_some()); self.note_agent(&sid); self.save(); }
                 json!({"type":"session_create_ok","session_id":proto::uuid_str(&sid)})
             }
-            Req::List => json!({"type":"session_list_ok","sessions":self.s.list(),
+            Req::List { info } => json!({"type":"session_list_ok","sessions":self.s.list().into_iter().map(|mut x| {
+                    // Pasta e git vão na lista: o card mostra e copia (campos opcionais, celular ignora).
+                    if !info { return x; }
+                    let sid = auth::uuid_bytes(x["session_id"].as_str().unwrap_or_default());
+                    // SSH: destino vai junto (a UI acha o servidor mesmo após reiniciar); pasta é remota, git roda lá pela UI.
+                    let ssh = sid.and_then(|s| self.ssh.get(&s));
+                    if let Some(t) = ssh { x["ssh"] = json!({"user": t.user, "host": t.host, "port": t.port}); }
+                    if let Some(d) = sid.and_then(|s| self.cwds.get(&s)) {
+                        x["cwd"] = d.to_string_lossy().into_owned().into();
+                        if ssh.is_none() && let Some(g) = git_info(d) { x["git"] = g; }
+                    }
+                    x
+                }).collect::<Vec<_>>(),
                 "profiles":self.profiles.iter().map(|(id, p)| json!({"profile_id":id,"label":p.label})).collect::<Vec<_>>()}),
             Req::Attach { session_id, from_offset, size } => {
                 let (ok, mut outs) = self.s.attach(conn, pk, session_id, from_offset, size, now)?;
                 self.sync(&session_id);
-                if self.plain.contains(&session_id) { outs.push(Out::Ctl(screen::cwd_unknown(&session_id))); }
+                // Pasta conhecida (criação/restauração/OSC 7) vai no attach; senão `cmd` anuncia null.
+                if let Some(d) = self.cwds.get(&session_id) { outs.push(Out::Ctl(screen::event_body(&session_id, &screen::Event::Cwd(d.to_string_lossy().into_owned())))); }
+                else if self.plain.contains(&session_id) { outs.push(Out::Ctl(screen::cwd_unknown(&session_id))); }
                 self.deliver(outs.into_iter().map(|o| (conn, o)));
                 ok
             }
@@ -535,7 +554,33 @@ const SAVED_TAIL: usize = 128 << 10;
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 struct Saved { id: String, profile: String, label: String, cwd: Option<PathBuf>, cols: u16, rows: u16, tail: String,
     #[serde(default)] agent: Option<String>, #[serde(default)] args: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")] ssh: Option<ssh::Ssh> }
+    #[serde(default, skip_serializing_if = "Option::is_none")] ssh: Option<ssh::Ssh>,
+    #[serde(default)] created: u64 }
+
+/// Branch e nº de arquivos pendentes da pasta; `None` fora de repositório git.
+// ponytail: roda git a cada session_list (síncrono, ~30 ms/sessão); cachear se a lista crescer.
+fn git_info(dir: &std::path::Path) -> Option<Value> {
+    let run = |args: &[&str]| {
+        let mut c = std::process::Command::new("git");
+        c.arg("-C").arg(dir).args(args);
+        #[cfg(windows)] { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
+        // Git travado (drive de rede) não segura o hub: 2 s e mata o processo.
+        let mut ch = c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().ok()?;
+        let mut out = ch.stdout.take()?;
+        let rd = std::thread::spawn(move || { let mut v = Vec::new(); std::io::Read::read_to_end(&mut out, &mut v).map(|_| v) });
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let st = loop {
+            if let Some(st) = ch.try_wait().ok()? { break st; }
+            if std::time::Instant::now() > end { let _ = ch.kill(); let _ = ch.wait(); return None; }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let v = rd.join().ok()?.ok()?;
+        st.success().then(|| String::from_utf8_lossy(&v).into_owned())
+    };
+    let branch = run(&["branch", "--show-current"])?.trim().to_owned();
+    let dirty = run(&["status", "--porcelain"]).map_or(0, |s| s.lines().count());
+    Some(json!({"branch": branch, "dirty": dirty}))
+}
 /// Perfil gravado das sessões SSH (o comando sai de `Saved::ssh`, não de `profiles.json`).
 const SSH_PROFILE: &str = "ssh";
 /// Aviso no fim da saída de uma sessão SSH restaurada sem processo.
@@ -693,6 +738,15 @@ fn file_worker(conn: ConnId, pk: Pk, id: String, host: Arc<Host>) -> (mpsc::Send
     });
     (tx, orx)
 }
+/// Destino de upload por tipo: print vai a `<projeto>\screenshots` ou `~\Pictures\Screenshots`; arquivo a `<projeto>\archives` ou `~\Downloads\archives`.
+fn upload_dir(kind: &str, project: Option<&Path>, home: &Path) -> PathBuf {
+    match (kind, project) {
+        ("print", Some(p)) => p.join("screenshots"),
+        ("print", None) => home.join("Pictures").join("Screenshots"),
+        (_, Some(p)) => p.join("archives"),
+        (_, None) => home.join("Downloads").join("archives"),
+    }
+}
 /// Um item da fila. `Err` = fatal; `Ok(false)` = `error` fatal do peer (fecha sem responder).
 fn file_step(conn: ConnId, pk: &Pk, id: &str, host: &Host, m: FIn, out: &mpsc::UnboundedSender<FOut>) -> std::result::Result<bool, auth::Error> {
     use files::{Control as C, Pull, Req as F};
@@ -708,7 +762,10 @@ fn file_step(conn: ConnId, pk: &Pk, id: &str, host: &Host, m: FIn, out: &mpsc::U
             let sid = match &c { C::Request { req: F::FsList { session_id, .. } | F::UploadInit { session_id, .. } | F::BatchUploadInit { session_id, .. }, .. } => *session_id, _ => None };
             let mut cwd = sid.and_then(|s| hub().cwds.get(&s).cloned());
             // Upload sem `target_dir` nem cwd conhecido (cmd não anuncia OSC 7): pasta do usuário em vez de NOT_FOUND.
-            if cwd.is_none() && matches!(c, C::Request { req: F::UploadInit { batch: None, .. }, .. }) { cwd = std::env::var_os("USERPROFILE").map(PathBuf::from); }
+            if let C::Request { req: F::UploadInit { batch: None, target_dir: None, kind: Some(k), .. }, .. } = &c {
+                cwd = std::env::var_os("USERPROFILE").map(|h| upload_dir(k, cwd.as_deref(), Path::new(&h)));
+                if let Some(d) = &cwd { let _ = std::fs::create_dir_all(d); }
+            } else if cwd.is_none() && matches!(c, C::Request { req: F::UploadInit { batch: None, .. }, .. }) { cwd = std::env::var_os("USERPROFILE").map(PathBuf::from); }
             Some((c, cwd))
         }
         _ => None,
@@ -1290,6 +1347,14 @@ async fn presence(i: &Inner) {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn upload_dir_by_kind() {
+        let (h, p) = (Path::new(r"C:\Users\u"), Path::new(r"D:\proj"));
+        assert_eq!(upload_dir("print", Some(p), h), Path::new(r"D:\proj\screenshots"));
+        assert_eq!(upload_dir("print", None, h), Path::new(r"C:\Users\u\Pictures\Screenshots"));
+        assert_eq!(upload_dir("file", Some(p), h), Path::new(r"D:\proj\archives"));
+        assert_eq!(upload_dir("file", None, h), Path::new(r"C:\Users\u\Downloads\archives"));
+    }
     use super::*;
     /// Persistência: sessão salva em disco volta com mesmo id, rótulo, pasta e histórico; a fechada some do arquivo.
     #[test]
@@ -1438,8 +1503,8 @@ mod tests {
         let sid = auth::uuid_bytes(id).unwrap();
         let target = ssh::Ssh { user: "u".into(), host: "127.0.0.1".into(), port: 1, key: None, ..Default::default() };
         h.restore(vec![
-            Saved { id: id.into(), profile: SSH_PROFILE.into(), label: "srv".into(), cwd: None, cols: 80, rows: 24, tail: B64.encode("antes"), agent: None, args: String::new(), ssh: Some(target) },
-            Saved { id: "4f1e2d3c-4b5a-4968-8778-695a4b3c2d1e".into(), profile: SSH_PROFILE.into(), label: "ruim".into(), cwd: None, cols: 80, rows: 24, tail: String::new(), agent: None, args: String::new(),
+            Saved { id: id.into(), profile: SSH_PROFILE.into(), label: "srv".into(), cwd: None, cols: 80, rows: 24, tail: B64.encode("antes"), agent: None, args: String::new(), ssh: Some(target), created: 0 },
+            Saved { id: "4f1e2d3c-4b5a-4968-8778-695a4b3c2d1e".into(), profile: SSH_PROFILE.into(), label: "ruim".into(), cwd: None, cols: 80, rows: 24, tail: String::new(), agent: None, args: String::new(), created: 0,
                 ssh: Some(ssh::Ssh { user: "-oProxyCommand=calc".into(), host: "h".into(), port: 22, key: None, ..Default::default() }) },
         ]);
         let list = h.s.list();
@@ -2654,6 +2719,9 @@ a=max-message-size:1024
                 r#"println!("{}", qrcode::QrCode::new(qr.as_bytes())?.render::<qrcode::render::unicode::Dense1x2>().build());"#,
                 r#"if result.is_err() { eprintln!("Echo attempt failed"); std::process::exit(1); }"#,
                 // host.log: só fase, connection_id, URL do Worker e texto do erro; nunca chave, OTK, SDP ou terminal.
+                // git_info: lê a saída do git (branch/status), não imprime nada.
+                r#"let mut ch = c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().ok()?;"#,
+                r#"let mut out = ch.stdout.take()?;"#,
                 r#"if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) { let _ = writeln!(f, "{ts} {msg}"); }"#,
             ];
             for line in prod.lines().filter(|l| ["print!", "println!", "eprint", "log::", "tracing::", "dbg!", "write!(", "writeln!(", "stdout", "stderr"].iter().any(|m| l.contains(m))) {

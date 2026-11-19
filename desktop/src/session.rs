@@ -126,7 +126,7 @@ impl Session {
 #[derive(Default)]
 pub struct Sessions { s: HashMap<Sid, Session> }
 
-fn new_sid() -> R<Sid> {
+pub fn new_sid() -> R<Sid> {
     let mut b = [0u8; 16];
     getrandom::getrandom(&mut b).map_err(|_| IoError)?;
     b[6] = (b[6] & 0x0f) | 0x40;
@@ -191,6 +191,10 @@ impl Sessions {
     }
 
     /// `session_rename`: o rótulo vai para o disco junto com a sessão (`sessions.json`, ver `lib.rs`).
+    /// Restauração: mantém a data de criação original.
+    pub fn set_created(&mut self, sid: Sid, ms: u64) { if let Some(x) = self.s.get_mut(&sid) { x.created = ms; } }
+    pub fn created(&self, sid: &Sid) -> Option<u64> { self.s.get(sid).map(|x| x.created) }
+
     pub fn rename(&mut self, sid: Sid, label: String) -> R<Value> {
         self.s.get_mut(&sid).ok_or(NotFound)?.label = Some(label);
         Ok(json!({"type":"session_rename_ok"}))

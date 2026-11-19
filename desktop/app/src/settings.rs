@@ -185,6 +185,7 @@ pub struct SshServer {
     /// "Manter vivo" em segundos (0 = desligado) e "Reconectar ao cair".
     #[serde(default, skip_serializing_if = "is_zero")] pub keepalive_s: u16,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")] pub auto_reconnect: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")] pub tmux: bool,
 }
 fn is_zero(n: &u16) -> bool { *n == 0 }
 
@@ -192,7 +193,7 @@ const SSH_FILE: &str = "ssh.json";
 
 impl SshServer {
     pub fn target(&self) -> live_cmd_echo::ssh::Ssh {
-        live_cmd_echo::ssh::Ssh { user: self.user.clone(), host: self.host.clone(), port: self.port, key: self.key.clone(), keepalive_s: self.keepalive_s, auto_reconnect: self.auto_reconnect }
+        live_cmd_echo::ssh::Ssh { user: self.user.clone(), host: self.host.clone(), port: self.port, key: self.key.clone(), keepalive_s: self.keepalive_s, auto_reconnect: self.auto_reconnect, tmux: self.tmux }
     }
 }
 

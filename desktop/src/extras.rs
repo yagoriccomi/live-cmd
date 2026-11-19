@@ -199,7 +199,7 @@ fn parse_known(ty: &str, o: &Map<String, Value>) -> R<Req> {
             let key = match o.get("key") { None | Some(Value::Null) => None, Some(_) => Some(s("key")?.trim().to_owned()).filter(|k| !k.is_empty()) };
             let keepalive_s = match o.get("keepalive_s") { None => 0, Some(v) => v.as_u64().filter(|n| *n <= u16::MAX as u64).ok_or(InvalidMessage)? as u16 };
             let auto_reconnect = match o.get("auto_reconnect") { None => false, Some(v) => v.as_bool().ok_or(InvalidMessage)? };
-            let target = crate::ssh::Ssh { user: s("user")?.trim().to_owned(), host: s("host")?.trim().to_owned(), port, key, keepalive_s, auto_reconnect };
+            let target = crate::ssh::Ssh { user: s("user")?.trim().to_owned(), host: s("host")?.trim().to_owned(), port, key, keepalive_s, auto_reconnect, tmux: false };
             target.check().map_err(|_| InvalidMessage)?;
             Req::SshSave { server_id, label, target }
         }
@@ -616,7 +616,7 @@ mod tests {
         assert_eq!(get("agent_default_set_minimo"), Req::AgentDefaultSet(AgentDefault { agent: "codex".into(), cwd: None, args: String::new() }));
         assert_eq!(get("agent_default_set"), Req::AgentDefaultSet(AgentDefault { agent: "claude".into(), cwd: Some("C:\\proj\\api".into()), args: "--model opus".into() }));
         assert_eq!(get("ssh_save"), Req::SshSave { server_id: None, label: "Produção".into(), target: crate::ssh::Ssh { user: "deploy".into(), host: "10.0.0.5".into(), port: 22, key: None, ..Default::default() } });
-        assert_eq!(get("ssh_save_opcoes"), Req::SshSave { server_id: None, label: "Produção".into(), target: crate::ssh::Ssh { user: "deploy".into(), host: "10.0.0.5".into(), port: 22, key: None, keepalive_s: 30, auto_reconnect: true } });
+        assert_eq!(get("ssh_save_opcoes"), Req::SshSave { server_id: None, label: "Produção".into(), target: crate::ssh::Ssh { user: "deploy".into(), host: "10.0.0.5".into(), port: 22, key: None, keepalive_s: 30, auto_reconnect: true, tmux: false } });
         assert_eq!(get("agent_list"), Req::AgentList { ext: false });
         assert_eq!(get("agent_list_ext"), Req::AgentList { ext: true });
         assert_eq!(get("ssh_list_ext"), Req::SshList { ext: true });

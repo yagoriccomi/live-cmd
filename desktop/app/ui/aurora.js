@@ -94,8 +94,10 @@
     if (document.hidden) return;
     const conn = activeTab()?.conn || LOCAL;
     if (conns[conn]?.status?.state !== "ready") return;
-    const v = await invoke("sys_stats", { conn }).catch(() => null);
-    if (!v) return;
+    // Aba SSH: CPU/memória do servidor (Linux); outro SO mostra "—" em vez dos números deste PC.
+    const ssh = sshOf(activeTab());
+    const v = await invoke(ssh ? "ssh_stats" : "sys_stats", ssh ? { target: ssh } : { conn }).catch(() => null);
+    if (!v) { if (ssh) { setStat(1, "—", "servidor"); setStat(2, "—", ""); } return; }
     if (v.cpu != null) setStat(1, Math.round(v.cpu) + "%", v.cores ? plural(v.cores, "núcleo", "núcleos") : "");
     if (v.mem_total) setStat(2, gb(v.mem_used), "de " + Math.round(v.mem_total / 2 ** 30) + " GB");
     if (v.host && $("pp-host")) $("pp-host").textContent = v.host;

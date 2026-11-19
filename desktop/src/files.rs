@@ -120,7 +120,7 @@ fn entries(v: Option<&Value>) -> R<Vec<E>> {
 pub enum Req {
     FsList { path: Option<String>, session_id: Option<Fid>, cursor: Option<String> },
     /// `batch` = (`batch_id`, `rel_path`) no lugar de `filename`/`target_dir` (D13).
-    UploadInit { file_id: Fid, session_id: Option<Fid>, filename: String, target_dir: Option<String>, size: u64, overwrite: bool, sha256: [u8; 32], batch: Option<(Fid, String)> },
+    UploadInit { file_id: Fid, session_id: Option<Fid>, filename: String, target_dir: Option<String>, size: u64, overwrite: bool, sha256: [u8; 32], batch: Option<(Fid, String)>, kind: Option<&'static str> },
     DownloadInit { file_id: Fid, path: String, batch: Option<(Fid, String)> },
     Get { file_id: Fid, ranges: Vec<(u32, u32)> },
     Resume { file_id: Fid, cursor: Option<String> },
@@ -184,7 +184,7 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
         "file_upload_init" => {
             let batch = o.contains_key("batch_id");
             if batch { fields(&["file_id", "batch_id", "rel_path", "size_bytes", "chunk_size", "total_chunks", "sha256"], &["session_id"])?; }
-            else { fields(&["file_id", "session_id", "filename", "target_dir", "size_bytes", "chunk_size", "total_chunks", "sha256", "overwrite"], &[])?; }
+            else { fields(&["file_id", "session_id", "filename", "target_dir", "size_bytes", "chunk_size", "total_chunks", "sha256", "overwrite"], &["kind"])?; }
             let size = parse_u64(&o["size_bytes"])?;
             let batch = if batch { Some((id("batch_id")?, s("rel_path")?.to_owned())) } else { None };
             let filename = match &batch { Some((_, r)) => r.rsplit('/').next().unwrap_or("").to_owned(), None => s("filename")?.to_owned() };
@@ -193,7 +193,9 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
                 && valid_filename(&filename) && target_dir.as_deref().is_none_or(valid_path) && batch.as_ref().is_none_or(|b| rel_ok(&b.1));
             if !ok { return Err(InvalidMessage); }
             let overwrite = if batch.is_some() { false } else { o["overwrite"].as_bool().ok_or(InvalidMessage)? };
-            Req::UploadInit { file_id: id("file_id")?, session_id: opt_id("session_id")?, filename, target_dir, size, overwrite, sha256: unhex(s("sha256")?).ok_or(InvalidMessage)?, batch }
+            // `kind`: o host escolhe a subpasta (print/arquivo); só os dois valores fixos, nada vira caminho.
+            let kind = match opt_s("kind")?.as_deref() { None => None, Some("print") => Some("print"), Some("file") => Some("file"), _ => return Err(InvalidMessage) };
+            Req::UploadInit { file_id: id("file_id")?, session_id: opt_id("session_id")?, filename, target_dir, size, overwrite, sha256: unhex(s("sha256")?).ok_or(InvalidMessage)?, batch, kind }
         }
         "file_download_init" if o.contains_key("batch_id") => {
             fields(&["file_id", "batch_id", "rel_path"], &[])?;
@@ -946,6 +948,8 @@ impl Files {
         }
         let code = 'f: {
             let fin = t.dir.join(&t.filename);
+            // `path`: caminho absoluto gravado, para o cliente colar sem adivinhar a pasta (campo opcional).
+            let saved = fin.to_string_lossy().into_owned();
             let (d, id, f2, ow) = (t.dir.clone(), t.dir_id, fin.clone(), t.overwrite);
             match net(ms, &t.dir, move |_| if !same_id(&d, id) { Err(IoError) } else if !ow && fs::symlink_metadata(&f2).is_ok() { Err(AlreadyExists) } else { Ok(()) }) {
                 Ok(Ok(())) => {}
@@ -955,7 +959,7 @@ impl Files {
             t.file = None;
             if is_net(&t.dir) && !fail {
                 match net_put(part.clone(), tmp, fin, t.overwrite, t.sha, pre, ms) {
-                    Ok(()) => { self.delete(fid, now); return json!({"type":"file_complete","file_id":uuid_str(fid)}); }
+                    Ok(()) => { self.delete(fid, now); return json!({"type":"file_complete","file_id":uuid_str(fid),"path":saved}); }
                     Err(e) => { t.file = fs::OpenOptions::new().read(true).write(true).open(&part).ok(); break 'f e; }
                 }
             }
@@ -968,7 +972,7 @@ impl Files {
                 Ok(tmp.clone())
             })().and_then(|src| move_file(&src, &fin, t.overwrite));
             match r {
-                Ok(()) => { self.delete(fid, now); return json!({"type":"file_complete","file_id":uuid_str(fid)}); }
+                Ok(()) => { self.delete(fid, now); return json!({"type":"file_complete","file_id":uuid_str(fid),"path":saved}); }
                 Err(e) => {
                     rm(&tmp);
                     t.file = fs::OpenOptions::new().read(true).write(true).open(&part).ok();

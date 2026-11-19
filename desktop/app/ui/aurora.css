@@ -81,6 +81,9 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .card-txt { min-width:0; flex:1; display:flex; flex-direction:column; }
 .card-t { font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .card-s { font-size:11px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.card-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
+.card-chips .chip { font-size:10.5px; padding:1px 7px; border-radius:999px; background:var(--chip); cursor:copy; white-space:nowrap; }
+.card-chips .chip:hover { filter:brightness(1.15); }
 .card-s:empty::before { content:"\00a0"; }
 .card-st { font-size:11px; font-weight:700; white-space:nowrap; margin-left:auto; }
 .card-st.muted { color:var(--off); }
@@ -114,6 +117,14 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .term-body .term-tabs, .term-body [role=tablist] { min-height:0; background:none; border:0; padding:0; gap:14px; box-shadow:none; backdrop-filter:none; }
 .term-body [role=tab] { padding:0 0 2px; font-size:14px; color:var(--text-muted); border-bottom-width:2px; }
 .term-body [role=tab][aria-selected=true] { color:var(--text); font-weight:700; }
+/* Barra de abas sem fundo próprio: abas flutuam como pílulas sobre o fundo principal; a em foco destacada. */
+.term-bar, .term-bar .term-tabs { background:transparent; border:0; box-shadow:none; backdrop-filter:none; }
+.term-bar { padding:2px 0; gap:6px; }
+.term-bar .term-tabs { gap:6px; min-height:0; padding:0; align-items:center; }
+.term-bar .term-tabs [role=tab] { padding:5px 12px; border:0; border-radius:999px; background:transparent; color:var(--text-muted); font-weight:500; }
+.term-bar .term-tabs [role=tab]:hover { background:var(--chip); color:var(--text); }
+.term-bar .term-tabs [role=tab][aria-selected=true] { background:var(--card-on); color:var(--card-on-ink); font-weight:700; }
+.term-bar .term-tabs [role=tab][aria-selected=true] .x { color:inherit; }
 .term-body .term-area { flex:1; position:relative; min-height:0; }
 .term-body .terminal { padding:0; font-family:var(--font-mono); font-size:13px; line-height:1.65; }
 .term-body .terminal > div { height:1.65em; }

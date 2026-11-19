@@ -73,7 +73,8 @@ pub enum Req {
     /// `ssh`: abre o `ssh.exe` com esse destino no lugar do shell do perfil (exclui `agent`).
     /// `resume_id`: recria uma sessão de agente encerrada com o mesmo id e retoma a conversa (exige `agent`).
     Create { profile_id: String, cols: u16, rows: u16, label: Option<String>, cwd: Option<String>, agent: Option<String>, args: Option<String>, resume_id: Option<[u8; 16]>, ssh: Option<crate::ssh::Ssh> },
-    List,
+    /// `info`: desktop pede pasta e git em cada sessão (celular não pede; seu parser é estrito).
+    List { info: bool },
     Attach { session_id: [u8; 16], from_offset: Option<u64>, size: Option<(u16, u16)> },
     Detach([u8; 16]),
     Close([u8; 16]),
@@ -128,7 +129,7 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
             if ssh.is_some() && agent.is_some() { return Err(InvalidMessage); }
             Req::Create { profile_id: s("profile_id")?.to_owned(), cols: n("cols")?, rows: n("rows")?, label, cwd, agent, args, resume_id, ssh }
         }
-        "session_list" => { fields(&[], &[])?; Req::List }
+        "session_list" => { fields(&[], &["info"])?; Req::List { info: match o.get("info") { None => false, Some(v) => v.as_bool().ok_or(InvalidMessage)? } } }
         "sys_stats" => { fields(&[], &[])?; Req::Stats }
         "dir_list" => {
             fields(&["path"], &[])?;

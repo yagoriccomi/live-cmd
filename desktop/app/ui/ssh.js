@@ -185,7 +185,6 @@
     const { cols, rows } = size();
     try {
       const sid = await invoke("ssh_connect", { id: s.id, cols, rows });
-      (window.sshTabs ??= {})[sid] = s.id; // Ctrl+V com print vai por scp para este servidor
       closePanel(false);
       await openSession(LOCAL, { session_id: sid, label: s.name, state: "running" });
       refresh(LOCAL);
@@ -220,7 +219,7 @@
     $("ssh-t").textContent = s ? "Editar servidor" : "Adicionar servidor";
     $("ssh-name").value = cur.name; $("ssh-user").value = cur.user; $("ssh-host").value = cur.host;
     $("ssh-port").value = cur.port; $("ssh-key").value = cur.key || "";
-    $("ssh-alive").value = cur.keepalive_s || 0; $("ssh-retry").checked = !!cur.auto_reconnect;
+    $("ssh-alive").value = cur.keepalive_s || 0; $("ssh-retry").checked = !!cur.auto_reconnect; $("ssh-tmux").checked = !!cur.tmux;
     showErr(null);
     $("ssh-scrim").hidden = false;
     $("ssh-name").focus();
@@ -231,7 +230,7 @@
       const v = {
         id: cur.id, name: $("ssh-name").value.trim() || $("ssh-host").value.trim(), user: $("ssh-user").value.trim(), host: $("ssh-host").value.trim(),
         port: Number($("ssh-port").value || 22), key: $("ssh-key").value.trim() || null,
-        keepalive_s: Number($("ssh-alive").value || 0), auto_reconnect: $("ssh-retry").checked,
+        keepalive_s: Number($("ssh-alive").value || 0), auto_reconnect: $("ssh-retry").checked, tmux: $("ssh-tmux").checked,
       };
       const bad = !v.name || v.name.length > 40 ? "INVALID_SSH_NAME" : !okUser(v.user) ? "INVALID_SSH_USER" : !okHost(v.host) ? "INVALID_SSH_HOST"
         : !Number.isInteger(v.port) || v.port < 1 || v.port > 65535 ? "INVALID_SSH_PORT" : v.key && !okKey(v.key) ? "INVALID_SSH_KEY"

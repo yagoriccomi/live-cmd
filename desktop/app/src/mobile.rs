@@ -129,7 +129,7 @@ impl Provider for AppProvider {
     /// Mesma regra da tela desktop (`settings::save_ssh_server`): nome, destino validado, limite de 200.
     fn ssh_save(&self, server_id: Option<&str>, label: &str, t: &live_cmd_echo::ssh::Ssh) -> Result<String, String> {
         let s = settings::SshServer { id: server_id.unwrap_or_default().into(), name: label.into(), user: t.user.clone(), host: t.host.clone(), port: t.port, key: t.key.clone(),
-            keepalive_s: t.keepalive_s, auto_reconnect: t.auto_reconnect };
+            keepalive_s: t.keepalive_s, auto_reconnect: t.auto_reconnect, tmux: t.tmux };
         settings::save_ssh_server(&self.dir, s).map(|s| s.id)
     }
 

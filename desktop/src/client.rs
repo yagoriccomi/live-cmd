@@ -33,7 +33,7 @@ pub fn parse_pair_link(uri: &str, allowlist: &[&str]) -> std::result::Result<(Re
 
 enum Outbound { Ctl(Value), Frame(proto::Frame), Upload(Upload) }
 /// Envio de arquivo (C4 §4) pelo `file-channel`: `init` pronto, bytes em memória, resposta final em `done`.
-struct Upload { fid: [u8; 16], init: Value, data: Vec<u8>, done: smpsc::Sender<std::result::Result<(), String>> }
+struct Upload { fid: [u8; 16], init: Value, data: Vec<u8>, done: smpsc::Sender<std::result::Result<Option<String>, String>> }
 enum Wire { Local { conn: ConnId, pk: Pk, _reg: Reg }, Remote(mpsc::UnboundedSender<Outbound>) }
 struct Shared {
     on: OnEvent,
@@ -162,15 +162,15 @@ impl Client {
         self.send(proto::Frame { session_id: sid, seq: 0, op: Op::Resize { cols, rows } })
     }
 
-    /// Envia `path` deste PC para `target_dir` do host (`None` = pasta padrão do host). Bloqueia até `file_complete`.
+    /// Envia `path` deste PC para `target_dir` do host (`None` = pasta padrão do host). Bloqueia até `file_complete`; devolve o caminho gravado (host antigo: `None`).
     /// ponytail: arquivo inteiro em memória e sem `file_resume`; queda no meio = erro. Ler em blocos e retomar se arquivos grandes virarem uso comum.
-    pub fn upload(&self, path: &Path, target_dir: Option<&str>) -> std::result::Result<(), String> {
+    pub fn upload(&self, path: &Path, target_dir: Option<&str>, session_id: Option<&str>, kind: Option<&str>) -> std::result::Result<Option<String>, String> {
         let Wire::Remote(tx) = &self.wire else { return Err("INVALID_MESSAGE".into()) };
         let filename = path.file_name().and_then(|n| n.to_str()).ok_or("INVALID_MESSAGE")?.to_owned();
         let data = std::fs::read(path).map_err(|_| "IO_ERROR")?;
         let fid = auth::uuid_bytes(&uuid_v4()?).ok_or("IO_ERROR")?;
-        let init = json!({"type":"file_upload_init","file_id":proto::uuid_str(&fid),"session_id":null,"filename":filename,"target_dir":target_dir,
-            "size_bytes":data.len().to_string(),"chunk_size":files::CHUNK,"total_chunks":files::total_chunks(data.len() as u64),"sha256":files::hex(&files::sha(&data)),"overwrite":false});
+        let init = json!({"type":"file_upload_init","file_id":proto::uuid_str(&fid),"session_id":session_id,"filename":filename,"target_dir":target_dir,
+            "size_bytes":data.len().to_string(),"chunk_size":files::CHUNK,"total_chunks":files::total_chunks(data.len() as u64),"sha256":files::hex(&files::sha(&data)),"overwrite":false,"kind":kind});
         let (done, wait) = smpsc::channel();
         tx.send(Outbound::Upload(Upload { fid, init, data, done })).map_err(|_| "NOT_CONNECTED")?;
         wait.recv().map_err(|_| "NOT_CONNECTED")?
@@ -365,7 +365,7 @@ async fn file_pump(fc: Arc<dyn DataChannel>, id: String, mut rx: mpsc::Unbounded
         let _ = u.done.send(r);
     }
 }
-async fn upload_one(fc: &Arc<dyn DataChannel>, id: &str, u: &Upload) -> std::result::Result<(), String> {
+async fn upload_one(fc: &Arc<dyn DataChannel>, id: &str, u: &Upload) -> std::result::Result<Option<String>, String> {
     let e = |_: webrtc::error::Error| "NOT_CONNECTED".to_string();
     let mut init = u.init.clone();
     let rid = uuid_v4()?;
@@ -388,7 +388,8 @@ async fn upload_one(fc: &Arc<dyn DataChannel>, id: &str, u: &Upload) -> std::res
         } }).await.map_err(|_| "EXPIRED".to_string())?
     };
     let ok = next().await?;
-    if ok["type"] == "file_complete" { return Ok(()) }
+    let saved = |v: &Value| v["path"].as_str().map(str::to_owned);
+    if ok["type"] == "file_complete" { return Ok(saved(&ok)) }
     for r in ok["missing"]["ranges"].as_array().ok_or("INVALID_MESSAGE")? {
         let (a, b) = (r[0].as_u64().ok_or("INVALID_MESSAGE")? as usize, r[1].as_u64().ok_or("INVALID_MESSAGE")? as usize);
         for i in a..b {
@@ -400,7 +401,7 @@ async fn upload_one(fc: &Arc<dyn DataChannel>, id: &str, u: &Upload) -> std::res
             }
         }
     }
-    loop { let v = next().await?; if v["type"] == "file_complete" { return Ok(()) } }
+    loop { let v = next().await?; if v["type"] == "file_complete" { return Ok(saved(&v)) } }
 }
 impl From<webrtc::error::Error> for Stop { fn from(_: webrtc::error::Error) -> Self { Stop::Net } }
 impl From<tokio_tungstenite::tungstenite::Error> for Stop { fn from(_: tokio_tungstenite::tungstenite::Error) -> Self { Stop::Net } }
@@ -555,9 +556,9 @@ mod tests {
         std::fs::create_dir_all(&dst).unwrap();
         let data: Vec<u8> = (0..150_000u32).map(|i| (i * 7) as u8).collect();
         std::fs::write(&src, &data).unwrap();
-        c.upload(&src, dst.to_str()).unwrap();
+        c.upload(&src, dst.to_str(), None, None).unwrap();
         assert!(std::fs::read(dst.join("src.bin")).unwrap() == data);
-        assert_eq!(c.upload(&src, dst.to_str()).unwrap_err(), "ALREADY_EXISTS");
+        assert_eq!(c.upload(&src, dst.to_str(), None, None).unwrap_err(), "ALREADY_EXISTS");
         drop(c);
         drop(rt);
         let _ = std::fs::remove_dir_all(dir);

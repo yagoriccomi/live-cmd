@@ -18,6 +18,15 @@ pub struct Ssh {
     /// "Reconectar ao cair": o hub abre o ssh.exe de novo, com espera crescente, quando ele sai sozinho.
     #[serde(default, skip_serializing_if = "is_false")]
     pub auto_reconnect: bool,
+    /// "Manter sessão (tmux)": entra no tmux `live` do servidor (cria se faltar); reconectar retoma.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub tmux: bool,
+}
+
+/// Sem tmux no servidor: avisa e abre o shell normal.
+/// `name` só tem [0-9a-z-] (vem do id da aba), então vai sem aspas.
+fn tmux_cmd(name: &str) -> String {
+    format!("command -v tmux >/dev/null 2>&1 && exec tmux new -A -s {name}; echo 'tmux não instalado: shell sem sessão persistente'; exec \"${{SHELL:-sh}}\" -l")
 }
 
 fn is_zero(n: &u16) -> bool { *n == 0 }
@@ -58,20 +67,25 @@ impl Ssh {
     }
 
     /// Argumentos do `ssh.exe`, um por item; o host vai por último, depois das opções.
-    pub fn args(&self) -> Vec<String> {
+    pub fn args(&self) -> Vec<String> { self.args_for("live") }
+
+    /// `tmux_name`: sessão tmux da aba (uma por aba; reconectar com o mesmo id retoma).
+    pub fn args_for(&self, tmux_name: &str) -> Vec<String> {
         let mut a = vec!["-p".to_owned(), self.port.to_string()];
         // Sem usuário: o ssh usa o do `~/.ssh/config` ou o do Windows.
         if !self.user.is_empty() { a.extend(["-l".to_owned(), self.user.clone()]); }
         if let Some(k) = &self.key { a.extend(["-i".to_owned(), k.clone()]); }
         // Número já validado: a opção vai inteira num argumento só, nunca texto do usuário.
         if self.keepalive_s > 0 { a.extend(["-o".to_owned(), format!("ServerAliveInterval={}", self.keepalive_s)]); }
+        if self.tmux { a.push("-t".to_owned()); }
         a.push(self.host.clone());
+        if self.tmux { a.push(tmux_cmd(tmux_name)); }
         a
     }
 
     /// Linha para `CreateProcessW`: o ssh.exe direto, sem `cmd.exe`.
-    pub fn command_line(&self) -> String {
-        std::iter::once(exe()).chain(self.args()).map(|a| quote(&a)).collect::<Vec<_>>().join(" ")
+    pub fn command_line(&self, tmux_name: &str) -> String {
+        std::iter::once(exe()).chain(self.args_for(tmux_name)).map(|a| quote(&a)).collect::<Vec<_>>().join(" ")
     }
 }
 
@@ -132,7 +146,7 @@ mod tests {
         assert_eq!(ssh("root", "10.0.0.5", 2222, None).args(), ["-p", "2222", "-l", "root", "10.0.0.5"]);
         assert_eq!(ssh("u", "h", 22, Some(r"C:\Minhas Chaves\id")).args(), ["-p", "22", "-l", "u", "-i", r"C:\Minhas Chaves\id", "h"]);
         assert_eq!(Ssh { keepalive_s: 30, ..ssh("u", "h", 22, None) }.args(), ["-p", "22", "-l", "u", "-o", "ServerAliveInterval=30", "h"]);
-        let line = ssh("u", "h", 22, Some(r"C:\Minhas Chaves\id")).command_line();
+        let line = ssh("u", "h", 22, Some(r"C:\Minhas Chaves\id")).command_line("live");
         assert!(line.ends_with(r#" -p 22 -l u -i "C:\Minhas Chaves\id" h"#), "{line}");
         assert!(line.to_ascii_lowercase().contains("ssh.exe") && !line.contains("cmd"), "{line}");
     }
@@ -157,6 +171,11 @@ mod tests {
         // Campos novos: opcionais na leitura (ssh.json e sessions.json antigos) e fora do JSON quando desligados.
         let s: Ssh = serde_json::from_str(r#"{"user":"u","host":"h","port":22,"keepalive_s":60,"auto_reconnect":true}"#).unwrap();
         assert!(s.auto_reconnect && s.keepalive_s == 60);
+        let a = Ssh { tmux: true, ..ssh("u", "h", 22, None) }.args();
+        assert_eq!(&a[..5], ["-p", "22", "-l", "u", "-t"]);
+        assert_eq!(a[5], "h");
+        assert!(a[6].contains("tmux new -A -s live"));
+        assert!(Ssh { tmux: true, ..ssh("u", "h", 22, None) }.args_for("live-ab12").last().unwrap().contains("-s live-ab12;"));
         assert_eq!(serde_json::to_string(&ssh("u", "h", 22, None)).unwrap(), r#"{"user":"u","host":"h","port":22}"#);
     }
 }

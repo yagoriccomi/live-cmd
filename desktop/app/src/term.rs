@@ -263,7 +263,7 @@ fn with_view(app: &AppHandle, conn: &str, sid: &str, f: impl FnOnce(&mut View)) 
 
 #[tauri::command(async)]
 pub fn term_list(app: AppHandle, conn: String) -> Result<Value, String> {
-    client(&app, &conn)?.request(json!({ "type": "session_list" }))
+    client(&app, &conn)?.request(json!({ "type": "session_list", "info": true }))
 }
 
 #[tauri::command(async)]
@@ -324,35 +324,30 @@ pub fn term_input(app: AppHandle, conn: String, session_id: String, data: String
 /// `Ctrl+Shift+V`: texto do clipboard, com bracketed paste se o programa pediu.
 #[tauri::command(async)]
 /// Remoto com print no clipboard: envia o PNG para `target_dir` do outro PC e devolve o nome do arquivo.
-pub fn term_paste(app: AppHandle, conn: String, session_id: String, target_dir: Option<String>, ssh_id: Option<String>) -> Result<Option<String>, String> {
+pub fn term_paste(app: AppHandle, conn: String, session_id: String, target_dir: Option<String>, ssh: Option<Value>) -> Result<Option<String>, String> {
     let text = clip::read_text()?.replace("\r\n", "\r").replace('\n', "\r");
     // Sem texto (print/imagem): manda Ctrl+V cru; o programa (claude, codex…) lê a imagem do clipboard.
     if text.is_empty() {
         if conn == LOCAL && let Some(png) = clip::read_png()? {
             let name = format!("print-{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "IO_ERROR")?.as_millis());
-            // Aba SSH: envia por scp para a home do servidor e cola `~/print-….png`.
-            if let Some(id) = ssh_id {
-                let srv = settings::ssh_servers(&app.state::<App>().data_dir)?.into_iter().find(|s| s.id == id).ok_or("NOT_FOUND")?;
-                srv.target().check()?;
-                let tmp = std::env::temp_dir().join(&name);
-                std::fs::write(&tmp, png).map_err(|_| "IO_ERROR")?;
-                let r = scp(&srv, &tmp, &name);
-                let _ = std::fs::remove_file(&tmp);
-                return r.map(|()| Some(format!("~/{name}")));
+            // Aba SSH: grava no servidor (`<pasta>/screenshots` ou `~/Pictures/Screenshots`) e cola o caminho absoluto.
+            if let Some(t) = ssh {
+                let srv = crate::ssh::server_for(&app, &t)?;
+                return crate::ssh::put(&srv, target_dir.as_deref(), "screenshots", "Pictures/Screenshots", &name, png).map(Some);
             }
-            // Sem pasta conhecida (cmd/PowerShell não avisam a pasta por OSC 7): antes caía no Ctrl+V cru e nada
-            // acontecia; agora salva em %TEMP%\live-cmd e cola o caminho absoluto.
-            let d = target_dir.as_deref().map_or_else(|| std::env::temp_dir().join("live-cmd"), |dir| Path::new(dir).join(".live-cmd"));
+            // Print local: `<projeto>\screenshots`; sem pasta conhecida, `~\Pictures\Screenshots`. Cola o caminho absoluto.
+            let d = match target_dir.as_deref() { Some(dir) => Path::new(dir).join("screenshots"), None => Path::new(&std::env::var_os("USERPROFILE").ok_or("NOT_FOUND")?).join("Pictures").join("Screenshots") };
             std::fs::create_dir_all(&d).and_then(|()| std::fs::write(d.join(&name), png)).map_err(|_| "IO_ERROR")?;
-            return Ok(Some(if target_dir.is_some() { format!(".live-cmd\\{name}") } else { d.join(&name).to_string_lossy().into_owned() }));
+            return Ok(Some(d.join(&name).to_string_lossy().into_owned()));
         }
         if conn != LOCAL && let Some(png) = clip::read_png()? {
             let name = format!("print-{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "IO_ERROR")?.as_millis());
             let tmp = std::env::temp_dir().join(&name);
             std::fs::write(&tmp, png).map_err(|_| "IO_ERROR")?;
-            let r = client(&app, &conn)?.upload(&tmp, target_dir.as_deref());
+            let r = client(&app, &conn)?.upload(&tmp, None, Some(&session_id), Some("print"));
             let _ = std::fs::remove_file(&tmp);
-            return r.map(|()| Some(name));
+            // Host novo devolve o caminho absoluto; antigo, só o nome.
+            return r.map(|p| Some(p.unwrap_or(name)));
         }
         return client(&app, &conn)?.input(&session_id, b"").map(|()| None);
     }
@@ -360,21 +355,6 @@ pub fn term_paste(app: AppHandle, conn: String, session_id: String, target_dir: 
     with_view(&app, &conn, &session_id, |v| { bracketed = v.vt.screen().bracketed_paste(); v.vt.screen_mut().set_scrollback(0); });
     let data = if bracketed { format!("\x1b[200~{text}\x1b[201~") } else { text };
     client(&app, &conn)?.input(&session_id, data.as_bytes()).map(|()| None)
-}
-
-/// `scp` do OpenSSH, argumento a argumento (sem shell). `BatchMode`: sem chave/agente falha em vez de pedir senha.
-/// ponytail: servidor só com senha não recebe print; aceitar senha exigiria askpass.
-fn scp(s: &settings::SshServer, file: &Path, name: &str) -> Result<(), String> {
-    let mut c = std::process::Command::new(live_cmd_echo::ssh::exe().replace("ssh.exe", "scp.exe"));
-    c.args(["-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-P", &s.port.to_string()]);
-    if let Some(k) = &s.key { c.arg("-i").arg(k); }
-    // Alias fixo + HostName: IPv6 (`::1`) e host de uma letra (`c:`) não viram caminho local no scp do Windows.
-    c.arg("-o").arg(format!("HostName={}", s.host));
-    if !s.user.is_empty() { c.arg("-o").arg(format!("User={}", s.user)); }
-    let dest = format!("lcmd:{name}");
-    #[cfg(windows)] { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
-    let out = c.arg(file).arg(dest).output().map_err(|_| "SCP_MISSING")?;
-    if out.status.success() { Ok(()) } else { Err("SCP_FAILED".into()) }
 }
 
 #[tauri::command(async)]
@@ -466,9 +446,17 @@ pub fn term_export_file(app: AppHandle, conn: String, session_id: String, path: 
 
 /// Envia arquivo deste PC ao host remoto `conn`, em `target_dir` (pasta atual da sessão) ou na pasta padrão do host.
 #[tauri::command(async)]
-pub fn term_upload(app: AppHandle, conn: String, path: String, target_dir: Option<String>) -> Result<(), String> {
+/// Aba SSH (`ssh` = destino): vai para `<cwd>/archives` ou `~/Downloads/archives` no servidor; devolve o caminho remoto.
+pub fn term_upload(app: AppHandle, conn: String, path: String, session_id: Option<String>, ssh: Option<Value>, cwd: Option<String>) -> Result<Option<String>, String> {
+    if let Some(t) = ssh {
+        let srv = crate::ssh::server_for(&app, &t)?;
+        let p = std::path::Path::new(&path);
+        let data = std::fs::read(p).map_err(|_| "IO_ERROR")?;
+        let name = p.file_name().ok_or("INVALID_MESSAGE")?.to_string_lossy();
+        return crate::ssh::put(&srv, cwd.as_deref(), "archives", "Downloads/archives", &name, data).map(Some);
+    }
     if conn == LOCAL { return Err("INVALID_MESSAGE".into()); }
-    client(&app, &conn)?.upload(std::path::Path::new(&path), target_dir.as_deref())
+    client(&app, &conn)?.upload(std::path::Path::new(&path), None, session_id.as_deref(), Some("file"))
 }
 
 /// "Limpar": apaga tela e histórico da aba (vale também em cmd, que ignora Ctrl+L).

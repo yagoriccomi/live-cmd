@@ -39,6 +39,8 @@
     </div>
     <h3 id="h-local" class="sr-only">Este PC</h3>
     <ul id="local-ul" class="cards" aria-labelledby="h-local"></ul>
+    <h3 id="h-ssh" hidden>SSH</h3>
+    <ul id="ssh-ul" aria-labelledby="h-ssh"></ul>
     <h3 id="h-remote">Outros PCs</h3>
     <ul id="remote-ul" aria-labelledby="h-remote"></ul>
     <button type="button" class="add" id="remote-add">+ Adicionar PC</button>
@@ -388,6 +390,8 @@
     <input type="number" id="ssh-alive" min="0" max="3600" step="5" value="0" aria-describedby="ssh-alive-h">
     <p class="muted" id="ssh-alive-h">Envia um sinal a cada N segundos (ServerAliveInterval) para a conexão não cair parada. De 5 a 3600.</p>
     <label class="check toggle"><input type="checkbox" role="switch" id="ssh-retry"> <span>Reconectar ao cair<br><span class="muted">Tenta de novo sozinho, com espera crescente, se a conexão cair com erro.</span></span></label>
+    <label class="check toggle"><input type="checkbox" role="switch" id="ssh-tmux"> <span>Manter sessão (tmux)<br><span class="muted">Entra no tmux "live" do servidor; reconectar volta ao que estava rodando. Precisa do tmux instalado lá.</span></span></label>
+    <p class="muted">Pasta e git no card: o shell do servidor precisa avisar a pasta. No bash, ponha no <code>~/.bashrc</code>:<br><code class="mono">PROMPT_COMMAND='printf "\e]7;file://%s%s\a" "$HOSTNAME" "$PWD"'</code></p>
     <div class="alert alert-danger" role="alert" id="ssh-err" hidden><p></p></div>
     <div class="actions"><button type="button" id="ssh-cancel">Cancelar</button><button type="button" class="btn-primary" id="ssh-ok">Salvar</button></div>
   </dialog>
