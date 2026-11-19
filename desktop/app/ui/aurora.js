@@ -84,8 +84,8 @@
     for (const [p, , x] of PANELS) if (!$(p).hidden) $(x).click();
     $("screen").focus();
   };
-  // Celular e Ajustes abrem painéis desta janela (app.js expõe window.liveTab).
-  for (const [id, act] of [["nav-pair", "pair"], ["nav-settings", "settings"]])
+  // Celular, Dispositivos e Ajustes abrem painéis desta janela (app.js expõe window.liveTab).
+  for (const [id, act] of [["nav-pair", "pair"], ["nav-devices", "devices"], ["nav-settings", "settings"]])
     $(id).onclick = () => window.liveTab?.(act);
 
   // CPU e memória do PC (comando sys_stats, Win32). A cada 3 s, só com a janela visível.
