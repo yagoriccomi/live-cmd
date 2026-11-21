@@ -255,7 +255,57 @@ fn open_terminal(app: &AppHandle) {
 fn build_terminal(app: &AppHandle, url: &str) {
     let w = WebviewWindowBuilder::new(app, "terminal", WebviewUrl::App(url.into()))
         .title("Terminal Desktop — live-cmd").inner_size(1280.0, 800.0).min_inner_size(560.0, 360.0).center().build();
-    if let Ok(w) = w { apply_opacity(app, &w); }
+    if let Ok(w) = w { apply_opacity(app, &w); fit_window(&w, true); }
+}
+
+/// Encaixa a janela na área útil (sem a barra de tarefas) do monitor onde está o centro dela:
+/// encolhe se não couber e puxa para dentro o que ficou fora da tela. `grow`: ocupa a área útil toda.
+fn fit_window(w: &tauri::WebviewWindow, grow: bool) {
+    if w.is_maximized().unwrap_or(false) || w.is_minimized().unwrap_or(false) || w.is_fullscreen().unwrap_or(false) { return; }
+    let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else { return };
+    let (cx, cy) = (pos.x as f64 + size.width as f64 / 2.0, pos.y as f64 + size.height as f64 / 2.0);
+    let mon = w.monitor_from_point(cx, cy).ok().flatten().or_else(|| w.current_monitor().ok().flatten())
+        .or_else(|| w.primary_monitor().ok().flatten());
+    let Some(mon) = mon else { return };
+    let a = mon.work_area();
+    let (ax, ay, aw, ah) = (a.position.x, a.position.y, a.size.width as i32, a.size.height as i32);
+    let (mut ww, mut wh) = (size.width as i32, size.height as i32);
+    if grow { ww = aw; wh = ah; } else { ww = ww.min(aw); wh = wh.min(ah); }
+    let x = pos.x.clamp(ax, ax + aw - ww);
+    let y = pos.y.clamp(ay, ay + ah - wh);
+    if (ww, wh) != (size.width as i32, size.height as i32) {
+        // outer_size inclui a borda; set_size é do conteúdo: desconta a diferença.
+        let inner = w.inner_size().unwrap_or(size);
+        let (dw, dh) = (size.width as i32 - inner.width as i32, size.height as i32 - inner.height as i32);
+        let _ = w.set_size(tauri::PhysicalSize::new((ww - dw).max(1) as u32, (wh - dh).max(1) as u32));
+    }
+    if (x, y) != (pos.x, pos.y) { let _ = w.set_position(tauri::PhysicalPosition::new(x, y)); }
+}
+
+/// `Moved` chega a cada passo do arraste: encaixa só 400 ms depois do último, quando o usuário soltou.
+fn fit_later(w: &tauri::Window) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static GEN: AtomicU64 = AtomicU64::new(0);
+    let g = GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = w.app_handle().clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        if GEN.load(Ordering::SeqCst) != g { return; }
+        // Botão do mouse ainda preso: arraste parado no meio, não solta ainda.
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+        if unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } as u16 & 0x8000 != 0 { return fit_later_retry(&app, g); }
+        if let Some(w) = app.get_webview_window("terminal") { fit_window(&w, false); }
+    });
+}
+fn fit_later_retry(app: &AppHandle, g: u64) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        while unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(windows::Win32::UI::Input::KeyboardAndMouse::VK_LBUTTON.0 as i32) } as u16 & 0x8000 != 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = g;
+        if let Some(w) = app.get_webview_window("terminal") { fit_window(&w, false); }
+    });
 }
 
 /// Menu ☰ do terminal: abre Parear/Aparelhos/Configurações ou sai.
@@ -421,6 +471,8 @@ fn main() {
             // P13: fechar/minimizar não invalida a OTK (vale até 300 s ou o uso). Fechar destrói a
             // janela e o QR com ela; minimizar avisa a UI para tirar o QR da tela até restaurar.
             match (w.label(), e) {
+                ("terminal", WindowEvent::Moved(_)) => fit_later(w),
+                ("terminal", WindowEvent::ScaleFactorChanged { .. }) => fit_later(w),
                 ("terminal", WindowEvent::Resized(_)) => { let _ = w.emit("visible", !w.is_minimized().unwrap_or(false)); }
                 ("terminal", WindowEvent::Destroyed) => term::shutdown(w.app_handle()),
                 _ => {}
