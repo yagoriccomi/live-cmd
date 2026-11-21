@@ -51,6 +51,10 @@
       { label: "Nova sessão", run: () => newSession(tabs.find((t) => t.key === active)?.conn || LOCAL) },
       { label: "Nova sessão aqui (pasta atual)", run: newHere },
       { label: "Renomear sessão", run: act("rename") },
+      { label: "Dividir com terminal novo", run: act("split-new") },
+      { label: "Alternar orientação da divisão", run: act("orient") },
+      { label: "Maximizar/restaurar painel", run: act("maximize") },
+      { label: "Desfazer divisão", run: act("unsplit") },
       ...Object.entries(THEMES).map(([k, v]) => ({ label: `Tema: ${v}`, run: () => setTheme(k) })),
       ...favs().map((c) => ({ label: c, fav: true, run: () => runFav(c) })),
     ];
