@@ -181,7 +181,7 @@ fn on_event(app: &AppHandle, conn: &str, e: ClientEvent) {
         ClientEvent::Control(c) if c["type"] == "command_completed" => {
             let k = key(conn, c["session_id"].as_str().unwrap_or_default());
             if let Some(v) = t.views.lock().unwrap().get_mut(&k) { v.osc = true; v.busy = false; }
-            // Abas deste PC: o host já entrega o código ao histórico (`mobile.rs`).
+            // Abas deste PC: o host já entrega o código ao histórico (`appdata::AppProvider`).
             if conn != LOCAL { crate::hist::record_done(app, &k, c["exit_code"].as_i64()); }
             let _ = app.emit_to(WIN, "term-cmd-done", json!({ "key": k, "code": c["exit_code"] }));
         }
@@ -276,7 +276,7 @@ pub fn term_create(app: AppHandle, conn: String, profile_id: String, label: Stri
     let v = client(&app, &conn)?.request(req)?;
     let sid = v["session_id"].as_str().unwrap_or_default().to_owned();
     // Tela Agentes: lembra a sessão para retomar depois do close. Falha ao gravar não desfaz a sessão criada.
-    // Neste PC quem grava é o host (`mobile::AppProvider::agent_started`), para valer também para o celular;
+    // Neste PC quem grava é o host (`appdata::AppProvider::agent_started`), para valer também para o celular;
     // aqui só as sessões em PC remoto, que o host de lá não registra neste app.
     if let (Some(agent), Ok(dir), false) = (agent, settings::data_dir(), conn == LOCAL) {
         let _ = agents::record(&dir, agents::Agent { conn, session_id: sid.clone(), profile_id, agent, args: args.unwrap_or_default(), cwd, label, used_ms: 0 });

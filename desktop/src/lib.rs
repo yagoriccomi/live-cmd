@@ -2,6 +2,7 @@
 mod auth;
 mod client;
 mod conpty;
+pub mod appdata;
 pub mod extras;
 mod files;
 mod proto;

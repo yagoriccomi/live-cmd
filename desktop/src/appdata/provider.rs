@@ -1,4 +1,4 @@
-//! Dados das telas do celular (Agentes, SSH, Histórico): o host (`live_cmd_echo::extras`) pede ao
+//! Dados das telas do celular (Agentes, SSH, Histórico): o host (`crate::extras`) pede ao
 //! provedor registrado aqui, que usa a mesma lógica e os mesmos arquivos das telas desktop
 //! (`agents.rs`, `settings.rs`, `ssh.rs`, `hist.rs`) na pasta de dados do app.
 //! Roda com o lock do hub tomado: só disco; o teste de alcance SSH vai para outra thread.
@@ -7,9 +7,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use live_cmd_echo::extras::{Agent, AgentDefault, AgentState, Appearance, HistoryEntry, HistoryFilter, Input, Provider, SshServer};
+use crate::extras::{Agent, AgentDefault, AgentState, Appearance, HistoryEntry, HistoryFilter, Input, Provider, SshServer};
 
-use crate::{agents, hist, settings, ssh, term};
+use super::{LOCAL, agents, hist, settings};
 
 /// Latência guardada vale por este tempo; depois, um novo teste em segundo plano.
 const FRESH: Duration = Duration::from_secs(30);
@@ -40,7 +40,7 @@ pub struct AppProvider {
 impl AppProvider {
     pub fn new(dir: PathBuf) -> AppProvider {
         let probe: Probe = Arc::new(|h, p| {
-            let v = ssh::probe(h, p, PROBE_TIMEOUT);
+            let v = super::probe(h, p, PROBE_TIMEOUT);
             v["ms"].as_u64().map(|m| m.min(u32::MAX as u64) as u32).ok_or_else(|| v["code"].as_str().unwrap_or("OFFLINE").to_owned())
         });
         AppProvider::with_probe(dir, probe)
@@ -99,7 +99,7 @@ fn uuid_str(b: &[u8; 16]) -> String {
 impl Provider for AppProvider {
     /// Registro da tela Agentes (`agents.json`), só das sessões deste PC (conexão local).
     fn saved_agents(&self) -> Vec<Agent> {
-        agents::read(&self.dir).into_iter().filter(|a| a.conn == term::LOCAL).filter_map(|a| Some(Agent {
+        agents::read(&self.dir).into_iter().filter(|a| a.conn == LOCAL).filter_map(|a| Some(Agent {
             session_id: uuid_bytes(&a.session_id)?, agent: a.agent, args: a.args, label: a.label, cwd: a.cwd,
             state: AgentState::Saved, last_activity_ms: a.used_ms, profile_id: Some(a.profile_id), waiting: false,
         })).collect()
@@ -108,12 +108,12 @@ impl Provider for AppProvider {
     /// Toda sessão de agente deste PC (criada pelo desktop ou pelo celular) entra no registro; `record` marca `used_ms`.
     fn agent_started(&self, a: &Agent) {
         let _ = agents::record(&self.dir, agents::Agent {
-            conn: term::LOCAL.into(), session_id: uuid_str(&a.session_id), profile_id: a.profile_id.clone().unwrap_or_default(),
+            conn: LOCAL.into(), session_id: uuid_str(&a.session_id), profile_id: a.profile_id.clone().unwrap_or_default(),
             agent: a.agent.clone(), args: a.args.clone(), cwd: a.cwd.clone(), label: a.label.clone(), used_ms: 0,
         });
     }
 
-    fn agent_removed(&self, session_id: &[u8; 16]) { let _ = agents::remove_entry(&self.dir, term::LOCAL, &uuid_str(session_id)); }
+    fn agent_removed(&self, session_id: &[u8; 16]) { let _ = agents::remove_entry(&self.dir, LOCAL, &uuid_str(session_id)); }
 
     fn ssh_servers(&self) -> Vec<SshServer> {
         settings::ssh_servers(&self.dir).unwrap_or_default().into_iter().map(|s| {
@@ -122,12 +122,12 @@ impl Provider for AppProvider {
         }).collect()
     }
 
-    fn ssh_target(&self, server_id: &str) -> Option<live_cmd_echo::ssh::Ssh> {
+    fn ssh_target(&self, server_id: &str) -> Option<crate::ssh::Ssh> {
         settings::ssh_servers(&self.dir).ok()?.into_iter().find(|s| s.id == server_id).map(|s| s.target()).filter(|t| t.check().is_ok())
     }
 
     /// Mesma regra da tela desktop (`settings::save_ssh_server`): nome, destino validado, limite de 200.
-    fn ssh_save(&self, server_id: Option<&str>, label: &str, t: &live_cmd_echo::ssh::Ssh) -> Result<String, String> {
+    fn ssh_save(&self, server_id: Option<&str>, label: &str, t: &crate::ssh::Ssh) -> Result<String, String> {
         let s = settings::SshServer { id: server_id.unwrap_or_default().into(), name: label.into(), user: t.user.clone(), host: t.host.clone(), port: t.port, key: t.key.clone(),
             keepalive_s: t.keepalive_s, auto_reconnect: t.auto_reconnect, tmux: t.tmux };
         settings::save_ssh_server(&self.dir, s).map(|s| s.id)
@@ -159,14 +159,14 @@ impl Provider for AppProvider {
 
     /// Mesmos filtros da tela desktop (`hist::Query`).
     /// Mesmo resumo da tela Histórico do desktop (`hist::sessions`), sobre o histórico inteiro do filtro.
-    fn history_sessions(&self, f: &HistoryFilter, _offset_min: i32) -> Vec<live_cmd_echo::extras::HistorySession> {
+    fn history_sessions(&self, f: &HistoryFilter, _offset_min: i32) -> Vec<crate::extras::HistorySession> {
         let q = hist::Query { q: f.query.clone(), days: f.days, kind: f.kind.clone(), errors: f.errors, limit: Some(usize::MAX) };
-        self.with_history_store(|s| hist::sessions(s, &q, crate::host::now_ms()))
+        self.with_history_store(|s| hist::sessions(s, &q, crate::appdata::now_ms()))
     }
 
     fn history(&self, f: &HistoryFilter) -> Vec<HistoryEntry> {
         let q = hist::Query { q: f.query.clone(), days: f.days, kind: f.kind.clone(), errors: f.errors, limit: Some(f.limit) };
-        self.with_history_store(|s| s.search(&q, crate::host::now_ms())).into_iter().map(|e| HistoryEntry {
+        self.with_history_store(|s| s.search(&q, crate::appdata::now_ms())).into_iter().map(|e| HistoryEntry {
             entry_id: e.id.to_string(), command: e.cmd, cwd: e.cwd, at_ms: e.ts, exit_code: e.code.and_then(|c| i32::try_from(c).ok()),
             kind: e.kind, label: e.label, pc: e.pc,
         }).collect()
@@ -188,7 +188,7 @@ impl Provider for AppProvider {
         if kind == "ia" { return; }
         let label = if i.label.is_empty() { "Terminal" } else { i.label.as_str() };
         for c in cmds {
-            if let Ok(id) = self.with_history_store(|s| s.add_in(crate::host::now_ms(), &c, kind, label, "Este PC", i.cwd.as_deref())) {
+            if let Ok(id) = self.with_history_store(|s| s.add_in(crate::appdata::now_ms(), &c, kind, label, "Este PC", i.cwd.as_deref())) {
                 self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(i.session_id, id);
             }
         }
@@ -311,7 +311,7 @@ mod tests {
     fn ssh_cadastro_pelo_celular_usa_a_regra_do_desktop() {
         let d = tmp("ssh-save");
         let p = AppProvider::new(d.clone());
-        let t = |user: &str| live_cmd_echo::ssh::Ssh { user: user.into(), host: "h".into(), port: 22, key: Some(r"C:\k\id".into()), ..Default::default() };
+        let t = |user: &str| crate::ssh::Ssh { user: user.into(), host: "h".into(), port: 22, key: Some(r"C:\k\id".into()), ..Default::default() };
         let id = p.ssh_save(None, "srv", &t("u")).unwrap();
         assert_eq!(p.ssh_save(Some(&id), "srv2", &t("u2")).unwrap(), id);
         let l = settings::ssh_servers(&d).unwrap();
@@ -374,7 +374,7 @@ mod tests {
     fn historico_busca_filtros_e_limpar() {
         let d = tmp("hist");
         let shared = hist::Shared::default();
-        let now = crate::host::now_ms();
+        let now = crate::appdata::now_ms();
         let (a, b) = hist::with_shared(&shared, &d, |s| {
             let a = s.add_in(now - 10 * 86_400_000, "git status", "pwsh", "PowerShell", "Este PC", Some(r"C:\proj")).unwrap();
             let b = s.add(now - 1000, "cargo test", "ssh", "srv", "Este PC").unwrap();

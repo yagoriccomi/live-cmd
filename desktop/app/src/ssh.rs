@@ -1,6 +1,5 @@
 //! Tela "Servidores SSH": cadastro em `ssh.json`, teste de alcance TCP e "Conectar", que abre uma
 //! sessão local rodando o `ssh.exe` do Windows (o destino sai do disco, nunca de texto da UI).
-use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -69,20 +68,8 @@ pub fn ssh_import(app: State<App>) -> Result<usize, String> {
     Ok(n)
 }
 
-/// Abre `porta` no host em até `timeout`; `{ok, ms}` ou `{ok:false, code}` (`DNS`, `TIMEOUT`, `OFFLINE`).
-pub fn probe(host: &str, port: u16, timeout: Duration) -> Value {
-    if !live_cmd_echo::ssh::valid_host(host) || port == 0 { return json!({ "ok": false, "code": "INVALID_SSH_HOST" }); }
-    let Ok(addrs) = (host, port).to_socket_addrs() else { return json!({ "ok": false, "code": "DNS" }) };
-    let mut code = "DNS";
-    for a in addrs {
-        let t = Instant::now();
-        match TcpStream::connect_timeout(&a, timeout) {
-            Ok(_) => return json!({ "ok": true, "ms": t.elapsed().as_millis() as u64 }),
-            Err(e) => code = if e.kind() == std::io::ErrorKind::TimedOut { "TIMEOUT" } else { "OFFLINE" },
-        }
-    }
-    json!({ "ok": false, "code": code })
-}
+/// Teste de alcance TCP (o mesmo do provedor do celular no daemon).
+pub use live_cmd_echo::appdata::probe;
 
 /// Status da lista: alcance TCP da porta, com latência.
 #[tauri::command(async)]

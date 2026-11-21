@@ -6,7 +6,7 @@ mod agents;
 mod clip;
 mod hist;
 mod host;
-mod mobile;
+
 mod settings;
 mod ssh;
 mod sys;
@@ -378,11 +378,11 @@ fn main() {
             let history = hist::History::default();
             // Celular mudou a aparência ou um agente passou a esperar confirmação: as janelas desktop recebem o evento.
             let h = a.handle().clone();
-            let notify: mobile::Notify = std::sync::Arc::new(move |ev: &str, v: Value| {
+            let notify: live_cmd_echo::appdata::Notify = std::sync::Arc::new(move |ev: &str, v: Value| {
                 if ev == "appearance" && let Some(o) = v["opacity"].as_u64() { for w in h.webview_windows().values() { sys::window_opacity(w, o as u8); } }
                 let _ = h.emit(ev, v);
             });
-            live_cmd_echo::extras::set_provider(std::sync::Arc::new(mobile::AppProvider::new(dir.clone()).with_history(history.store.clone()).with_notify(notify)));
+            live_cmd_echo::extras::set_provider(std::sync::Arc::new(live_cmd_echo::appdata::AppProvider::new(dir.clone()).with_history(history.store.clone()).with_notify(notify)));
             let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: host::room_id(&dir)? })?;
             a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });
             a.manage(term::Term::default());
