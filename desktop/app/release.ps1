@@ -3,7 +3,8 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw "$env:USERPROFILE\.tauri\live-cmd.key"
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
-npx --yes @tauri-apps/cli build
+# Versão fixa = a do crate `tauri` no Cargo.lock (2.12.5; bundler >= 2.10.0). Suba as duas juntas.
+npx --yes @tauri-apps/cli@2.12.5 build
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 $ver = (Get-Content -Raw tauri.conf.json | ConvertFrom-Json).version
 if (!$ver) { $ver = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value }
