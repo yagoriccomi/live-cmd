@@ -12,9 +12,9 @@ Não fazer: mudar comportamento do produto só para o teste passar, aumentar tim
 
 | Fatia | Testes | Arquivo | Nível | Estado |
 |---|---|---|---|---|
-| A | `loopback_backpressure`, `s2_two_clients_simultaneous`, `d4c_a7_typing_during_upload`, `d4c_n12_revoke_during_upload` | `desktop/src/lib.rs` | medio | pendente |
-| B | `n25_slow_network_expires` | `desktop/src/files.rs` | medio | pendente |
-| C | `remote_upload_file` | `desktop/src/client.rs` | medio | pendente |
+| A | `loopback_backpressure`, `s2_two_clients_simultaneous`, `d4c_a7_typing_during_upload`, `d4c_n12_revoke_during_upload` | `desktop/src/lib.rs` | medio | feito (`fb92f74`) |
+| B | `n25_slow_network_expires` | `desktop/src/files.rs` | medio | feito (`da5f4f0`) |
+| C | `remote_upload_file` | `desktop/src/client.rs` | medio | não reproduzível |
 
 ## Regras para os agentes
 
