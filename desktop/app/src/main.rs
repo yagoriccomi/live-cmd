@@ -72,8 +72,10 @@ async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
     let u = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?.ok_or("sem atualização")?;
+    // No Windows o updater lança o instalador NSIS e sai com `exit(0)` dentro de `download_and_install`;
+    // o instalador reabre o app (`restart_after_install` é true por padrão). Logo, nada roda depois daqui.
     u.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
-    app.restart()
+    Ok(())
 }
 
 #[tauri::command]
