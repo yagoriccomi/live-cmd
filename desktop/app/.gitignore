@@ -1,1 +1,3 @@
 gen/
+# Cópia do daemon que o release.ps1 põe no pacote (externalBin).
+binaries/
