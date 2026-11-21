@@ -145,6 +145,7 @@ impl Sessions {
         if self.s.len() >= MAX_SESSIONS { return Err(LimitExceeded); }
         if self.s.contains_key(&sid) { return Err(InvalidMessage); }
         let ring = Ring { buf: VecDeque::new(), start: 0, nl: VecDeque::new() };
+        let label = label.map(|l| crate::extras::fix_mojibake(&l));
         self.s.insert(sid, Session { pty, label, created: now, activity: now, cols, rows, exit: None, closed: false, ring, dropped: vec![], input_seq: HashMap::new(), att: HashMap::new() });
         Ok(sid)
     }
@@ -196,7 +197,7 @@ impl Sessions {
     pub fn created(&self, sid: &Sid) -> Option<u64> { self.s.get(sid).map(|x| x.created) }
 
     pub fn rename(&mut self, sid: Sid, label: String) -> R<Value> {
-        self.s.get_mut(&sid).ok_or(NotFound)?.label = Some(label);
+        self.s.get_mut(&sid).ok_or(NotFound)?.label = Some(crate::extras::fix_mojibake(&label));
         Ok(json!({"type":"session_rename_ok"}))
     }
 

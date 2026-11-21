@@ -480,6 +480,15 @@ pub fn agent_label(cwd: Option<&str>, agent: &str) -> String {
     format!("{folder} · {agent}").chars().take(64).collect()
 }
 
+/// Desfaz mojibake de rótulo: UTF-8 lido como Latin-1/ANSI (`live-cmd Â· claude` -> `live-cmd · claude`).
+/// Só mexe em texto com `Â`/`Ã` em que todo caractere cabe em Latin-1 e os bytes formam UTF-8 válido;
+/// qualquer outro texto volta igual (inclusive rótulo já correto, então é idempotente).
+pub fn fix_mojibake(s: &str) -> String {
+    if !s.contains(['Â', 'Ã']) { return s.to_owned(); }
+    let bytes: Option<Vec<u8>> = s.chars().map(|c| u8::try_from(u32::from(c)).ok()).collect();
+    match bytes.and_then(|b| String::from_utf8(b).ok()) { Some(fixed) => fixed, None => s.to_owned() }
+}
+
 /// Une as sessões vivas com agente e as gravadas do provedor (viva vence), mais recente primeiro.
 pub fn merge_agents(live: Vec<Agent>, saved: Vec<Agent>) -> Vec<Agent> {
     let mut all = live;
@@ -492,6 +501,16 @@ pub fn merge_agents(live: Vec<Agent>, saved: Vec<Agent>) -> Vec<Agent> {
 mod tests {
     use super::*;
     use crate::proto::{encode_control, parse_control, Control, Req as P};
+
+    #[test]
+    fn fix_mojibake_repara_utf8_lido_como_latin1() {
+        assert_eq!(fix_mojibake("live-cmd \u{c2}\u{b7} claude"), "live-cmd \u{b7} claude");
+        assert_eq!(fix_mojibake("a\u{c3}\u{a7}\u{c3}\u{a3}o"), "a\u{e7}\u{e3}o");
+        // Já correto, ASCII, vazio e Latin-1 que não é UTF-8 válido ficam iguais.
+        for ok in ["live-cmd \u{b7} claude", "build", "", "\u{c2} sozinho", "dire\u{e7}\u{e3}o \u{c3}", "\u{4e2d}\u{c2}"] { assert_eq!(fix_mojibake(ok), ok); }
+        assert_eq!(fix_mojibake(&fix_mojibake("x \u{c2}\u{b7} y")), "x \u{b7} y", "idempotente");
+        assert_eq!(agent_label(Some(r"C:\p\live-cmd"), "claude"), "live-cmd \u{b7} claude");
+    }
 
     const CID: &str = "9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d";
     const RID: &str = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
