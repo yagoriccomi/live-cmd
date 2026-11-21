@@ -239,7 +239,11 @@ pub(crate) fn client(app: &AppHandle, conn: &str) -> Result<Arc<Client>, String>
         let mut l = t.local.lock().unwrap();
         if l.is_none() {
             let h = app.clone();
-            *l = Some(Arc::new(Client::local(&app.state::<App>().svc.lock().unwrap(), move |e| on_event(&h, LOCAL, e))));
+            // Sessões deste PC moram no daemon: se ele não estiver no ar, sobe e tenta de novo uma vez.
+            let ep = app.state::<App>().svc.ep.clone();
+            let open = || { let h = h.clone(); Client::pipe(ep.clone(), move |e| on_event(&h, LOCAL, e)) };
+            let c = match open() { Ok(c) => c, Err(_) => { crate::daemon::ensure(&ep)?; open().map_err(|_| "NOT_CONNECTED")? } };
+            *l = Some(Arc::new(c));
         }
         return Ok(l.clone().unwrap());
     }

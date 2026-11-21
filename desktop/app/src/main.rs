@@ -4,6 +4,7 @@
 
 mod agents;
 mod clip;
+mod daemon;
 mod hist;
 mod host;
 
@@ -25,11 +26,13 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWin
 use windows::Win32::UI::WindowsAndMessaging::{IDOK, MB_DEFBUTTON2, MB_ICONQUESTION, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_SETFOREGROUND, MessageBoxW};
 use windows::core::HSTRING;
 
-use host::{Service, State as HostState};
+use host::State as HostState;
+use live_cmd_echo::ipc::{self, ServiceClient};
 use settings::autostart;
 
 struct App {
-    svc: Mutex<Service>,
+    /// O host mora no daemon `live-cmd-termd`; isto é só o cliente do pipe.
+    svc: ServiceClient,
     data_dir: std::path::PathBuf,
     settings: Mutex<settings::Settings>,
     /// URI da OTK ativa: só para o QR e o "Copiar link"; nunca vai para texto, log ou UI.
@@ -80,7 +83,7 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn status(app: State<App>) -> Value {
-    let s = app.svc.lock().unwrap().status();
+    let s = app.svc.status();
     json!({ "state": state_name(s.state), "connected": s.connected, "pairing_expires_ms": s.pairing_expires_ms, "now_ms": host::now_ms() })
 }
 
@@ -92,7 +95,7 @@ fn pending(link: Option<String>, expires_ms: Option<u64>) -> Option<(String, u64
 /// QR da OTK pendente, sem gerar outra (P13: reabrir/restaurar a janela mostra a mesma OTK).
 #[tauri::command]
 fn qr(app: State<App>) -> Result<Value, String> {
-    let exp = app.svc.lock().unwrap().status().pairing_expires_ms;
+    let exp = app.svc.status().pairing_expires_ms;
     let (uri, exp) = pending(app.link.lock().unwrap().clone(), exp).ok_or("EXPIRED")?;
     Ok(json!({ "qr": qr_data_url(&uri)?, "expires_ms": exp, "now_ms": host::now_ms() }))
 }
@@ -101,12 +104,12 @@ fn qr(app: State<App>) -> Result<Value, String> {
 #[tauri::command]
 fn pair(app: State<App>) -> Result<Value, String> {
     clip::clear_if_ours();
-    *app.link.lock().unwrap() = Some(app.svc.lock().unwrap().pair()?);
+    *app.link.lock().unwrap() = Some(app.svc.pair()?);
     qr(app)
 }
 
 fn cancel(app: &App) {
-    app.svc.lock().unwrap().cancel_pair();
+    app.svc.cancel_pair();
     *app.link.lock().unwrap() = None;
     clip::clear_if_ours();
 }
@@ -123,7 +126,7 @@ fn copy_link(app: State<App>, window: tauri::WebviewWindow) -> Result<(), String
 
 #[tauri::command]
 fn devices(app: State<App>) -> Vec<Value> {
-    let mut list = app.svc.lock().unwrap().devices();
+    let mut list = app.svc.devices();
     list.sort_by_key(|d| (!d.connected, std::cmp::Reverse(d.paired_at_ms)));
     list.into_iter().map(|d| json!({ "id": URL_SAFE_NO_PAD.encode(d.client_pk), "label": d.label, "paired_at_ms": d.paired_at_ms, "connected": d.connected })).collect()
 }
@@ -131,7 +134,7 @@ fn devices(app: State<App>) -> Vec<Value> {
 #[tauri::command]
 fn revoke(app: State<App>, id: String) -> Result<(), String> {
     let pk: [u8; 32] = URL_SAFE_NO_PAD.decode(id).ok().and_then(|b| b.try_into().ok()).ok_or("INVALID_MESSAGE")?;
-    app.svc.lock().unwrap().revoke(pk)
+    app.svc.revoke(pk)
 }
 
 #[tauri::command]
@@ -166,11 +169,10 @@ fn set_server(app: State<App>, server: String) -> Result<(), String> {
     let mut s = app.settings.lock().unwrap();
     let new = settings::Settings { server, scrollback: s.scrollback };
     settings::save(&app.data_dir, &new)?;
-    let mut svc = app.svc.lock().unwrap();
-    svc.stop();
     *app.link.lock().unwrap() = None;
     clip::clear_if_ours();
-    *svc = Service::start(host::Config { data_dir: app.data_dir.clone(), server: new.server.clone(), room: host::room_id(&app.data_dir)? })?;
+    // O daemon relê o servidor do disco; as sessões continuam abertas.
+    app.svc.restart()?;
     *s = new;
     Ok(())
 }
@@ -183,15 +185,12 @@ fn get_profiles(app: State<App>) -> Value {
     json!({ "profiles": list, "shells": shells })
 }
 
-/// Grava `profiles.json` e reinicia o host para relê-lo; sessões abertas continuam (ficam no hub).
+/// Grava `profiles.json` e reinicia o host (no daemon) para relê-lo; sessões abertas continuam (ficam no hub).
 /// ponytail: o reinício derruba por instantes os outros PCs (reconectam sozinhos); trocar por recarga só dos perfis no host.
 #[tauri::command]
 fn save_profiles(app: State<App>, profiles: Vec<settings::Profile>) -> Result<Vec<settings::Profile>, String> {
     let saved = settings::save_profiles(&app.data_dir, profiles)?;
-    let server = app.settings.lock().unwrap().server.clone();
-    let mut svc = app.svc.lock().unwrap();
-    svc.stop();
-    *svc = Service::start(host::Config { data_dir: app.data_dir.clone(), server, room: host::room_id(&app.data_dir)? })?;
+    app.svc.restart()?;
     Ok(saved)
 }
 
@@ -265,6 +264,7 @@ fn tray_action(app: AppHandle, id: String) {
     match id.as_str() {
         "pair" | "devices" | "settings" => open_window(&app, &id),
         "quit" => quit(&app),
+        "stop_terminals" => stop_terminals(&app),
         _ => {}
     }
 }
@@ -273,15 +273,24 @@ fn ask(text: &str, flags: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_ST
     unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from("live-cmd"), flags | MB_SETFOREGROUND) == IDOK }
 }
 
+/// "Sair" fecha só o app: terminais, programas e aparelhos seguem no daemon; abrir o app reconecta.
 fn quit(app: &AppHandle) {
-    let n = app.state::<App>().svc.lock().unwrap().status().connected;
-    // ponytail: MessageBox nativa tem botões OK/Cancelar, não "Sair"/"Cancelar"; usar tauri-plugin-dialog se o rótulo importar.
-    let msg = format!("Sair do live-cmd?\n\n{} serão desconectados. Os terminais abertos serão reabertos na próxima vez (programas em execução são encerrados).",
-        if n == 1 { "1 aparelho".to_string() } else { format!("{n} aparelhos") });
-    if n > 0 && !ask(&msg, MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2) { return; }
+    cancel(&app.state::<App>());
+    term::shutdown(app);
+    app.exit(0);
+}
+
+/// "Encerrar terminais": para o daemon (sessões, programas e aparelhos caem) e fecha o app.
+fn stop_terminals(app: &AppHandle) {
     let a = app.state::<App>();
+    let n = a.svc.status().connected;
+    // ponytail: MessageBox nativa tem botões OK/Cancelar, não "Encerrar"/"Cancelar"; usar tauri-plugin-dialog se o rótulo importar.
+    let who = match n { 0 => String::new(), 1 => " 1 aparelho será desconectado.".into(), n => format!(" {n} aparelhos serão desconectados.") };
+    let msg = format!("Encerrar os terminais deste PC?\n\nOs programas em execução nos terminais são encerrados.{who} O live-cmd também fecha. Os terminais abertos serão reabertos na próxima vez.");
+    if !ask(&msg, MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2) { return; }
     cancel(&a);
-    a.svc.lock().unwrap().stop();
+    term::shutdown(app);
+    if let Err(e) = a.svc.shutdown() { live_cmd_echo::hlog(&format!("app: encerrar terminais falhou ({e})")); }
     app.exit(0);
 }
 
@@ -304,6 +313,7 @@ fn build_menu(app: &AppHandle, state: HostState, connected: usize) -> tauri::Res
     menu.append(&CheckMenuItem::with_id(app, "autostart", "Iniciar com o Windows", true, autostart::is_enabled(autostart::RUN_KEY), None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "settings", "Configurações", true, None::<&str>)?)?;
     menu.append(&sep()?)?;
+    menu.append(&MenuItem::with_id(app, "stop_terminals", "Encerrar terminais…", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?)?;
     Ok(menu)
 }
@@ -313,7 +323,7 @@ static TRAY_SHOWN: Mutex<Option<(HostState, usize)>> = Mutex::new(None);
 
 /// Atualiza ícone, tooltip e menu quando o estado muda (ou `force`).
 fn refresh_tray(app: &AppHandle, force: bool) {
-    let s = app.state::<App>().svc.lock().unwrap().status();
+    let s = app.state::<App>().svc.status();
     let key = (s.state, s.connected);
     {
         let mut shown = TRAY_SHOWN.lock().unwrap();
@@ -350,6 +360,7 @@ fn tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
                 }
             }
             "quit" => quit(app),
+            "stop_terminals" => stop_terminals(app),
             _ => {}
         })
         .build(app)
@@ -373,29 +384,33 @@ fn main() {
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
-            // Telas do celular (Agentes, SSH, Histórico) leem os mesmos arquivos das telas desktop.
-            // O histórico é um store só: desktop e celular limpam e gravam o mesmo.
+            // Host, sessões deste PC e telas do celular (Agentes, SSH, Histórico) moram no daemon, que lê os
+            // mesmos arquivos; o histórico das abas de outros PCs é gravado aqui, no mesmo `history.jsonl`.
             let history = hist::History::default();
+            let ep = ipc::Endpoint::user()?;
+            if let Err(e) = daemon::ensure(&ep) { live_cmd_echo::hlog(&format!("app: daemon indisponível ({e})")); }
+            let svc = ServiceClient::new(ep);
             // Celular mudou a aparência ou um agente passou a esperar confirmação: as janelas desktop recebem o evento.
             let h = a.handle().clone();
-            let notify: live_cmd_echo::appdata::Notify = std::sync::Arc::new(move |ev: &str, v: Value| {
+            svc.watch(move |ev: &str, v: Value| {
                 if ev == "appearance" && let Some(o) = v["opacity"].as_u64() { for w in h.webview_windows().values() { sys::window_opacity(w, o as u8); } }
                 let _ = h.emit(ev, v);
             });
-            live_cmd_echo::extras::set_provider(std::sync::Arc::new(live_cmd_echo::appdata::AppProvider::new(dir.clone()).with_history(history.store.clone()).with_notify(notify)));
-            let svc = Service::start(host::Config { data_dir: dir.clone(), server: s.server.clone(), room: host::room_id(&dir)? })?;
-            a.manage(App { svc: Mutex::new(svc), data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });
+            a.manage(App { svc, data_dir: dir, settings: Mutex::new(s), link: Mutex::new(None) });
             a.manage(term::Term::default());
             a.manage(history);
             term::start(a.handle());
             tray(a.handle())?;
             refresh_tray(a.handle(), true);
             // Laço de 1 s: bandeja segue o host; link sai do clipboard quando a OTK expira ou é usada.
+            // A cada 5 s confere o daemon e sobe outro se ele saiu (travou, foi encerrado por fora).
             let h = a.handle().clone();
-            std::thread::spawn(move || loop {
+            std::thread::spawn(move || for tick in 1u64.. {
                 std::thread::sleep(Duration::from_secs(1));
                 let app = h.state::<App>();
-                if app.svc.lock().unwrap().status().pairing_expires_ms.is_none() && app.link.lock().unwrap().take().is_some() {
+                if tick % 5 == 0 && matches!(ipc::probe(&app.svc.ep), Err(ipc::Fail::Absent | ipc::Fail::Version(_)))
+                    && let Err(e) = daemon::ensure(&app.svc.ep) { live_cmd_echo::hlog(&format!("app: daemon indisponível ({e})")); }
+                if app.svc.status().pairing_expires_ms.is_none() && app.link.lock().unwrap().take().is_some() {
                     clip::clear_if_ours();
                 }
                 refresh_tray(&h, false);
