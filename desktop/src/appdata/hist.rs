@@ -40,9 +40,20 @@ pub struct Entry {
 pub type Shared = std::sync::Arc<Mutex<Option<Store>>>;
 
 /// Abre `dir/history.jsonl` na primeira vez e aplica `f` com o lock tomado.
+/// App e daemon gravam o mesmo arquivo: se o outro processo mexeu nele (tamanho ou data mudou), relê antes.
+// ponytail: gravação do outro processo entre o `f` e o `mark` só é vista na próxima mudança; trocar por lock de arquivo se pesar.
 pub fn with_shared<R>(s: &Shared, dir: &std::path::Path, f: impl FnOnce(&mut Store) -> R) -> R {
     let mut g = s.lock().unwrap_or_else(|e| e.into_inner());
-    f(g.get_or_insert_with(|| Store::open(dir.join(FILE), MAX)))
+    if g.as_ref().is_some_and(|st| st.stamp != stamp(&st.path)) { *g = None; }
+    let st = g.get_or_insert_with(|| Store::open(dir.join(FILE), MAX));
+    let r = f(st);
+    st.stamp = stamp(&st.path);
+    r
+}
+
+/// Tamanho e data do arquivo; `None` se ele não existe.
+fn stamp(p: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
+    std::fs::metadata(p).ok().map(|m| (m.len(), m.modified().unwrap_or(std::time::UNIX_EPOCH)))
 }
 
 #[derive(Deserialize)]
@@ -61,7 +72,7 @@ pub struct Query {
     pub limit: Option<usize>,
 }
 
-pub struct Store { path: PathBuf, entries: Vec<Entry>, lines: usize, max: usize }
+pub struct Store { path: PathBuf, entries: Vec<Entry>, lines: usize, max: usize, stamp: Option<(u64, std::time::SystemTime)> }
 
 impl Store {
     /// Lê o arquivo (ausente ou ilegível = vazio; linha corrompida é pulada).
@@ -76,7 +87,8 @@ impl Store {
         }
         let cut = entries.len().saturating_sub(max);
         entries.drain(..cut);
-        Store { path, entries, lines, max }
+        let stamp = stamp(&path);
+        Store { path, entries, lines, max, stamp }
     }
 
     #[cfg(test)]
@@ -262,6 +274,24 @@ mod tests {
         // Quem limpa pelo store compartilhado não deixa cópia velha em memória do outro lado.
         with_shared(&shared, &dir, |s| s.clear()).unwrap();
         assert!(with_shared(&shared, &dir, |s| s.search(&Query::default(), 10)).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// App e daemon: dois stores no mesmo arquivo (um por processo) veem o que o outro gravou e limpou.
+    #[test]
+    fn dois_processos_no_mesmo_arquivo() {
+        let p = tmp("dois");
+        let dir = p.parent().unwrap().to_path_buf();
+        let (app, daemon) = (Shared::default(), Shared::default());
+        assert!(with_shared(&app, &dir, |s| s.search(&Query::default(), 10)).is_empty());
+        with_shared(&daemon, &dir, |s| s.add(5, "git status", "pwsh", "PowerShell", "Este PC")).unwrap();
+        assert_eq!(with_shared(&app, &dir, |s| s.search(&Query::default(), 10)).len(), 1, "app vê o comando gravado pelo daemon");
+        with_shared(&app, &dir, |s| s.add(6, "ls", "ssh", "srv", "Outro PC")).unwrap();
+        let ids: Vec<u64> = with_shared(&daemon, &dir, |s| s.search(&Query::default(), 10)).iter().map(|e| e.id).collect();
+        assert_eq!(ids.len(), 2, "daemon vê o do app");
+        assert_ne!(ids[0], ids[1], "ids não repetem entre processos");
+        with_shared(&app, &dir, |s| s.clear()).unwrap();
+        assert!(with_shared(&daemon, &dir, |s| s.search(&Query::default(), 10)).is_empty(), "limpar de um lado vale no outro");
         let _ = std::fs::remove_dir_all(dir);
     }
 
