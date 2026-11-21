@@ -391,7 +391,7 @@ impl Hub {
                     if let Some(t) = ssh { x["ssh"] = json!({"user": t.user, "host": t.host, "port": t.port}); }
                     if let Some(d) = sid.and_then(|s| self.cwds.get(&s)) {
                         x["cwd"] = d.to_string_lossy().into_owned().into();
-                        if ssh.is_none() && let Some(g) = git_info(d) { x["git"] = g; }
+                        if ssh.is_none() && let Some(g) = git_cached(d) { x["git"] = g; }
                     }
                     x
                 }).collect::<Vec<_>>(),
@@ -559,8 +559,30 @@ struct Saved { id: String, profile: String, label: String, cwd: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")] ssh: Option<ssh::Ssh>,
     #[serde(default)] created: u64 }
 
+/// Git da pasta para `session_list`, sem segurar o hub: devolve o último valor conhecido e, se tiver
+/// mais de 10 s (ou nunca rodou), atualiza numa thread à parte. Git lento (4–6 s por chamada em repositório
+/// grande) × várias sessões passava do prazo de 10 s do pedido e travava app e celular.
+fn git_cached(dir: &std::path::Path) -> Option<Value> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    // pasta → (valor, quando atualizou, atualização em curso)
+    type Cache = Mutex<HashMap<PathBuf, (Option<Value>, std::time::Instant, bool)>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let mut m = cache.lock().unwrap();
+    let e = m.entry(dir.to_path_buf()).or_insert((None, std::time::Instant::now() - std::time::Duration::from_secs(3600), false));
+    if !e.2 && e.1.elapsed() > std::time::Duration::from_secs(10) {
+        e.2 = true;
+        let d = dir.to_path_buf();
+        std::thread::spawn(move || {
+            let v = git_info(&d);
+            if let Some(e) = cache.lock().unwrap().get_mut(&d) { *e = (v, std::time::Instant::now(), false); }
+        });
+    }
+    e.0.clone()
+}
+
 /// Branch e nº de arquivos pendentes da pasta; `None` fora de repositório git.
-// ponytail: roda git a cada session_list (síncrono, ~30 ms/sessão); cachear se a lista crescer.
 fn git_info(dir: &std::path::Path) -> Option<Value> {
     let run = |args: &[&str]| {
         let mut c = std::process::Command::new("git");
