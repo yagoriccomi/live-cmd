@@ -12,11 +12,11 @@ Origem: mapa `tickets/mapa-daemon-terminais.md` (tickets 010–013), premissas e
 
 | Fatia | Escopo | Nível | Estado |
 |---|---|---|---|
-| A | Daemon `live-cmd-termd` (bin no crate `live-cmd-echo` ou crate novo), servidor de named pipe (DACL do usuário, token, `ipc_version`), `Wire::Pipe` no `Client`, RPC de serviço; app sobe/conecta o daemon (cópia em `%LOCALAPPDATA%\live-cmd\daemon\<versao>\`, `DETACHED_PROCESS\|CREATE_NEW_PROCESS_GROUP\|CREATE_BREAKAWAY_FROM_JOB`), `Provider` no daemon, "Encerrar terminais" na bandeja, bundle do daemon no instalador, hooks NSIS `PREUNINSTALL` | alto | pendente |
+| A | Daemon `live-cmd-termd` (bin no crate `live-cmd-echo` ou crate novo), servidor de named pipe (DACL do usuário, token, `ipc_version`), `Wire::Pipe` no `Client`, RPC de serviço; app sobe/conecta o daemon (cópia em `%LOCALAPPDATA%\live-cmd\daemon\<versao>\`, `DETACHED_PROCESS\|CREATE_NEW_PROCESS_GROUP\|CREATE_BREAKAWAY_FROM_JOB`), `Provider` no daemon, "Encerrar terminais" na bandeja, bundle do daemon no instalador, hooks NSIS `PREUNINSTALL` | alto | feito (6 commits, `3ccef1d`..`df1888a`) |
 | B | Pendências pequenas: fixar versão do `@tauri-apps/cli` no `release.ps1`; `app.restart()` morto em `install_update` (`main.rs:73-76`) no Windows; label com mojibake em `sessions.json` (`live-cmd Â· claude`) | medio | feito (`e8ed3da` `818052a` `4ff07e5` `8aaa654`; mojibake: arquivo real estava limpo, defesa `fix_mojibake`) |
 | C | Limpeza de worktrees/branches de agentes desta sessão | coordenador | feito (5 worktrees e 7 branches locais; pesquisas seguem no origin) |
 | E | Modo dividido estilo VS Code: divisor arrastável, colar/arrastar no painel focado, aba única para o par, fechar por painel, foco, orientação, maximizar, dividir com terminal novo | medio | feito (`53a9ea9` `ab1c10f`; inclui seleção por painel) |
-| D | Bateria, release v0.1.22 (desktop + APK) | coordenador | pendente |
+| D | Bateria, release v0.1.22 (desktop + APK) | coordenador | feito (host 176 ok, app 17 ok; v0.1.22 publicada) |
 
 ## Regras para os agentes
 
