@@ -102,7 +102,7 @@
       </div>
     </section>
     </section>
-    <div class="term-area">
+    <div class="term-area" id="term-area">
       <div class="terminal" id="screen" tabindex="0" aria-label="Terminal" aria-roledescription="terminal"><span class="measure" id="measure" aria-hidden="true">WWWWWWWWWW</span></div>
       <div class="find-bar" id="find" role="search" hidden>
         <input type="text" id="find-q" aria-label="Buscar no terminal" placeholder="Buscar" autocomplete="off" spellcheck="false">
@@ -112,6 +112,10 @@
         <button type="button" id="find-x" aria-label="Fechar busca (Esc)">×</button>
       </div>
       <div class="terminal" id="screen2" tabindex="0" aria-label="Terminal dividido" aria-roledescription="terminal" hidden></div>
+      <div class="pane-head" id="head1" role="toolbar" aria-label="Painel 1"></div>
+      <div class="pane-head" id="head2" role="toolbar" aria-label="Painel 2"></div>
+      <div class="sash" id="sash" role="separator" aria-orientation="vertical" aria-label="Divisor dos painéis (arraste; duplo clique restaura 50/50)" aria-valuemin="10" aria-valuemax="90" aria-valuenow="50" tabindex="0"></div>
+      <div class="drop-hint" id="drop-hint" hidden>Soltar para dividir</div>
       <div class="term-empty" id="empty">
         <div><p>Nenhum terminal aberto. Escolha uma sessão à esquerda ou crie uma nova.</p>
         <div class="actions center"><button type="button" class="btn-primary" id="empty-new">Nova sessão</button></div></div>

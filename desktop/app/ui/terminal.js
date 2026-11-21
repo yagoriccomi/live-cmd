@@ -25,7 +25,7 @@ const msg = (code) => MSG[code] || "Algo deu errado. Tente de novo.";
 
 const conns = { [LOCAL]: { name: "Este PC", status: { state: "ready" }, sessions: [], profiles: [] } };
 let remoteOrder = [];
-const tabs = [];       // { key, conn, sid, label, title, exited, split? }  split = { key, conn, sid } do painel direito
+const tabs = [];       // { key, conn, sid, label, title, exited, split?, max? }  split = registro igual ao da aba (painel direito/inferior); max = 0|1 painel maximizado
 let active = null;     // key
 let appCursor = false;
 const screens = {};    // key → última tela recebida
@@ -35,12 +35,15 @@ const closed = [];        // abas fechadas com sessão viva, para reabrir (item 
 const lastEnter = {};     // chave → hora do último Enter (item 9)
 
 // ---------- Medida da célula e tamanho ----------
-function size() {
-  const m = $("measure").getBoundingClientRect(), s = $("screen"), cs = getComputedStyle(s);
+// Mede a célula no #screen e guarda: com o painel esquerdo oculto (maximizado o direito) vale a última medida.
+let cellW = 8;
+function size(s = $("screen")) {
+  const m = $("measure").getBoundingClientRect(), cs = getComputedStyle(s);
+  if (m.width) cellW = m.width / 10;
   const w = s.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
   const h = s.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  const lh = parseFloat(cs.lineHeight) || m.height;
-  return { cols: Math.max(20, Math.min(1000, Math.floor(w / (m.width / 10)))), rows: Math.max(5, Math.min(1000, Math.floor(h / lh))) };
+  const lh = parseFloat(cs.lineHeight) || m.height || 16;
+  return { cols: Math.max(20, Math.min(1000, Math.floor(w / cellW))), rows: Math.max(5, Math.min(1000, Math.floor(h / lh))) };
 }
 
 // ---------- Desenho ----------
@@ -65,7 +68,7 @@ function draw(key, s = $("screen")) {
     lines.push(line);
   }
   s.replaceChildren(...keep, ...lines);
-  afterDraw();
+  if (s === pane()) afterDraw();
 }
 
 // Junta várias telas recebidas no mesmo quadro num só desenho.
@@ -84,9 +87,9 @@ function banner(text, kind, actions = []) {
 }
 
 function updateBanner() {
-  const t = tabs.find((t) => t.key === active);
+  const t = target();
   if (!t) return banner("");
-  if (t.exited != null) return banner(`A sessão terminou (código ${t.exited}).`, "warn", [["Nova sessão", () => newSession(t.conn)], ["Fechar aba", () => closeTab(t.key)]]);
+  if (t.exited != null) return banner(`A sessão terminou (código ${t.exited}).`, "warn", [["Nova sessão", () => newSession(t.conn)], activeTab().split ? ["Fechar painel", () => closePane(focusPane)] : ["Fechar aba", () => closeTab(t.key)]]);
   const st = conns[t.conn]?.status || { state: "off" };
   if (st.state === "connecting") {
     if (!st.attempt) return banner("Conectando…");
@@ -103,10 +106,11 @@ let tabsLater = false;
 let restoring = false;
 function saveTabs() {
   if (restoring) return;
-  try { localStorage.setItem("tabs-state", JSON.stringify({ order: tabs.map((t) => t.key), active })); } catch {}
+  try { localStorage.setItem("tabs-state", JSON.stringify({ order: tabs.map((t) => t.key), active, splits: Object.fromEntries(tabs.filter((t) => t.split).map((t) => [t.key, t.split.key])) })); } catch {}
 }
 function renderTabs() {
   saveTabs();
+  paintSplit();
   const bar = $("tabs");
   if (bar.querySelector("input.rename")) { tabsLater = true; return; }
   bar.replaceChildren(...tabs.map((t) => {
@@ -155,6 +159,7 @@ function moveTab(from, to) {
 function tabMenu(t, name) {
   return [["Renomear", () => renameSession(t.conn, t.sid, name, t.label)],
     t.split ? ["Desfazer divisão", () => unsplit(t)] : ["Dividir", () => splitMenu(name)],
+    ...(t.split ? [["Alternar orientação", toggleOrient], [t.max != null ? "Restaurar painéis" : "Maximizar painel", toggleMax]] : []),
     ["Reabrir aba fechada (Ctrl+Alt+T)", reopen],
     ["Fechar aba", () => closeTab(t.key)]];
 }
@@ -201,11 +206,11 @@ function editInline(span, value, save) {
 function renameSession(conn, sid, span, label) {
   const cur = conns[conn]?.sessions.find((s) => s.session_id === sid)?.label || label || "Terminal";
   // Menu aberto antes de um redesenho guarda o span antigo (fora do DOM): usa o da aba atual.
-  if (!span.isConnected) span = $("tabs").querySelector(`[data-key="${CSS.escape(conn + "/" + sid)}"] .tab-name`);
+  if (!span.isConnected) span = $("tabs").querySelector(`[data-key="${CSS.escape(conn + "/" + sid)}"] .tab-name`) || document.querySelector(`.pane-head[data-key="${CSS.escape(conn + "/" + sid)}"] .pane-title`);
   if (!span) return;
   editInline(span, cur, async (v) => {
     await invoke("term_rename", { conn, sessionId: sid, label: v });
-    for (const t of tabs) if (t.conn === conn && t.sid === sid) { t.label = v; t.title = titleOf(conn, { label: v }); window.histMeta?.(conn, { session_id: sid, label: v }); }
+    for (const t of allRecs()) if (t.conn === conn && t.sid === sid) { t.label = v; t.title = titleOf(conn, { label: v }); window.histMeta?.(conn, { session_id: sid, label: v }); }
     await refresh(conn);
     renderTabs();
   });
@@ -215,46 +220,192 @@ function renamePc(id, span) {
   editInline(span, conns[id].name, async (v) => {
     await invoke("remote_rename", { id, name: v });
     await refreshRemotes();
-    for (const t of tabs) if (t.conn === id) t.title = titleOf(id, { label: t.label });
+    for (const t of allRecs()) if (t.conn === id) t.title = titleOf(id, { label: t.label });
     renderTabs();
   });
 }
 
-// ---------- Item 5: divisão (uma por aba, dois painéis lado a lado) ----------
-const pane = () => document.activeElement === $("screen2") ? $("screen2") : $("screen");
+// ---------- Item 5: divisão (uma por aba, dois painéis: lado a lado ou um sobre o outro) ----------
 const activeTab = () => tabs.find((t) => t.key === active);
-/** Sessão que recebe o teclado: painel direito se ele tem o foco. */
+/** Abas e painéis divididos, todos como registros { key, conn, sid, label, title, exited }. */
+const allRecs = () => tabs.flatMap((t) => t.split ? [t, t.split] : [t]);
+let focusPane = 0;         // 0 = esquerdo/superior, 1 = direito/inferior (só vale com divisão)
+const paneAct = new Set(); // painel visível com saída nova enquanto o outro tem o foco
+const pane = () => focusPane === 1 && activeTab()?.split ? $("screen2") : $("screen");
+/** Sessão que recebe teclado, colar, arrastar, busca e exportar: a do painel focado. */
 function target() {
   const t = activeTab();
-  if (t?.split && pane() === $("screen2")) return { ...t.split, exited: null };
-  return t;
+  return t && focusPane === 1 && t.split ? t.split : t;
 }
 
+// Divisor: proporção e orientação ficam por aparelho (localStorage).
+const layout = { stack: false, pct: 50, ...(() => { try { const v = JSON.parse(localStorage.getItem("split-layout") || "{}"); return { stack: !!v.stack, pct: Math.max(10, Math.min(90, +v.pct || 50)) }; } catch { return {}; } })() };
+const saveLayout = () => { try { localStorage.setItem("split-layout", JSON.stringify(layout)); } catch {} };
+const MIN_PANE = { w: 180, h: 140 }; // px mínimos de cada painel
+
+function setPct(p, save = false) {
+  const r = $("term-area").getBoundingClientRect(), len = layout.stack ? r.height : r.width;
+  const min = len > 0 ? Math.min(45, (layout.stack ? MIN_PANE.h : MIN_PANE.w) / len * 100) : 10;
+  layout.pct = Math.max(min, Math.min(100 - min, p));
+  $("term-area").style.setProperty("--sp", layout.pct + "%");
+  $("sash").setAttribute("aria-valuenow", String(Math.round(layout.pct)));
+  if (save) saveLayout();
+  fit();
+}
+
+/** Estado visual da divisão: classes, títulos, foco e botões. Chamado a cada renderTabs. */
+function paintSplit() {
+  const t = activeTab(), area = $("term-area"), sp = t?.split;
+  if (!sp) { if (t) t.max = null; focusPane = 0; paneAct.clear(); }
+  else if (t.max === 0) focusPane = 0;
+  else if (t.max === 1) focusPane = 1;
+  paneAct.delete(target()?.key);
+  area.classList.toggle("split", !!sp);
+  area.classList.toggle("stack", !!sp && layout.stack);
+  area.classList.toggle("max1", !!sp && t.max === 0);
+  area.classList.toggle("max2", !!sp && t.max === 1);
+  area.style.setProperty("--sp", layout.pct + "%");
+  $("screen2").hidden = !sp;
+  $("screen").classList.toggle("focused", !!sp && focusPane === 0);
+  $("screen2").classList.toggle("focused", !!sp && focusPane === 1);
+  const sash = $("sash");
+  sash.setAttribute("aria-orientation", layout.stack ? "horizontal" : "vertical");
+  sash.setAttribute("aria-valuenow", String(Math.round(layout.pct)));
+  $("screen2").setAttribute("aria-label", sp ? "Terminal dividido " + sp.title : "Terminal dividido");
+  [t, sp].forEach((rec, i) => {
+    const h = $("head" + (i + 1));
+    h.classList.toggle("focused", !!sp && focusPane === i);
+    if (!rec || !sp) return;
+    h.dataset.key = rec.key;
+    const title = h.querySelector(".pane-title");
+    if (title) title.textContent = (rec.title || rec.label || "Terminal") + (rec.exited != null ? " (encerrada)" : "");
+    h.querySelector(".pane-act").hidden = !paneAct.has(rec.key);
+    const o = h.querySelector("[data-act=orient]");
+    o.textContent = layout.stack ? "⇄" : "⇅";
+    o.title = layout.stack ? "Lado a lado" : "Um sobre o outro";
+    o.setAttribute("aria-label", o.title);
+    const mx = h.querySelector("[data-act=max]");
+    mx.textContent = t.max === i ? "⤡" : "⤢";
+    mx.setAttribute("aria-pressed", String(t.max === i));
+    mx.title = t.max === i ? "Restaurar painéis" : "Maximizar painel";
+    mx.setAttribute("aria-label", mx.title);
+  });
+}
+
+function setFocusPane(n, dom = true) {
+  const t = activeTab();
+  const next = n === 1 && t?.split && t.max !== 0 ? 1 : 0;
+  const same = next === focusPane;
+  focusPane = next;
+  paintSplit();
+  if (dom) pane().focus();
+  if (same) return;
+  appCursor = !!screens[target()?.key]?.app_cursor;
+  updateBanner();
+  afterDraw();
+}
+
+function toggleOrient() {
+  layout.stack = !layout.stack;
+  saveLayout();
+  paintSplit();
+  setPct(layout.pct);
+}
+function toggleMax() {
+  const t = activeTab();
+  if (!t?.split) return;
+  t.max = t.max == null ? focusPane : null;
+  paintSplit();
+  fit();
+  pane().focus();
+}
+
+/** Menu para dividir: terminal novo ou outra sessão aberta (se já é aba, as duas viram uma só). */
 function splitMenu(anchor) {
   const t = activeTab();
   if (!t) return;
-  const opts = [];
-  for (const [conn, c] of Object.entries(conns)) for (const s of c.sessions || [])
-    if (s.state !== "exited" && conn + "/" + s.session_id !== t.key) opts.push([titleOf(conn, s), () => split(t, conn, s.session_id)]);
-  menu(anchor || $("tabs"), opts.length ? opts : [["Nenhuma outra sessão aberta."]]);
+  const opts = [["Terminal novo   Ctrl+Shift+5", splitNew]];
+  for (const [conn, c] of Object.entries(conns)) for (const s of c.sessions || []) {
+    const key = conn + "/" + s.session_id;
+    if (s.state !== "exited" && key !== t.key && key !== t.split?.key) opts.push([titleOf(conn, s), () => split(t, conn, s.session_id)]);
+  }
+  menu(anchor || $("tabs"), opts);
 }
 
-async function split(t, conn, sid) {
-  const key = conn + "/" + sid, { cols, rows } = size();
-  if (!tabs.some((x) => x.key === key)) {
-    try { await invoke("term_attach", { conn, sessionId: sid, cols, rows }); } catch (e) { return banner(msg(e), "err"); }
-    window.histMeta?.(conn, conns[conn]?.sessions.find((s) => s.session_id === sid) || { session_id: sid });
+async function splitNew() {
+  const t = activeTab();
+  if (!t) return newSession(LOCAL);
+  const conn = target().conn, p = conns[conn]?.profiles[0];
+  if (!p) return banner(msg("NOT_FOUND"), "err");
+  const { cols, rows } = size(pane());
+  try {
+    const sid = await invoke("term_create", { conn, profileId: p.profile_id, label: p.label, cols, rows });
+    await split(t, conn, sid, { session_id: sid, label: p.label, state: "running" });
+    refresh(conn);
+  } catch (e) { banner(msg(e), "err"); }
+}
+
+async function split(t, conn, sid, meta) {
+  const key = conn + "/" + sid;
+  if (key === t.key || key === t.split?.key) return;
+  let rec = tabs.find((x) => x.key === key);
+  if (rec) {
+    // A sessão já era aba: vira o painel desta, sem aba duplicada.
+    if (rec.split) unsplit(rec, false);
+    tabs.splice(tabs.indexOf(rec), 1);
+    rec.max = null;
+  } else {
+    const { cols, rows } = size(pane());
+    let ok;
+    try { ok = await invoke("term_attach", { conn, sessionId: sid, cols, rows }); } catch (e) { return banner(msg(e), "err"); }
+    const s = conns[conn]?.sessions.find((s) => s.session_id === sid) || meta || { session_id: sid };
+    window.histMeta?.(conn, s);
+    rec = { key, conn, sid, label: s.label, title: titleOf(conn, s), exited: ok?.state === "exited" ? ok.exit_code ?? 0 : null };
   }
   if (t.split) unsplit(t, false);
-  t.split = { key, conn, sid };
+  t.split = rec;
+  t.max = null;
+  active = t.key;
+  focusPane = 1;
   activate(t.key);
 }
 
+/** Desfaz a divisão: a sessão do segundo painel passa a ser uma aba normal, logo depois desta. */
 function unsplit(t, redraw = true) {
   const sp = t.split;
+  if (!sp) return;
   t.split = null;
-  if (sp && !tabs.some((x) => x.key === sp.key)) { delete screens[sp.key]; invoke("term_detach", { conn: sp.conn, sessionId: sp.sid }).catch(() => {}); }
+  t.max = null;
+  paneAct.delete(sp.key);
+  if (!tabs.some((x) => x.key === sp.key)) tabs.splice(tabs.indexOf(t) + 1, 0, sp);
+  focusPane = 0;
   if (redraw) activate(t.key);
+}
+
+/** Solta a visão de uma sessão (desanexa; o PTY segue vivo no host) e guarda para reabrir. */
+function release(r) {
+  if (r.exited == null) closed.push({ conn: r.conn, sid: r.sid });
+  if (closed.length > 20) closed.shift();
+  busy.delete(r.key);
+  paneAct.delete(r.key);
+  delete screens[r.key];
+  invoke("term_detach", { conn: r.conn, sessionId: r.sid }).catch(() => {});
+}
+
+/** Fecha só o painel n da aba ativa; a outra sessão continua como aba normal. */
+function closePane(n) {
+  const t = activeTab(), sp = t?.split;
+  if (!sp) return;
+  t.split = null;
+  t.max = null;
+  focusPane = 0;
+  if (n === 1) {
+    release(sp);
+    return activate(t.key);
+  }
+  tabs[tabs.indexOf(t)] = sp;
+  release(t);
+  activate(sp.key);
 }
 
 // ---------- Item 7: reabrir aba fechada ----------
@@ -276,19 +427,18 @@ $("tabs").onkeydown = (e) => {
 };
 
 function activate(key, focus = true) {
+  if (key !== active) focusPane = 0;
   active = key;
   const t = tabs.find((t) => t.key === key);
   busy.delete(key);
   if (t?.split) busy.delete(t.split.key);
-  $("screen2").hidden = !t?.split;
-  document.querySelector(".term-area").classList.toggle("split", !!t?.split);
   renderTabs();
   draw(key);
   if (t?.split) draw(t.split.key, $("screen2"));
   updateBanner();
   applyFont();
   resizeActive();
-  if (focus) $("screen").focus();
+  if (focus) pane().focus();
 }
 
 function titleOf(conn, s) {
@@ -298,6 +448,9 @@ function titleOf(conn, s) {
 
 async function openSession(conn, s) {
   const key = conn + "/" + s.session_id;
+  // Sessão que já é painel dividido de uma aba: vai para essa aba, sem aba duplicada.
+  const host = tabs.find((t) => t.split?.key === key);
+  if (host) { activate(host.key); return setFocusPane(1); }
   if (!tabs.some((t) => t.key === key)) {
     const { cols, rows } = size();
     let ok;
@@ -313,12 +466,9 @@ async function closeTab(key) {
   const i = tabs.findIndex((t) => t.key === key);
   if (i < 0) return;
   const [t] = tabs.splice(i, 1);
-  if (t.split) unsplit(t, false);
-  if (t.exited == null) closed.push({ conn: t.conn, sid: t.sid });
-  if (closed.length > 20) closed.shift();
-  busy.delete(key);
-  // Painel direito de outra aba ainda mostra esta sessão: não desanexa.
-  if (!tabs.some((x) => x.split?.key === key)) { delete screens[key]; invoke("term_detach", { conn: t.conn, sessionId: t.sid }).catch(() => {}); }
+  // Fechar a aba solta as duas sessões; para fechar só uma, use o painel (closePane).
+  if (t.split) release(t.split);
+  release(t);
   if (active === key) {
     active = tabs[Math.min(i, tabs.length - 1)]?.key ?? null;
     if (active) return activate(active);
@@ -619,6 +769,7 @@ async function endSession(conn, s) {
 async function removeRemote(id) {
   const name = conns[id].name;
   if (!await ask(`Remover ${name}?`, `Este app esquece ${name}. Para usar de novo, será preciso um novo link. Para tirar o acesso lá também, remova este PC em Aparelhos no outro computador.`, "Remover este PC")) return;
+  for (const t of tabs.filter((t) => t.conn !== id && t.split?.conn === id)) { release(t.split); t.split = null; t.max = null; }
   for (const t of tabs.filter((t) => t.conn === id)) await closeTab(t.key);
   try { await invoke("remote_remove", { id }); } catch (e) { banner(msg(e), "err"); }
   delete conns[id];
@@ -681,33 +832,40 @@ $("remote-add").onclick = openAdd;
 listen("term-screen", ({ payload }) => {
   const k = payload.key, t = activeTab();
   screens[k] = payload;
-  if (k === active) { if (!holdDraw()) drawSoon(k); }
-  else if (t?.split?.key === k) drawSoon(k, $("screen2"));
+  if (k === active || t?.split?.key === k) {
+    const s = k === active ? $("screen") : $("screen2");
+    if (!holdDraw(s)) drawSoon(k, s);
+    if (t.split && target().key !== k && !paneAct.has(k)) { paneAct.add(k); paintSplit(); }
+  }
   else if (!busy.has(k)) { busy.add(k); renderTabs(); }
 });
 // Item 9 (evento do F1): avisa no Windows se o comando levou mais de 10 s e não estava à vista.
 listen("term-cmd-done", ({ payload }) => {
-  const t = activeTab(), seen = document.hasFocus() && (payload.key === active || t?.split?.key === payload.key);
+  const seen = document.hasFocus() && payload.key === target()?.key;
   const start = lastEnter[payload.key];
   delete lastEnter[payload.key];
   if (seen || !start || Date.now() - start < 10000) return;
-  const tab = tabs.find((x) => x.key === payload.key);
+  const tab = allRecs().find((x) => x.key === payload.key);
   invoke("plugin:notification|notify", { options: { title: "Comando terminou", body: `${tab?.title || "Terminal"}: código ${payload.code ?? 0}` } }).catch(() => {});
 });
 // Ações do menu do terminal (F2).
 document.addEventListener("term-action", (e) => {
-  const a = e.detail?.action ?? e.detail, t = activeTab();
-  if (a === "rename" && t) { const n = $("tabs").querySelector(`[data-key="${CSS.escape(t.key)}"] .tab-name`); if (n) renameSession(t.conn, t.sid, n, t.label); }
+  const a = e.detail?.action ?? e.detail, t = target();
+  if (a === "rename" && t) { const n = $("tabs").querySelector(`[data-key="${CSS.escape(t.key)}"] .tab-name`) || document.querySelector(`.pane-head[data-key="${CSS.escape(t.key)}"] .pane-title`); if (n) renameSession(t.conn, t.sid, n, t.label); }
   else if (a === "split") splitMenu();
+  else if (a === "split-new") splitNew();
+  else if (a === "orient") toggleOrient();
+  else if (a === "maximize") toggleMax();
+  else if (a === "unsplit" && activeTab()) unsplit(activeTab());
   else if (a === "new") newSession(t ? t.conn : LOCAL);
-  else if (a === "close" && t) closeTab(t.key);
+  else if (a === "close" && t) activeTab().split ? closePane(focusPane) : closeTab(t.key);
   else if (a === "export" && t) window.__TAURI__.dialog.save({ defaultPath: `${(t.label || "terminal").replace(/[\\/:*?"<>|]/g, "_")}.txt`, filters: [{ name: "Texto", extensions: ["txt"] }] })
     .then((path) => path && invoke("term_export_file", { conn: t.conn, sessionId: t.sid, path }).then(() => banner("Saída salva em " + path, "ok")))
     .catch((err) => banner(msg(err), "err"));
 });
 listen("term-exited", ({ payload }) => {
-  const t = tabs.find((t) => t.key === payload.key);
-  if (t) { t.exited = payload.code; if (t.key === active) updateBanner(); }
+  const t = allRecs().find((t) => t.key === payload.key);
+  if (t) { t.exited = payload.code; if (t === target()) updateBanner(); paintSplit(); }
   refresh(payload.key.split("/")[0]);
 });
 listen("term-conn", async ({ payload }) => {
@@ -731,7 +889,7 @@ listen("term-conn", async ({ payload }) => {
     // Reconectou: anexa de novo as abas abertas (tela nova a partir do começo do buffer).
     if (prev?.state === "connecting" && prev.attempt > 0) {
       const { cols, rows } = size();
-      for (const t of tabs.filter((t) => t.conn === id && t.exited == null)) invoke("term_attach", { conn: id, sessionId: t.sid, cols, rows }).catch(() => {});
+      for (const t of allRecs().filter((t) => t.conn === id && t.exited == null)) invoke("term_attach", { conn: id, sessionId: t.sid, cols, rows }).catch(() => {});
     }
   }
   renderSidebar();
@@ -769,15 +927,14 @@ function keyBytes(e) {
   return esc + e.key;
 }
 
-function send(data) {
-  const t = target();
+function send(data, t = target()) {
   if (t && data.includes("\r")) lastEnter[t.key] = Date.now();
   if (t && t.exited == null) invoke("term_input", { conn: t.conn, sessionId: t.sid, data }).catch(() => {});
 }
 
 const termKey = (e) => {
   if (e.isComposing || e.key === "Process" || e.key === "Dead") return;
-  if (screenKey(e)) return;
+  if (paneKey(e) || screenKey(e)) return;
   if (e.ctrlKey && e.shiftKey && ["C", "V", "T", "W", "F6", "B"].includes(e.key.length === 1 ? e.key.toUpperCase() : e.key)) return;
   if (e.ctrlKey && e.key === "Tab") return;
   const b = keyBytes(e);
@@ -818,6 +975,7 @@ document.addEventListener("keydown", (e) => {
   const t = tabs.find((t) => t.key === active);
   if (e.ctrlKey && e.altKey && !e.shiftKey && k === "T") { e.preventDefault(); reopen(); }
   else if (e.ctrlKey && e.shiftKey && k === "T") { e.preventDefault(); newSession(t ? t.conn : LOCAL); }
+  else if (paneKey(e)) return;
   else if (e.ctrlKey && e.shiftKey && k === "W") { e.preventDefault(); if (active) closeTab(active); }
   else if (e.ctrlKey && k === "Tab") {
     e.preventDefault();
@@ -842,7 +1000,18 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-$("screen2").oncontextmenu = (e) => e.preventDefault();
+// Atalhos dos painéis: Ctrl+Shift+5 divide com terminal novo; com divisão, Alt+setas alterna o foco,
+// Ctrl+W e Ctrl+Shift+W (com o foco num painel) fecham só o painel focado. true = consumida.
+function paneKey(e) {
+  const t = activeTab(), inTerm = !!e.target.closest?.(".terminal"), k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  let done = true;
+  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "Digit5") splitNew();
+  else if (t?.split && inTerm && e.ctrlKey && !e.altKey && k === "w") closePane(focusPane);
+  else if (t?.split && inTerm && e.altKey && !e.ctrlKey && !e.shiftKey && ["ArrowLeft", "ArrowRight", ...(layout.stack ? ["ArrowUp", "ArrowDown"] : [])].includes(k)) setFocusPane(focusPane ? 0 : 1);
+  else done = false;
+  if (done) { e.preventDefault(); e.stopPropagation(); }
+  return done;
+}
 
 const wheel = (e) => {
   if (e.ctrlKey && e.deltaY) { e.preventDefault(); return zoom(e.deltaY < 0 ? 1 : -1); }
@@ -856,25 +1025,46 @@ $("screen2").addEventListener("wheel", wheel, { passive: false });
 
 // ---------- F2: tela (copiar/colar, menu, busca, links, fonte, arrastar, ajuda) ----------
 const curTab = () => tabs.find((t) => t.key === active);
-const rowsEl = () => [...$("screen").children].filter((n) => n.id !== "measure");
-let selecting = false, pendingDraw = false;
-const hasSel = () => { const s = getSelection(); return !s.isCollapsed && $("screen").contains(s.anchorNode); };
-function holdDraw() { const h = selecting || hasSel(); pendingDraw ||= h; return h; }
-function flushDraw() { if (pendingDraw && !holdDraw()) { pendingDraw = false; draw(active); } }
-$("screen").addEventListener("mousedown", (e) => { if (e.button === 0) selecting = true; });
-document.addEventListener("mouseup", () => { selecting = false; setTimeout(flushDraw); });
-document.addEventListener("selectionchange", () => { if (!selecting) flushDraw(); });
+const rowsEl = (s = pane()) => [...s.children].filter((n) => n.id !== "measure");
+// Seleção em curso/ativa segura o redesenho do painel onde está (cada painel tem a sua).
+const selecting = new Set(), pendingDraw = new Set();
+const selIn = (s) => { const g = getSelection(); return !g.isCollapsed && s.contains(g.anchorNode); };
+const hasSel = (s = pane()) => selIn(s);
+function holdDraw(s = $("screen")) { const h = selecting.has(s) || selIn(s); if (h) pendingDraw.add(s); return h; }
+function flushDraw() {
+  for (const s of [...pendingDraw]) {
+    if (holdDraw(s)) continue;
+    pendingDraw.delete(s);
+    const k = s === $("screen") ? active : activeTab()?.split?.key;
+    if (k) draw(k, s);
+  }
+}
+for (const s of [$("screen"), $("screen2")]) {
+  // Arrastar/duplo/triplo clique: o outro painel fica sem seleção (user-select:none) até soltar, e a seleção não vaza.
+  s.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    selecting.add(s);
+    const other = s === $("screen") ? $("screen2") : $("screen");
+    if (selIn(other)) getSelection().removeAllRanges();
+    other.classList.add("sel-lock");
+  });
+  // Clique e foco escolhem o painel que recebe colar, arrastar, busca e exportar.
+  s.addEventListener("focus", () => setFocusPane(s === $("screen2") ? 1 : 0, false));
+}
+document.addEventListener("mouseup", () => { selecting.clear(); $("screen").classList.remove("sel-lock"); $("screen2").classList.remove("sel-lock"); setTimeout(flushDraw); });
+document.addEventListener("selectionchange", () => { if (!selecting.size) flushDraw(); });
 
 function copySel() {
-  const s = getSelection().toString();
+  const s = hasSel() ? getSelection().toString() : "";
   if (!s) return;
   invoke("clip_copy", { text: s }).catch((err) => banner(msg(err), "err"));
   getSelection().removeAllRanges();
-  $("screen").focus();
+  pane().focus();
 }
 function paste() {
-  const t = curTab();
-  if (!t || t.exited != null) return $("screen").focus();
+  // Painel focado (esquerdo ou direito): a sessão e a pasta dele recebem o print.
+  const t = target();
+  if (!t || t.exited != null) return pane().focus();
   const dir = dropCwds[t.key] ?? null;
   // Print: local vai para <pasta>\.live-cmd; remoto é enviado ao outro PC. Cola o caminho (claude/codex anexam pelo caminho).
   const ssh = sshOf(t);
@@ -884,10 +1074,10 @@ function paste() {
     // Local e host novo já devolvem o caminho absoluto; host antigo devolve só o nome e o caminho é deduzido.
     const abs = /^([A-Za-z]:)?[\\/]/.test(name);
     const path = local || abs ? name : dir ? `${dir.replace(/[\\/]+$/, "")}\\screenshots\\${name}` : `~\\Pictures\\Screenshots\\${name}`;
-    send(`"${path}"`);
+    send(`"${path}"`, t);
     banner(ssh ? `Print enviado ao servidor: ${path}.` : local ? `Print salvo: ${name}.` : `Print enviado: ${path}.`);
   }).catch((err) => banner(msg(err), "err"));
-  $("screen").focus();
+  pane().focus();
 }
 function selectAll() {
   const r = rowsEl();
@@ -907,7 +1097,7 @@ function screenKey(e) {
   const hit = Object.keys(SHORTCUTS).find((a) => keyName(e) === binds[a]);
   if (plain && k === "c" && hasSel()) copySel();
   else if (hit) SHORTCUTS[hit][1]();
-  else if (k === "ContextMenu" || (e.shiftKey && k === "F10")) { const r = $("screen").getBoundingClientRect(); ctxMenu(r.left + 20, r.top + 20); }
+  else if (k === "ContextMenu" || (e.shiftKey && k === "F10")) { const r = pane().getBoundingClientRect(); ctxMenu(r.left + 20, r.top + 20); }
   else done = false;
   if (done) { e.preventDefault(); e.stopPropagation(); }
   return done;
@@ -915,24 +1105,25 @@ function screenKey(e) {
 
 // Menu de contexto da tela (substitui o nativo do WebView: Recarregar, Inspecionar…).
 function ctxMenu(x, y) {
-  const at = { getBoundingClientRect: () => ({ left: x, bottom: y }), focus: () => $("screen").focus() };
+  const at = { getBoundingClientRect: () => ({ left: x, bottom: y }), focus: () => pane().focus() };
   menu(at, [
     ["Copiar   Ctrl+C", hasSel() ? copySel : null], ["Colar   Ctrl+V", paste], ["Selecionar tudo", selectAll], ["Buscar   Ctrl+Shift+F", openFind],
     ["Nova sessão   Ctrl+Shift+T", action("new")], ["Nova sessão nesta pasta", action("new-here")], ["Reabrir aba fechada   Ctrl+Alt+T", reopen],["Renomear aba", action("rename")], ["Fechar aba   Ctrl+Shift+W", action("close")],
-    ["Exportar saída", action("export")], ["Dividir painel", action("split")], ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
+    ["Exportar saída", action("export")], ["Dividir painel", action("split")], ...(activeTab()?.split ? [["Alternar orientação", action("orient")], [activeTab().max != null ? "Restaurar painéis" : "Maximizar painel", action("maximize")], ["Desfazer divisão", action("unsplit")]] : []), ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
     ["Aumentar fonte", () => zoom(1)], ["Diminuir fonte", () => zoom(-1)], ["Redefinir fonte", () => zoom(0)],
     ["Limpar", clearTab], ["Atalhos e ajuda   F1", () => help()],
   ].filter(([, fn]) => fn));
 }
 // Limpa o buffer vt100 no app (vale em cmd) e manda Ctrl+L para o shell redesenhar o prompt.
 function clearTab() {
-  const t = curTab();
-  if (t) invoke("term_clear", { conn: t.conn, sessionId: t.sid }).then(() => { send("\x0c"); draw(t.key); }).catch((err) => banner(msg(err), "err"));
-  $("screen").focus();
+  const t = target(), s = pane();
+  if (t) invoke("term_clear", { conn: t.conn, sessionId: t.sid }).then(() => { send("\x0c", t); draw(t.key, s); }).catch((err) => banner(msg(err), "err"));
+  s.focus();
 }
 // Botão direito: copia se há seleção, senão cola (como no Windows Terminal). Shift+botão direito abre o menu.
-$("screen").oncontextmenu = (e) => {
+for (const s of [$("screen"), $("screen2")]) s.oncontextmenu = (e) => {
   e.preventDefault();
+  s.focus();
   if (e.shiftKey) ctxMenu(e.clientX, e.clientY);
   else if (hasSel()) copySel();
   else paste();
@@ -974,7 +1165,7 @@ $("screen").style.fontSize = $("screen2").style.fontSize = font + "px";
 // Busca (Ctrl+F) nas linhas desenhadas, com CSS Highlight; no fim da tela rola o histórico (term_scroll).
 let findQ = "", findI = 0, findDir = 0, findHits = [];
 function openFind() { $("find").hidden = false; $("find-q").select(); $("find-q").focus(); }
-function closeFind() { $("find").hidden = true; findQ = ""; afterDraw(); $("screen").focus(); }
+function closeFind() { $("find").hidden = true; findQ = ""; afterDraw(); pane().focus(); }
 function afterDraw() {
   CSS.highlights?.delete("find"); CSS.highlights?.delete("find-cur");
   findHits = [];
@@ -1004,10 +1195,10 @@ function afterDraw() {
 function findStep(d) {
   if (findHits.length && findI + d >= 0 && findI + d < findHits.length) { findI += d; return afterDraw(); }
   // Acabou na tela: rola uma tela no histórico (para cima = anteriores) e procura de novo no próximo desenho.
-  const t = curTab();
+  const t = target();
   if (!t) return;
   findDir = d;
-  const n = size().rows;
+  const n = size(pane()).rows;
   invoke("term_scroll", { conn: t.conn, sessionId: t.sid, lines: d < 0 ? n : -n }).catch(() => {});
 }
 $("find-q").oninput = () => { findQ = $("find-q").value; findI = 0; afterDraw(); };
@@ -1020,9 +1211,9 @@ $("find-next").onclick = () => findStep(1);
 $("find-x").onclick = closeFind;
 
 // Links: Ctrl+clique abre URL no navegador; caminho Windows abre no Explorer (mostra o item, não executa).
-$("screen").addEventListener("click", (e) => {
+for (const scr of [$("screen"), $("screen2")]) scr.addEventListener("click", (e) => {
   if (!e.ctrlKey) return;
-  const c = document.caretRangeFromPoint(e.clientX, e.clientY), row = c && rowsEl().find((r) => r.contains(c.startContainer));
+  const c = document.caretRangeFromPoint(e.clientX, e.clientY), row = c && rowsEl(scr).find((r) => r.contains(c.startContainer));
   if (!row) return;
   const pre = new Range();
   pre.setStart(row, 0); pre.setEnd(c.startContainer, c.startOffset);
@@ -1032,12 +1223,18 @@ $("screen").addEventListener("click", (e) => {
   const op = window.__TAURI__.opener;
   (/^https?:/.test(link) ? op.openUrl(link) : op.revealItemInDir(link)).catch(() => banner(msg("NOT_FOUND"), "err"));
 });
-$("screen").addEventListener("mousemove", (e) => $("screen").classList.toggle("ctrl", e.ctrlKey));
+for (const scr of [$("screen"), $("screen2")]) scr.addEventListener("mousemove", (e) => scr.classList.toggle("ctrl", e.ctrlKey));
 
 // Arrastar arquivo(s): sessão local cola o(s) caminho(s) entre aspas; remota envia ao outro PC (pasta atual da sessão, senão a padrão do host).
 window.__TAURI__.event.listen("term-cwd", (e) => { dropCwds[e.payload.key] = e.payload.cwd || undefined; });
 window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload }) => {
   if (payload.type !== "drop" || !payload.paths?.length) return;
+  // Solto sobre um painel: ele vira o focado e recebe o(s) arquivo(s); fora dos painéis vale o focado.
+  if (activeTab()?.split && payload.position) {
+    const x = payload.position.x / devicePixelRatio, y = payload.position.y / devicePixelRatio;
+    const over = [$("screen"), $("screen2")].findIndex((s) => { const r = s.getBoundingClientRect(); return r.width && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; });
+    if (over >= 0) setFocusPane(over, false);
+  }
   const t = target();
   const ssh = sshOf(t);
   if (ssh) {
@@ -1049,11 +1246,11 @@ window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload })
       try { out.push(await invoke("term_upload", { conn: t.conn, path, sessionId: t.sid, ssh, cwd: dropCwds[t.key] ?? null })); }
       catch (e) { return banner(`Falha ao enviar ${name}: ${msg(e)}`, "err"); }
     }
-    send(out.map((p) => `"${p}"`).join(" "));
+    send(out.map((p) => `"${p}"`).join(" "), t);
     banner(`${out.length} arquivo(s) enviado(s) ao servidor.`);
-    return $("screen").focus();
+    return pane().focus();
   }
-  if (!t || t.conn === LOCAL) { send(payload.paths.map((p) => `"${p}"`).join(" ")); $("screen").focus(); return; }
+  if (!t || t.conn === LOCAL) { send(payload.paths.map((p) => `"${p}"`).join(" "), t); pane().focus(); return; }
   for (const [i, path] of payload.paths.entries()) {
     const name = path.split(/[\/]/).pop();
     banner(`Enviando ${name} (${i + 1}/${payload.paths.length})…`);
@@ -1065,7 +1262,9 @@ window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload })
 
 // Ajuda (F1).
 const KEYS = [["Ctrl+C", "Copiar seleção (sem seleção: interrompe, ^C)"], ["Ctrl+V / Ctrl+Shift+V", "Colar"], ["Ctrl+Shift+C", "Copiar seleção"],
-  ["Ctrl+Shift+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba"],
+  ["Ctrl+Shift+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba (com divisão: só o painel focado)"],
+  ["Ctrl+Shift+5", "Dividir com terminal novo"], ["Alt+← / Alt+→", "Alternar o foco entre os painéis divididos"], ["Ctrl+W (com divisão)", "Fechar só o painel focado"],
+  ["Arrastar o divisor", "Ajustar os painéis · duplo clique volta a 50/50 · setas ajustam"],
   ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+Shift+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
   ["Ctrl+roda do mouse", "Zoom da fonte"], ["Roda do mouse", "Rolar histórico"],
   ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito", "Colar (com seleção: copiar)"], ["Shift+botão direito / Shift+F10 / ☰", "Menu do terminal"], ["Arrastar arquivo", "Local: cola o caminho · Remoto/SSH: envia e cola o caminho"]];
@@ -1105,20 +1304,107 @@ function help() {
 }
 
 // ---------- Tamanho ----------
-// Os dois painéis têm a mesma largura: o tamanho medido em #screen vale para ambos.
+// Cada painel redimensiona o seu PTY com o próprio tamanho (o divisor e a orientação mudam as medidas).
 function resizeActive() {
   const t = activeTab();
   if (!t) return;
-  const { cols, rows } = size();
-  if (t.exited == null) invoke("term_resize", { conn: t.conn, sessionId: t.sid, cols, rows }).catch(() => {});
-  if (t.split) invoke("term_resize", { conn: t.split.conn, sessionId: t.split.sid, cols, rows }).catch(() => {});
+  const one = (r, s) => {
+    if (r.exited != null || s.hidden || !s.offsetWidth) return;
+    const { cols, rows } = size(s);
+    invoke("term_resize", { conn: r.conn, sessionId: r.sid, cols, rows }).catch(() => {});
+  };
+  one(t, $("screen"));
+  if (t.split) one(t.split, $("screen2"));
 }
 let resizeTimer = 0;
 function fit() {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(resizeActive, 100);
 }
-new ResizeObserver(fit).observe($("screen"));
+const ro = new ResizeObserver(fit);
+ro.observe($("screen"));
+ro.observe($("screen2"));
+
+// ---------- Divisor (sash), cabeçalhos dos painéis e arrastar aba para dividir ----------
+(() => {
+  const sash = $("sash"), area = $("term-area");
+  const at = (e) => { const r = area.getBoundingClientRect(); return layout.stack ? (e.clientY - r.top) / r.height * 100 : (e.clientX - r.left) / r.width * 100; };
+  sash.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    sash.setPointerCapture(e.pointerId);
+    sash.classList.add("drag");
+  });
+  sash.addEventListener("pointermove", (e) => { if (sash.hasPointerCapture(e.pointerId)) setPct(at(e)); });
+  const end = (e) => {
+    if (!sash.hasPointerCapture(e.pointerId)) return;
+    sash.releasePointerCapture(e.pointerId);
+    sash.classList.remove("drag");
+    saveLayout();
+  };
+  sash.addEventListener("pointerup", end);
+  sash.addEventListener("pointercancel", end);
+  sash.addEventListener("dblclick", () => setPct(50, true));
+  sash.addEventListener("keydown", (e) => {
+    const back = layout.stack ? "ArrowUp" : "ArrowLeft", fwd = layout.stack ? "ArrowDown" : "ArrowRight";
+    if (e.key === back || e.key === fwd) setPct(layout.pct + (e.key === fwd ? 2 : -2), true);
+    else if (e.key === "Enter" || e.key === "Home") setPct(50, true);
+    else return;
+    e.preventDefault();
+  });
+
+  // Cabeçalho de cada painel: título (duplo clique renomeia), orientação, maximizar, desfazer divisão, fechar.
+  for (const [i, h] of [[0, $("head1")], [1, $("head2")]]) {
+    const title = el("span", "pane-title");
+    title.ondblclick = () => { const r = i ? activeTab()?.split : activeTab(); if (r) renameSession(r.conn, r.sid, title, r.label); };
+    const dot = actDot();
+    dot.classList.add("pane-act");
+    dot.hidden = true;
+    h.append(title, dot);
+    for (const [act, text, label, fn] of [["orient", "⇅", "Alternar orientação", toggleOrient], ["max", "⤢", "Maximizar painel", toggleMax],
+      ["unsplit", "⊟", "Desfazer divisão", () => unsplit(activeTab())], ["close", "×", "Fechar este painel (Ctrl+W)", () => closePane(i)]]) {
+      const b = el("button", "pane-btn", text);
+      b.type = "button";
+      b.dataset.act = act;
+      b.title = label;
+      b.setAttribute("aria-label", label);
+      b.onclick = (e) => { e.stopPropagation(); setFocusPane(i, false); fn(); };
+      h.append(b);
+    }
+    h.onmousedown = (e) => { if (!e.target.closest("button, input")) { e.preventDefault(); setFocusPane(i); } };
+  }
+
+  // Arrastar uma aba para a área do terminal divide: a aba vira o painel da aba ativa.
+  const hint = $("drop-hint");
+  const dropTab = (key) => {
+    const t = activeTab(), d = tabs.find((x) => x.key === key);
+    hint.hidden = true;
+    if (t && d && d !== t) split(t, d.conn, d.sid);
+  };
+  const over = (x, y) => { const r = area.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; };
+  const showHint = (on) => { hint.hidden = !on; hint.classList.toggle("stack", layout.stack); };
+  // HTML5 (quando o WebView entrega drag/drop de DOM).
+  area.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("text/x-tab")) { e.preventDefault(); showHint(true); } });
+  area.addEventListener("dragleave", (e) => { if (!area.contains(e.relatedTarget)) showHint(false); });
+  area.addEventListener("drop", (e) => { const k = e.dataTransfer.getData("text/x-tab"); if (k) { e.preventDefault(); dropTab(k); } });
+  // Ponteiro (alternativa: o handler de arquivos do Tauri pode engolir o drag de DOM no Windows).
+  let press = null, moved = false;
+  $("tabs").addEventListener("pointerdown", (e) => { const b = e.button === 0 && e.target.closest("[role=tab]"); press = b ? { key: b.dataset.key, x: e.clientX, y: e.clientY } : null; moved = false; });
+  document.addEventListener("pointermove", (e) => {
+    if (!press) return;
+    if (!moved && Math.hypot(e.clientX - press.x, e.clientY - press.y) < 12) return;
+    moved = true;
+    showHint(over(e.clientX, e.clientY) && press.key !== active);
+  });
+  const stop = (e) => {
+    const p = press;
+    press = null;
+    if (p && moved && e.type === "pointerup" && over(e.clientX, e.clientY)) dropTab(p.key);
+    showHint(false);
+  };
+  document.addEventListener("pointerup", stop);
+  document.addEventListener("pointercancel", stop);
+})();
 
 // ---------- Início ----------
 $("local-new").onclick = () => profileMenu($("local-new"), LOCAL);
@@ -1126,14 +1412,19 @@ $("empty-new").onclick = () => newSession(LOCAL);
 // Retomar: abre em abas todas as sessões locais vivas (inclusive as restauradas do disco),
 // na ordem das abas da última vez e voltando para a aba que estava ativa (salvas em saveTabs).
 refresh(LOCAL).then(async () => {
-  let saved = { order: [], active: null };
+  let saved = { order: [], active: null, splits: {} };
   try { saved = { ...saved, ...JSON.parse(localStorage.getItem("tabs-state") || "{}") }; } catch {}
   const pos = (s) => { const i = saved.order.indexOf(LOCAL + "/" + s.session_id); return i < 0 ? Infinity : i; };
   const list = (conns[LOCAL].sessions || []).filter((s) => s.state !== "closed").sort((a, b) => pos(a) - pos(b));
   restoring = true;
   for (const s of list) await openSession(LOCAL, s).catch(() => {});
+  // Divisões salvas: se as duas sessões voltaram como abas separadas, junta numa só.
+  for (const [main, other] of Object.entries(saved.splits || {})) {
+    const m = tabs.find((t) => t.key === main), o = tabs.find((t) => t.key === other);
+    if (m && o && m !== o && !m.split && !o.split) await split(m, o.conn, o.sid).catch(() => {});
+  }
   restoring = false;
-  const back = tabs.find((t) => t.key === saved.active) || tabs.find((t) => t.key === active) || tabs[0];
+  const back = tabs.find((t) => t.key === saved.active || t.split?.key === saved.active) || tabs.find((t) => t.key === active) || tabs[0];
   if (back) activate(back.key);
 });
 refreshRemotes();
