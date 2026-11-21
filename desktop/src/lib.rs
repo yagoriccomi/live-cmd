@@ -4,6 +4,7 @@ mod client;
 mod conpty;
 pub mod appdata;
 pub mod extras;
+pub mod ipc;
 mod files;
 mod proto;
 mod screen;
@@ -1234,9 +1235,9 @@ pub struct Config {
     /// Sala fixa (UUID v4 minúsculo); ver [`room_id`].
     pub room: String,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum State { Running, Connecting, Error }
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Status {
     pub state: State,
     /// Conexões autenticadas agora.
@@ -1244,7 +1245,7 @@ pub struct Status {
     /// Fim da OTK pendente, em ms desde a época Unix.
     pub pairing_expires_ms: Option<u64>,
 }
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Device { pub client_pk: [u8; 32], pub label: String, pub paired_at_ms: u64, pub connected: bool }
 struct Inner { host: Arc<Host>, server: String, room: String, link: Link, stop: tokio::sync::watch::Sender<bool>, thread: Mutex<Option<std::thread::JoinHandle<()>>> }
 /// Host em segundo plano: laço de presença numa thread com runtime tokio próprio.

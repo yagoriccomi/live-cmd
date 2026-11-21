@@ -34,7 +34,7 @@ pub fn parse_pair_link(uri: &str, allowlist: &[&str]) -> std::result::Result<(Re
 enum Outbound { Ctl(Value), Frame(proto::Frame), Upload(Upload) }
 /// Envio de arquivo (C4 §4) pelo `file-channel`: `init` pronto, bytes em memória, resposta final em `done`.
 struct Upload { fid: [u8; 16], init: Value, data: Vec<u8>, done: smpsc::Sender<std::result::Result<Option<String>, String>> }
-enum Wire { Local { conn: ConnId, pk: Pk, _reg: Reg }, Remote(mpsc::UnboundedSender<Outbound>) }
+enum Wire { Local { conn: ConnId, pk: Pk, _reg: Reg }, Remote(mpsc::UnboundedSender<Outbound>), Pipe(ipc::PipeLink) }
 struct Shared {
     on: OnEvent,
     pending: Mutex<HashMap<String, smpsc::Sender<Value>>>,
@@ -102,6 +102,19 @@ impl Client {
         Client { wire: Wire::Local { conn, pk: svc.0.host.pk(), _reg: Reg(conn) }, shared }
     }
 
+    /// Terminal desta máquina servido pelo daemon `live-cmd-termd` (named pipe, [`ipc`]). Mesmas mensagens do
+    /// [`Client::local`]; as sessões continuam no daemon quando o app fecha. A primeira conexão é feita aqui;
+    /// se cair, reconecta sozinho (`Connecting { attempt ≥ 1 }` e depois `Ready`, para a tela reanexar as abas).
+    pub fn pipe(ep: ipc::Endpoint, on: impl Fn(ClientEvent) + Send + Sync + 'static) -> std::result::Result<Client, ipc::Fail> {
+        let first = { let ep = ep.clone(); ipc::block(async move { ipc::connect(&ep, false).await })? };
+        let shared = Arc::new(Shared { on: Box::new(on), pending: Mutex::default(), seq: Mutex::default() });
+        let (tx, rx) = mpsc::unbounded_channel();
+        let up = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        (shared.on)(ClientEvent::Ready);
+        ipc::rt().spawn(pipe_loop(ep, first, shared.clone(), rx, up.clone()));
+        Ok(Client { wire: Wire::Pipe(ipc::PipeLink { tx, up }), shared })
+    }
+
     /// Outro PC: offerer na sala `pin.room`. `otk = Some` pareia (uma tentativa só);
     /// `None` reconecta, com backoff de 1 s a 30 s enquanto a falha for de rede.
     pub fn remote(pin: RemotePin, otk: Option<[u8; 32]>, on: impl Fn(ClientEvent) + Send + Sync + 'static) -> std::result::Result<Client, String> {
@@ -139,6 +152,17 @@ impl Client {
                 let r = wrx.recv_timeout(REPLY);
                 self.shared.pending.lock().unwrap().remove(&rid);
                 r.map_err(|_| "EXPIRED")?
+            }
+            Wire::Pipe(l) => {
+                if !l.up.load(Relaxed) { return Err("NOT_CONNECTED".into()); }
+                let (wtx, wrx) = smpsc::channel();
+                self.shared.pending.lock().unwrap().insert(rid.clone(), wtx);
+                let mut m = body;
+                m["request_id"] = rid.as_str().into();
+                if l.tx.send(ipc::pack_json(&json!({"t":"req","body":m}))).is_err() { self.shared.pending.lock().unwrap().remove(&rid); return Err("NOT_CONNECTED".into()); }
+                let r = wrx.recv_timeout(REPLY);
+                self.shared.pending.lock().unwrap().remove(&rid);
+                r.map_err(|e| if matches!(e, smpsc::RecvTimeoutError::Disconnected) { "NOT_CONNECTED" } else { "EXPIRED" })?
             }
         };
         if reply["type"] == "error" { return Err(reply["code"].as_str().unwrap_or("INVALID_MESSAGE").to_owned()); }
@@ -189,7 +213,62 @@ impl Client {
                 match r { Ok(Some(o)) => { h.deliver([(*conn, o)]); Ok(()) } Ok(None) => Ok(()), Err(e) => Err(e.code().into()) }
             }
             Wire::Remote(tx) => tx.send(Outbound::Frame(f)).map_err(|_| "NOT_CONNECTED".into()),
+            // O `seq` do input é dado no daemon, pelo cliente local de lá.
+            Wire::Pipe(l) if l.up.load(Relaxed) => l.tx.send(ipc::pack_frame(&f)).map_err(|_| "NOT_CONNECTED".into()),
+            Wire::Pipe(_) => Err("NOT_CONNECTED".into()),
         }
+    }
+}
+
+/// Laço do [`Client::pipe`]: escreve a fila no pipe, entrega o que chega e reconecta (250 ms a 2 s) se cair.
+/// Termina quando o `Client` é solto.
+async fn pipe_loop(ep: ipc::Endpoint, first: ipc::Conn, s: Arc<Shared>, mut rx: mpsc::UnboundedReceiver<Vec<u8>>, up: Arc<std::sync::atomic::AtomicBool>) {
+    use tokio::io::AsyncWriteExt;
+    let mut cur = Some(first);
+    let mut attempt = 0u32;
+    loop {
+        let conn = match cur.take() {
+            Some(c) => c,
+            None => {
+                attempt += 1;
+                (s.on)(ClientEvent::Connecting { attempt });
+                let mut wait = Duration::from_millis(250);
+                loop {
+                    if rx.is_closed() { return; }
+                    if let Ok(c) = ipc::connect(&ep, false).await { break c; }
+                    tokio::time::sleep(wait).await;
+                    wait = (wait * 2).min(Duration::from_secs(2));
+                }
+            }
+        };
+        // O que foi enfileirado durante a queda era para a conexão anterior.
+        loop { match rx.try_recv() { Ok(_) => {} Err(mpsc::error::TryRecvError::Empty) => break, Err(_) => return } }
+        if attempt > 0 { up.store(true, Relaxed); (s.on)(ClientEvent::Ready); }
+        let (mut r, mut w) = tokio::io::split(conn.pipe);
+        let sr = s.clone();
+        let mut reader = tokio::spawn(async move {
+            while let Ok(m) = ipc::read_msg(&mut r).await {
+                match m {
+                    ipc::Msg::Json(v) if v["t"] == "ctl" => sr.control(v["v"].clone()),
+                    ipc::Msg::Frame(f) => sr.frame(f),
+                    _ => {}
+                }
+            }
+        });
+        let gone = loop {
+            tokio::select! {
+                m = rx.recv() => match m {
+                    Some(b) => if w.write_all(&b).await.is_err() { break false },
+                    None => break true,
+                },
+                _ = &mut reader => break false,
+            }
+        };
+        reader.abort();
+        up.store(false, Relaxed);
+        // Quem espera resposta recebe NOT_CONNECTED em vez de esperar o prazo.
+        s.pending.lock().unwrap().clear();
+        if gone { return; }
     }
 }
 
@@ -455,6 +534,63 @@ mod tests {
         assert_eq!(parse_pair_link("lixo", &[]).unwrap_err(), "INVALID_MESSAGE");
         assert_eq!(signal_url("127.0.0.1:8787"), "ws://127.0.0.1:8787");
         assert_eq!(signal_url("sig.example.com"), "wss://sig.example.com");
+    }
+
+    /// Daemon (D-A): sessão criada pelo pipe continua viva depois que o cliente sai; outro cliente
+    /// a encontra na lista, reanexa e digita. Também: segundo servidor no mesmo pipe é recusado,
+    /// token errado não passa do handshake e o `shutdown` pelo pipe encerra o servidor.
+    #[test]
+    fn pipe_sessao_sobrevive_a_reconexao() {
+        let _heavy = crate::tests::HEAVY.blocking_lock();
+        cmd_profile("termd-ipc");
+        crate::tests::fdir();
+        let (h, dir) = host("ipc");
+        let svc = Service::with_host(Config { data_dir: dir.clone(), server: "ws://127.0.0.1:1".into(), room: ROOM.into() }, h).unwrap();
+        let ep = ipc::Endpoint { pipe: format!(r"\\.\pipe\live-cmd-termd-test-{}", std::process::id()), token_file: dir.join("termd").join("token") };
+        let srv = ipc::Server::bind(&ep).unwrap();
+        assert_eq!(ipc::Server::bind(&ep).err().as_deref(), Some("ALREADY_RUNNING"));
+        let d = Arc::new(ipc::ServiceDaemon::new(Some(svc), || Err("IO_ERROR".into())));
+        let dd: Arc<dyn ipc::Daemon> = d.clone();
+        let t = std::thread::spawn(move || srv.run(dd, ipc::Events::default()));
+
+        let (on, rx) = events();
+        let c = Client::pipe(ep.clone(), on).unwrap();
+        assert_eq!(rx.recv().unwrap(), ClientEvent::Ready);
+        let sid = c.request(json!({"type":"session_create","profile_id":"termd-ipc","cols":80,"rows":24})).unwrap()["session_id"].as_str().unwrap().to_owned();
+        c.request(json!({"type":"session_attach","session_id":sid,"from_offset":null})).unwrap();
+        c.resize(&sid, 100, 30).unwrap();
+        c.input(&sid, b"echo termd-um\r").unwrap();
+        wait_output(&rx, &sid, "termd-um");
+        drop(c);
+
+        // App fechado e aberto de novo: outra conexão, mesma sessão, mesmo processo.
+        let (on, rx) = events();
+        let c = Client::pipe(ep.clone(), on).unwrap();
+        assert_eq!(rx.recv().unwrap(), ClientEvent::Ready);
+        let list = c.request(json!({"type":"session_list"})).unwrap();
+        let s = list["sessions"].as_array().unwrap().iter().find(|s| s["session_id"] == sid.as_str()).expect("sessão viva no daemon").clone();
+        assert_eq!((s["state"].as_str(), s["attached_count"].as_u64(), s["cols"].as_u64()), (Some("running"), Some(0), Some(100)));
+        c.request(json!({"type":"session_attach","session_id":sid,"from_offset":null})).unwrap();
+        c.input(&sid, b"echo termd-dois\r").unwrap();
+        wait_output(&rx, &sid, "termd-dois");
+
+        let sc = ipc::ServiceClient::new(ep.clone());
+        assert!(sc.rpc("status", Value::Null).is_ok());
+        assert!(sc.devices().is_empty());
+        assert_eq!(sc.rpc("nada", Value::Null).unwrap_err(), "INVALID_MESSAGE");
+        let good = std::fs::read_to_string(&ep.token_file).unwrap();
+        assert_eq!(good.len(), 64);
+        std::fs::write(&ep.token_file, "0".repeat(64)).unwrap();
+        assert_eq!(ipc::probe(&ep).unwrap_err(), ipc::Fail::Denied);
+        std::fs::write(&ep.token_file, &good).unwrap();
+        assert_eq!(ipc::probe(&ep).unwrap().ipc_version, ipc::IPC_VERSION);
+
+        c.request(json!({"type":"session_close","session_id":sid})).unwrap();
+        sc.shutdown().unwrap();
+        t.join().unwrap();
+        d.stop();
+        assert!(!ep.token_file.exists());
+        assert_eq!(ipc::probe(&ep).unwrap_err(), ipc::Fail::Absent);
     }
 
     /// Cliente local: create, attach, input, saída, close; no hub do processo, sem rede.
