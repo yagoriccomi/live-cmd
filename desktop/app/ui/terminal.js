@@ -541,9 +541,14 @@ async function refresh(conn) {
     const v = await invoke("term_list", { conn });
     conns[conn].sessions = v.sessions;
     conns[conn].profiles = v.profiles;
-    if (!layouts[conn]) layouts[conn] = await invoke("term_layout_get", { conn }).catch(() => ({}));
   } catch { conns[conn].sessions = []; }
   renderSidebar();
+  // Ordem/grupos chegam depois: host lento não segura a lista de sessões.
+  if (!layouts[conn]) {
+    layouts[conn] = {};
+    layouts[conn] = await invoke("term_layout_get", { conn }).catch(() => ({})) || {};
+    renderSidebar();
+  }
 }
 
 async function refreshRemotes() {
@@ -1543,7 +1548,8 @@ function resizeActive() {
   one(t, $("screen"));
   if (t.split) one(t.split, $("screen2"));
 }
-let resizeTimer = 0;
+// `var`: `applyUiZoom()` roda no carregamento (acima) e chama fit() antes desta linha; `let` dava TDZ e abortava o script.
+var resizeTimer = 0;
 function fit() {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(resizeActive, 100);
