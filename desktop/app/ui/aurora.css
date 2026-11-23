@@ -384,3 +384,11 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .cfg-card .toggle input[type=checkbox]:checked::after { left:22px; }
 .cfg-card .swatch i { border:0; border-radius:10px; }
 .cfg-card .swatches + select + .toggle { border-top:0; margin-top:-4px; }
+
+/* Barra superior própria (ticket 024): janela sem decoração nativa. */
+.titlebar { position:fixed; top:0; left:0; right:0; height:32px; display:flex; align-items:center; gap:8px; padding-left:12px; z-index:50; user-select:none; color:var(--text-muted); font-size:12px; }
+.titlebar .tb-btns { margin-left:auto; display:flex; height:100%; }
+.titlebar .tb-btns button { width:46px; height:100%; border:0; background:none; color:inherit; font:10px "Segoe Fluent Icons","Segoe MDL2 Assets"; cursor:default; }
+.titlebar .tb-btns button:hover, .titlebar .tb-btns button:focus-visible { background:rgba(255,255,255,.1); color:var(--text, #fff); }
+.titlebar .tb-btns .tb-close:hover, .titlebar .tb-btns .tb-close:focus-visible { background:#c42b1c; color:#fff; }
+.term-body .term-layout { top:36px; }

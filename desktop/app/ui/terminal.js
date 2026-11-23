@@ -1461,3 +1461,15 @@ $("upd-go").onclick = async () => {
   $("upd-t").textContent = "Baixando e instalando…";
   try { await invoke("install_update"); } catch { $("upd-go").disabled = false; $("upd-t").textContent = "Não foi possível atualizar. Tente de novo."; }
 };
+
+// Barra superior própria (ticket 024): arraste/duplo clique/Snap via data-tauri-drag-region.
+(() => {
+  const w = window.__TAURI__?.window?.getCurrentWindow?.();
+  if (!w) return;
+  const max = document.getElementById("tb-max");
+  const sync = async () => { const m = await w.isMaximized(); max.innerHTML = m ? "&#xE923;" : "&#xE922;"; max.title = max.ariaLabel = m ? "Restaurar" : "Maximizar"; };
+  document.getElementById("tb-min").onclick = () => w.minimize();
+  max.onclick = () => w.toggleMaximize();
+  document.getElementById("tb-close").onclick = () => w.close();
+  w.onResized(sync); sync();
+})();
