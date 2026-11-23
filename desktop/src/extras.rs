@@ -578,7 +578,7 @@ mod icon_tests {
     fn icone_valida_formato_e_tamanho() {
         assert_eq!(icon_mime([PNG, b"xx"].concat().as_slice()), Some("image/png"));
         assert_eq!(icon_mime(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
-        assert_eq!(icon_mime(b"RIFF    WEBPVP8 "), Some("image/webp"));
+        assert_eq!(icon_mime(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
         assert_eq!(icon_mime(b"GIF89a"), None);
         assert_eq!(icon_mime(b""), None);
         let mut big = PNG.to_vec(); big.resize(MAX_ICON + 1, 0);

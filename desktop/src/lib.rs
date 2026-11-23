@@ -1309,9 +1309,11 @@ impl Service {
         std::fs::create_dir_all(&cfg.data_dir).map_err(|e| e.to_string())?;
         let host = Host::with_store(key, cfg.data_dir.join("trust.json")).map_err(|e| e.to_string())?;
         let store = cfg.data_dir.join("sessions.json");
+        // Fora da trava do hub: detectar shells roda `wsl.exe`.
+        let profs = profiles(&cfg.data_dir.join("profiles.json")).map_err(|e| e.to_string())?;
         {
             let mut h = hub();
-            h.profiles = profiles(&cfg.data_dir.join("profiles.json")).map_err(|e| e.to_string())?;
+            h.profiles = profs;
             h.restore(read_saved(&store));
             h.store = Some(store);
             h.save();
@@ -2223,7 +2225,7 @@ a=max-message-size:1024
 "), 1024);
         assert_eq!(remote_max_message("v=0
 "), 65536);
-        let p = profiles(std::path::Path::new("Z:/não/existe.json")).unwrap();
+        let p = profiles_base(std::path::Path::new("Z:/não/existe.json")).unwrap();
         assert_eq!(p.iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["pwsh", "wsl"]);
         assert!(p.iter().all(|p| p.1.osc));
     }
