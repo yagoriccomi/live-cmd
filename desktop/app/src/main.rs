@@ -254,7 +254,7 @@ fn open_terminal(app: &AppHandle) {
 
 fn build_terminal(app: &AppHandle, url: &str) {
     let w = WebviewWindowBuilder::new(app, "terminal", WebviewUrl::App(url.into()))
-        .title("Terminal Desktop — live-cmd").inner_size(1280.0, 800.0).min_inner_size(560.0, 360.0).center().build();
+        .title("Terminal Desktop — live-cmd").decorations(false).inner_size(1280.0, 800.0).min_inner_size(560.0, 360.0).center().build();
     if let Ok(w) = w { apply_opacity(app, &w); fit_window(&w, true); }
 }
 
