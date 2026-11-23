@@ -17,7 +17,7 @@
   --hero-line:rgb(255 255 255 / .45); --hero-glow:0 0 40px #ff4fd866;
   --hero-btn:rgb(255 255 255 / .12); --hero-btn-ink:#f4efff; --hero-btn-1:#fff; --hero-btn-1-ink:#2a1460;
   --tile:rgb(255 255 255 / .13); --term-card:rgb(10 4 30 / .55); --badge:#5ef2b0; --badge-ink:#1a1030;
-  --grad:linear-gradient(135deg, var(--accent), #ff4fd8); --grad-glow:0 0 22px #ff4fd888; --grad-ink:#fff; --off:#8f80b8;
+  --grad:linear-gradient(135deg, var(--accent), #ff4fd8); --grad-glow:0 0 22px #ff4fd888; --grad-ink:#fff; --off:#cdc3ea;
   --term-bg:transparent; --term-fg:#e6dcff;
 }
 :root:not([data-theme=light]):not([data-theme=contrast]) body { background:#140b2e; }
@@ -45,7 +45,7 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .rail { width:74px; flex:none; display:flex; flex-direction:column; align-items:center; gap:10px; padding:14px 0; }
 .rail-logo, .rail-btn { width:44px; height:44px; border-radius:14px; display:flex; align-items:center; justify-content:center; font-weight:800; flex:none; }
 .rail-logo { background:var(--grad); color:var(--grad-ink); box-shadow:0 0 22px #ff4fd8; }
-.rail-btn { border:0; padding:0; background:none; color:var(--text-muted); font-size:14px; }
+.rail-btn { border:0; padding:0; background:none; color:var(--text-muted); font-size:16px; line-height:1; }
 .rail-btn:hover { background:var(--chip); }
 .rail-btn[aria-current=page] { background:var(--card-on); color:var(--card-on-ink); }
 
@@ -76,13 +76,13 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .term-body .sidebar li > button:hover { background:var(--chip); }
 .term-body .sidebar li > button[aria-current=true],
 :root:not([data-theme=light]):not([data-theme=contrast]) .sidebar li > button[aria-current=true] { background:var(--card-on); color:var(--card-on-ink); border-radius:18px; font-weight:400; }
-.tile { width:40px; height:40px; flex:none; border-radius:12px; background:var(--tile); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:16px; }
+.tile { width:40px; height:40px; flex:none; border-radius:12px; background:var(--tile); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:16px; line-height:1; }
 .tile-lg { width:48px; height:48px; border-radius:15px; font-size:20px; }
 .card-txt { min-width:0; flex:1; display:flex; flex-direction:column; }
 .card-t { font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .card-s { font-size:11px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .card-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
-.card-chips .chip { font-size:10.5px; padding:1px 7px; border-radius:999px; background:var(--chip); cursor:copy; white-space:nowrap; }
+.card-chips .chip { font-size:11px; padding:1px 7px; border-radius:999px; background:var(--chip); cursor:copy; white-space:nowrap; }
 .card-chips .chip:hover { filter:brightness(1.15); }
 .card-s:empty::before { content:"\00a0"; }
 .card-st { font-size:11px; font-weight:700; white-space:nowrap; margin-left:auto; }
@@ -218,7 +218,7 @@ body.term-body { font-family:var(--font); line-height:normal; }
 /* Parear e Configurações: painéis da janela do terminal (mockups VD-Pareamento-1 e VD-Config-1). */
 .pane-h { font-size:11px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; color:var(--text-muted); margin:8px 0 0; }
 .aurora-pane .card { display:flex; align-items:center; gap:12px; }
-.aurora-pane .pair-steps .tile { font-size:15px; }
+.aurora-pane .pair-steps .tile { font-size:16px; }
 .aurora-pane .device-row { background:var(--card); border:1px solid var(--glass-line); border-radius:16px; padding:12px 14px; }
 .aurora-pane .device-row button { padding:4px 10px; border-radius:10px; font-size:12px; border:0; background:var(--chip); color:var(--text); }
 .aurora-pane .empty { padding:16px; text-align:left; }
@@ -290,7 +290,7 @@ body.term-body { font-family:var(--font); line-height:normal; }
   --glass-line:rgb(190 160 255 / .5); --glass-glow:0 0 28px rgb(109 63 214 / .4), inset 0 1px 0 rgb(255 255 255 / .22);
   --shadow:0 0 28px rgb(109 63 214 / .4); --glow:0 0 28px rgb(109 63 214 / .4), inset 0 1px 0 rgb(255 255 255 / .3);
   --hero-bg:linear-gradient(135deg, color-mix(in srgb, #4c1d95 87%, transparent), #8b5cf6aa); --hero-glow:0 0 40px #8b5cf666;
-  --grad:linear-gradient(135deg, #5b2bc0, #8b5cf6); --grad-glow:0 0 22px #8b5cf688; --off:#8f80b8;
+  --grad:linear-gradient(135deg, #5b2bc0, #8b5cf6); --grad-glow:0 0 22px #8b5cf688; --off:#cdc3ea;
 }
 :root[data-theme=ametista][data-theme] body { background:#12072e; }
 :root[data-theme=ametista] .aurora i:nth-child(2) { background:#8b5cf6; }
