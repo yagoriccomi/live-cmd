@@ -95,6 +95,25 @@
     $("ag-list").replaceChildren(ul);
   }
 
+  // Só PNG, JPEG ou WebP até 48 KB (o host confere de novo); fora disso avisa e não muda nada.
+  function pickIcon(agent) {
+    const f = Object.assign(document.createElement("input"), { type: "file", accept: "image/png,image/jpeg,image/webp" });
+    f.onchange = async () => {
+      const file = f.files[0];
+      if (!file) return;
+      if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return banner("Ícone precisa ser PNG, JPEG ou WebP.", "err");
+      if (file.size > 48000) return banner("Ícone grande demais: máximo 48 KB.", "err");
+      const b = new Uint8Array(await file.arrayBuffer());
+      let s = ""; for (const c of b) s += String.fromCharCode(c);
+      try {
+        await invoke("agent_icon_set", { conn, agent, image: btoa(s) });
+        agentIcons.delete(conn + "|" + agent);
+        load();
+      } catch (e) { banner(e === "INVALID_MESSAGE" ? "Imagem recusada pelo host: use PNG, JPEG ou WebP até 48 KB." : msg(e), "err"); }
+    };
+    f.click();
+  }
+
   function row(x) {
     const li = el("li", "ag-row");
     li.dataset.ms = x.used_ms || "";
@@ -122,9 +141,16 @@
     rm.type = "button";
     rm.setAttribute("aria-label", `Remover ${name}`);
     rm.onclick = () => remove(x, name);
+    // Ícone do agente: clique envia uma imagem própria, salva no host (vale para desktop e celular).
+    const ico = el("button", "ag-ico-btn");
+    ico.type = "button";
+    ico.title = `Trocar ícone de ${x.agent}`;
+    ico.setAttribute("aria-label", ico.title);
+    ico.append(agentIcon(conn, x.agent));
+    ico.onclick = () => pickIcon(x.agent);
     const act = el("span", "inline");
     act.append(go, rm);
-    li.append(dot, info, act);
+    li.append(dot, ico, info, act);
     return li;
   }
 

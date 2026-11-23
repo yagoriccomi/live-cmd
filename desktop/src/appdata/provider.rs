@@ -217,6 +217,19 @@ impl Provider for AppProvider {
     fn agent_default_save(&self, d: &AgentDefault) -> Result<(), String> {
         agents::save_default(&self.dir, agents::AiDefault { agent: d.agent.clone(), cwd: d.cwd.clone(), args: d.args.clone() }).map(drop)
     }
+
+    /// Ícone enviado (#40): `agent-icon-<agente>`, já validado no parse; serve desktop e celular.
+    fn agent_icon(&self, agent: &str) -> Option<Vec<u8>> {
+        std::fs::read(self.dir.join(format!("agent-icon-{agent}"))).ok()
+    }
+
+    fn agent_icon_save(&self, agent: &str, image: Option<&[u8]>) -> Result<(), String> {
+        let f = self.dir.join(format!("agent-icon-{agent}"));
+        match image {
+            Some(b) => std::fs::write(f, b).map_err(|e| e.to_string()),
+            None => match std::fs::remove_file(f) { Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()), _ => Ok(()) },
+        }
+    }
 }
 
 #[cfg(test)]
