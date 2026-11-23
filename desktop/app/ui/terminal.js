@@ -592,6 +592,7 @@ function sessionItem(conn, s) {
   li.dataset.kind = kind;
   const txt = el("span", "card-txt");
   txt.append(name, el("span", "card-s mono", cwd || (s.state === "exited" ? "sessão encerrada" : "")));
+  const git = s.ssh ? sshGit[key] : s.git;
   // Aba em foco: dados do projeto, clique copia.
   if (key === active) {
     const chips = el("span", "card-chips");
@@ -602,7 +603,6 @@ function sessionItem(conn, s) {
       chips.append(c);
     };
     if (cwd) chip("📁 pasta", cwd, cwd);
-    const git = s.ssh ? sshGit[key] : s.git;
     if (git) {
       chip("⎇ " + (git.branch || "HEAD solto"), git.branch, "Branch atual");
       chip(git.dirty ? `● ${git.dirty} pendente${git.dirty > 1 ? "s" : ""}` : "✓ limpo", git.dirty ? `${git.dirty} arquivo(s) sem commit` : "sem pendências", "Pendências de commit");
@@ -616,14 +616,45 @@ function sessionItem(conn, s) {
   b.firstChild.setAttribute("aria-hidden", "true");
   if (busy.has(key)) b.append(actDot());
   b.onclick = () => openSession(conn, s);
-  b.oncontextmenu = (e) => { e.preventDefault(); menu(b, [["Renomear", () => renameSession(conn, s.session_id, name)], ["Encerrar sessão", () => endSession(conn, s)]]); };
-  b.onkeydown = (e) => { if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); b.oncontextmenu(e); } };
+  b.oncontextmenu = (e) => { e.preventDefault(); menu(b, cardMenu(conn, s, name, b, cwd, git)); };
+  b.onkeydown = (e) => {
+    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); b.oncontextmenu(e); }
+    else if (e.key === "F2") { e.preventDefault(); renameSession(conn, s.session_id, name); }
+    else if (e.key === "Delete") { e.preventDefault(); endSession(conn, s); }
+  };
   li.append(b);
   li.draggable = true;
   li.ondragstart = (e) => { e.dataTransfer.setData("text/plain", s.session_id); dragFrom = conn; li.classList.add("dragging"); };
   li.ondragend = () => li.classList.remove("dragging");
   dropTarget(li, conn, () => groupKey(conn, s), s.session_id);
   return li;
+}
+
+// Menu do card (B9, #35): barra Renomear/Dividir/Explorer/Fixar; Projeto, Organizar, Perigo.
+function cardMenu(conn, s, name, b, cwd, git) {
+  const L = layoutOf(conn), g = groupKey(conn, s), copy = (v) => invoke("clip_copy", { text: v }).then(() => banner("Copiado: " + v), (err) => banner(msg(err), "err"));
+  // ponytail: Explorer só para sessões deste PC (caminho remoto não existe aqui).
+  const explorer = () => conn === LOCAL && cwd ? window.__TAURI__.opener.revealItemInDir(cwd).catch(() => banner(msg("NOT_FOUND"), "err")) : banner("Abrir no Explorer só vale para sessões deste PC com pasta conhecida.", "warn");
+  const groups = [...new Set(conns[conn].sessions.map((x) => groupKey(conn, x)))].filter((x) => x !== g);
+  const move = (to) => { delete L.group[s.session_id]; if (groupKey(conn, s) !== to) L.group[s.session_id] = to; saveSideOrder(conn); renderSidebar(); };
+  return [
+    { row: [["✎", "Renomear", () => renameSession(conn, s.session_id, name), "F2"], ["◫", "Dividir", () => splitCard(conn, s)], ["📁", "Abrir no Explorer", explorer],
+      ["📌", L.pinned === g ? "Desafixar grupo" : "Fixar no topo", () => { L.pinned = L.pinned === g ? null : g; saveSideOrder(conn); renderSidebar(); }]] },
+    "#Projeto",
+    ["Copiar caminho", cwd && (() => copy(cwd)), "", "⧉"],
+    ["Copiar nome da branch", git?.branch && (() => copy(git.branch)), "", "⎇"],
+    ["Iniciar agente aqui", () => newAi(conn, cwd), "", "🤖"],
+    "#Organizar",
+    ["Mover para grupo…", () => { let n = 1; while (Object.values(L.group).includes("Grupo " + n)) n++; menu(b, [...groups.map((x) => [baseName(x) || x, () => move(x)]), ["Novo grupo", () => move("Grupo " + n)]]); }, "", "▤"],
+    "#Perigo",
+    ["Encerrar sessão", () => endSession(conn, s), "Del", "✕", "danger"],
+  ].filter((it) => typeof it === "string" || it.row || it[1]);
+}
+// #36: a sessão do card vai para o segundo painel da guia atual; a que estava lá vira guia separada (unsplit em split()).
+function splitCard(conn, s) {
+  const t = activeTab();
+  if (!t || t.key === conn + "/" + s.session_id) return openSession(conn, s);
+  split(t, conn, s.session_id, s);
 }
 
 // ---------- #9/#10/#37: grupos, arraste e ordem (salvos no host: `layout_get`/`layout_set`) ----------
@@ -763,13 +794,27 @@ async function connectRemote(id) {
 let menuOpener = null;
 function menu(anchor, items) {
   const m = $("menu");
-  m.replaceChildren(...items.map(([label, fn]) => {
-    if (!fn) return el("p", "muted small", label);
-    const b = el("button", null, label);
+  // Item: [texto, fn, atalho?, ícone?, classe?]; "#Rótulo" = seção; { row: [[ícone, texto, fn, atalho?]] } = barra rápida (#32).
+  const btn = (label, fn, key, icon, cls) => {
+    const b = el("button", cls || null);
     b.type = "button";
     b.setAttribute("role", "menuitem");
+    if (icon != null) b.append(el("span", "m-ic", icon));
+    if (label) b.append(el("span", "m-t", label));
+    if (key) b.append(el("span", "m-k", key));
     b.onclick = () => { closeMenu(false); fn(); };
     return b;
+  };
+  m.replaceChildren(...items.map((it) => {
+    if (typeof it === "string") return el("p", "m-lbl", it.slice(1));
+    if (it.row) {
+      const r = el("div", "m-row");
+      r.append(...it.row.map(([icon, label, fn, key]) => { const b = btn("", fn, null, icon); b.title = label + (key ? "  " + key : ""); b.setAttribute("aria-label", label); return b; }));
+      return r;
+    }
+    const [label, fn, key, icon, cls] = it;
+    if (!fn) return el("p", "muted small", label);
+    return icon == null && !key ? btn(label, fn) : btn(label, fn, key, icon, cls);
   }));
   const r = anchor.getBoundingClientRect();
   m.hidden = false;
@@ -1193,13 +1238,18 @@ function screenKey(e) {
 // Menu de contexto da tela (substitui o nativo do WebView: Recarregar, Inspecionar…).
 function ctxMenu(x, y) {
   const at = { getBoundingClientRect: () => ({ left: x, bottom: y }), focus: () => pane().focus() };
+  const sp = activeTab()?.split;
+  // A9 (#32/#34): Copiar/Colar, Tema, fontes, Paleta, Nova sessão, Reabrir e Atalhos saíram do menu.
   menu(at, [
-    ["Copiar   Ctrl+C", hasSel() ? copySel : null], ["Colar   Ctrl+V", paste], ["Selecionar tudo", selectAll], ["Buscar   Ctrl+Shift+F", openFind],
-    ["Nova sessão   Ctrl+Shift+T", action("new")], ["Nova sessão nesta pasta", action("new-here")], ["Reabrir aba fechada   Ctrl+Alt+T", reopen],["Renomear aba", action("rename")], ["Fechar aba   Ctrl+Shift+W", action("close")],
-    ["Exportar saída", action("export")], ["Dividir painel", action("split")], ...(activeTab()?.split ? [["Alternar orientação", action("orient")], ["Inverter lados", action("swap")], [activeTab().max != null ? "Restaurar painéis" : "Maximizar painel", action("maximize")], ["Desfazer divisão", action("unsplit")]] : []), ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
-    ["Aumentar fonte", () => zoom(1)], ["Diminuir fonte", () => zoom(-1)], ["Redefinir fonte", () => zoom(0)],
-    ["Limpar", clearTab], ["Atalhos e ajuda   F1", () => help()],
-  ].filter(([, fn]) => fn));
+    { row: [["🔍", "Buscar", openFind, binds.find], ["⌫", "Limpar", clearTab, binds.clear],
+      ["⤢", sp && activeTab().max != null ? "Restaurar painéis" : "Maximizar painel", sp ? action("maximize") : () => banner("Maximizar vale com a guia dividida.", "warn")], ["⇩", "Exportar saída", action("export")]] },
+    "#Painel",
+    sp ? ["Desfazer divisão", action("unsplit"), "", "◫"] : ["Dividir", action("split-new"), "Ctrl+Shift+D", "◫"],
+    ["Inverter lados", sp && action("swap"), "", "⇄"],
+    "#Guia",
+    ["Renomear", action("rename"), "", "✎"],
+    ["Fechar guia", action("close"), "Ctrl+Shift+W", "✕", "danger"],
+  ].filter((it) => typeof it === "string" || it.row || it[1]));
 }
 // Limpa o buffer vt100 no app (vale em cmd) e manda Ctrl+L para o shell redesenhar o prompt.
 function clearTab() {
