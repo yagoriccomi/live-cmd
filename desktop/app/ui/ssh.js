@@ -64,7 +64,7 @@
       d.setAttribute("aria-hidden", "true");
       const info = el("div", "ssh-info");
       info.append(el("div", "ssh-name", x.label || "SSH"), el("div", "muted small", on ? "conectada" : "desconectada"));
-      const b = el("button", on ? null : "btn-primary", on ? "Abrir" : "Reconectar");
+      const b = el("button", null, on ? "Abrir" : "Reconectar");
       b.type = "button";
       b.setAttribute("aria-label", `${b.textContent} ${x.label || "SSH"}`);
       b.onclick = () => (on ? open(x) : reconnect(x, b));
@@ -161,7 +161,7 @@
     const acts = el("div", "ssh-acts");
     const btn = (text, cls, fn, aria) => { const b = el("button", cls, text); b.type = "button"; b.onclick = fn; if (aria) b.setAttribute("aria-label", aria); return b; };
     acts.append(
-      btn("Conectar", "btn-primary", () => connect(s), `Conectar a ${s.name}`),
+      btn("Conectar", null, () => connect(s), `Conectar a ${s.name}`),
       btn("Testar", null, () => probe(s), `Testar alcance de ${s.name}`),
       btn("Editar", null, () => edit(s), `Editar ${s.name}`),
       btn("Copiar comando", null, () => copyCmd(s), `Copiar comando ssh de ${s.name}`),

@@ -198,7 +198,7 @@
             <div id="dev-busy" aria-busy="true" aria-label="Carregando aparelhos"><div class="skeleton"></div><div class="skeleton"></div></div>
             <div id="dev-list" hidden><ul class="device-list cards" id="dev-ul"></ul></div>
             <div id="dev-empty" class="empty" hidden><p>Nenhum aparelho pareado ainda.</p></div>
-            <div id="dev-error" hidden><div class="alert alert-danger" role="alert"><p>Não foi possível ler a lista de aparelhos.</p></div><div class="actions"><button type="button" class="btn-primary" id="dev-retry">Tentar de novo</button></div></div>
+            <div id="dev-error" hidden><div class="alert alert-danger" role="alert"><p>Não foi possível ler a lista de aparelhos.</p></div><div class="actions"><button type="button" id="dev-retry">Tentar de novo</button></div></div>
             <p id="toast-wrap" hidden><span class="toast" role="status" id="toast"></span></p>
           </section>
         </div>
@@ -235,12 +235,12 @@
                 <div class="big-ok" aria-hidden="true">✓</div>
                 <h2 id="done-t"></h2>
                 <p class="muted">Ele já pode abrir terminais deste PC.</p>
-                <div class="actions center"><button type="button" class="btn-primary" data-act="pair">Parear outro</button></div>
+                <div class="actions center"><button type="button" data-act="pair">Parear outro</button></div>
               </div>
               <div id="pair-error" hidden>
                 <div class="qr blank"></div>
                 <div class="alert alert-danger" role="alert"><p>Não foi possível falar com o servidor de sinalização. Confira a internet ou o endereço em Configurações.</p></div>
-                <div class="actions center"><button type="button" data-tab="settings">Abrir Configurações</button><button type="button" class="btn-primary" data-act="pair">Tentar de novo</button></div>
+                <div class="actions center"><button type="button" data-tab="settings">Abrir Configurações</button><button type="button" data-act="pair">Tentar de novo</button></div>
               </div>
             </div>
           </div>
@@ -249,7 +249,7 @@
       <!-- Configurações (antes janela própria). -->
       <section class="aurora-pane cfg-pane" id="cfg-pane" aria-labelledby="cfg-t" hidden>
         <div class="pane-l">
-          <header class="side-head"><h2 id="cfg-t">Configurações</h2><button type="button" class="btn-primary" id="cfg-import" title="Aplica um tema copiado (JSON) da área de transferência">+ Importar tema</button></header>
+          <header class="side-head"><h2 id="cfg-t">Configurações</h2><button type="button" id="cfg-import" title="Aplica um tema copiado (JSON) da área de transferência">+ Importar tema</button></header>
           <p class="side-sub">Aparência e comportamento</p>
           <div class="chips" id="cfg-chips" role="group" aria-label="Atalhos para as seções">
             <button type="button" class="chip" data-go="cfg-look" aria-pressed="true">Aparência</button>
