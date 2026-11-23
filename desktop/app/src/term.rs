@@ -494,6 +494,17 @@ pub fn term_rename(app: AppHandle, conn: String, session_id: String, label: Stri
     client(&app, &conn)?.request(json!({ "type": "session_rename", "session_id": session_id, "label": label })).map(drop)
 }
 
+/// Ordem e grupos da lista de sessões, salvos no host da conexão (vale para todo cliente).
+#[tauri::command(async)]
+pub fn term_layout_get(app: AppHandle, conn: String) -> Result<Value, String> {
+    client(&app, &conn)?.request(json!({ "type": "layout_get" })).map(|v| v["layout"].clone())
+}
+
+#[tauri::command(async)]
+pub fn term_layout_set(app: AppHandle, conn: String, layout: Value) -> Result<(), String> {
+    client(&app, &conn)?.request(json!({ "type": "layout_set", "layout": layout })).map(drop)
+}
+
 /// Subpastas no PC da conexão (vazio: unidades).
 #[tauri::command(async)]
 pub fn term_dirs(app: AppHandle, conn: String, path: String) -> Result<Value, String> {
