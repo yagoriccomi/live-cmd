@@ -209,6 +209,11 @@ impl Provider for AppProvider {
         agents::read_default(&self.dir).map(|d| AgentDefault { agent: d.agent, cwd: d.cwd, args: d.args })
     }
 
+    /// O registro já vem do mais recente para o mais antigo (`agents::record`).
+    fn agent_args_used(&self, agent: &str) -> Vec<String> {
+        agents::read(&self.dir).into_iter().filter(|a| a.conn == LOCAL && a.agent == agent).map(|a| a.args).collect()
+    }
+
     fn agent_default_save(&self, d: &AgentDefault) -> Result<(), String> {
         agents::save_default(&self.dir, agents::AiDefault { agent: d.agent.clone(), cwd: d.cwd.clone(), args: d.args.clone() }).map(drop)
     }

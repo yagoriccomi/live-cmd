@@ -22,6 +22,12 @@ pub fn agent_default_set(app: AppHandle, conn: String, agent: String, args: Stri
     term::client(&app, &conn)?.request(json!({ "type": "agent_default_set", "agent": agent, "cwd": null, "args": args })).map(drop)
 }
 
+/// Sugestões do campo "Comandos extras": já usados com o agente no host da conexão + opções conhecidas (#19, #20).
+#[tauri::command(async)]
+pub fn agent_args(app: AppHandle, conn: String, agent: String) -> Result<Value, String> {
+    term::client(&app, &conn)?.request(json!({ "type": "agent_args", "api": 1, "agent": agent })).map(|v| v["args"].clone())
+}
+
 /// Pasta raiz do agrupamento: (chave normalizada, nome exibido). Sem pasta, a pasta inicial do perfil ("~").
 pub fn root(cwd: Option<&str>) -> (String, String) {
     let p = cwd.unwrap_or("").trim().trim_end_matches(['/', '\\']);

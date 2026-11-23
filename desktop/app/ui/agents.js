@@ -183,7 +183,7 @@
 
 // Formulário "Novo agente" (modelo B, #17). Padrão (agente + comandos extras) mora no host da conexão (#15);
 // a pasta vem das recentes (sessões de agente registradas para essa conexão).
-// ponytail: listas de sugestão (#ai-cwd-sug, #ai-sug) ficam vazias/fixas; o autocomplete é o ticket 020.
+// Sugestões vêm do host (#18-#20); AI_SUG só cobre host antigo sem `agent_args`.
 const AI_SUG = {
   claude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
   openclaude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
@@ -202,7 +202,11 @@ async function newAi(conn, dir) {
   if (!$("ai-agent").value) $("ai-agent").value = "claude";
   cwdIn.value = dir || recent[0] || ""; $("ai-args").value = d?.args || ""; $("ai-def").checked = false;
   $("ai-cwd-sug").replaceChildren(...recent.map(opt));
-  const sug = () => $("ai-sug").replaceChildren(...(AI_SUG[$("ai-agent").value] || []).map(opt));
+  // Comandos extras já usados com o agente no host + opções conhecidas; texto livre continua valendo.
+  const sug = async () => {
+    const a = $("ai-agent").value, l = await invoke("agent_args", { conn, agent: a }).catch(() => null);
+    if (a === $("ai-agent").value) $("ai-sug").replaceChildren(...(Array.isArray(l) ? l : AI_SUG[a] || []).map(opt));
+  };
   $("ai-agent").onchange = sug; sug();
   // Caminho completo embaixo do campo: o que vai para o host, sem barra final.
   const path = () => { $("ai-path").textContent = cwdIn.value.trim().replace(/[\/]+$/, "") || "Pasta inicial do perfil (~)"; };
@@ -216,7 +220,19 @@ async function newAi(conn, dir) {
   };
   const show = (on) => { dirs.hidden = !on; pick.setAttribute("aria-expanded", on); if (on) browse(cwdIn.value.trim()); };
   pick.onclick = () => show(dirs.hidden);
-  cwdIn.oninput = path;
+  // Recentes primeiro; com "\\" no campo, as subpastas reais do pai que começam pelo trecho digitado.
+  // Pasta inexistente ou sem permissão: o host devolve vazio/erro e ficam só as recentes.
+  let seq = 0;
+  cwdIn.oninput = async () => {
+    path();
+    const v = cwdIn.value, i = v.lastIndexOf("\\"), n = ++seq;
+    const rec = recent.filter((r) => r.toLowerCase().startsWith(v.toLowerCase()));
+    if (i < 0) return $("ai-cwd-sug").replaceChildren(...(v ? rec : recent).map(opt));
+    const ds = await invoke("term_dirs", { conn, path: v.slice(0, i + 1) }).catch(() => []);
+    if (n !== seq) return;
+    const pre = v.slice(i + 1).toLowerCase(), sub = (Array.isArray(ds) ? ds : []).filter((d) => d.toLowerCase().startsWith(pre)).map((d) => v.slice(0, i + 1) + d);
+    $("ai-cwd-sug").replaceChildren(...[...new Set([...rec, ...sub])].map(opt));
+  };
   cwdIn.onchange = () => { path(); if (!dirs.hidden) browse(cwdIn.value.trim()); };
   show(false); path();
   $("ai-scrim").hidden = false; cwdIn.focus();
