@@ -404,3 +404,6 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .group-new { list-style:none; margin-top:var(--sp-8); padding:var(--sp-8); border:1px dashed var(--border); border-radius:var(--r-8); text-align:center; }
 .dragging { opacity:.5; }
 .drop { outline:2px dashed var(--accent); outline-offset:var(--sp-2); border-radius:var(--r-8); }
+/* Ícone do agente (#40, #41): redondo 20 px, imagem ou inicial. */
+.ag-ico { width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--grad) center/cover no-repeat; color:var(--grad-ink); font-size:11px; font-weight:800; }
+.aurora-pane .ag-row .ag-ico-btn { padding:0; background:none; flex:none; }

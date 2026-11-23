@@ -524,6 +524,8 @@ impl Hub {
             }
             X::AgentDefaultGet => extras::agent_default_ok(p.agent_default().as_ref()),
             X::AgentDefaultSet(d) => { p.agent_default_save(&d).map_err(|c| extras::code(&c))?; extras::empty_ok("agent_default_set_ok") }
+            X::AgentIconGet(a) => extras::agent_icon_ok(&a, p.agent_icon(&a).as_deref()),
+            X::AgentIconSet { agent, image } => { p.agent_icon_save(&agent, image.as_deref()).map_err(|c| extras::code(&c))?; extras::empty_ok("agent_icon_set_ok") }
             X::HistoryRun { entry_id, session_id } => {
                 if self.s.size(&session_id).is_none() { return Err(auth::Error::NotFound); }
                 let cmd = p.history_command(&entry_id).ok_or(auth::Error::NotFound)?;

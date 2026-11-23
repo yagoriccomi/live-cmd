@@ -575,6 +575,18 @@ setInterval(async () => {
 
 // Tipo da sessão só para o visual (ícone e filtro da lista): agente, SSH ou shell, pelo rótulo.
 const KIND_ICON = { agent: "✦", ssh: "⇄", shell: "›_" };
+// Ícone redondo do agente (#40, #41): logo empacotado, senão imagem enviada ao host, senão a inicial.
+// ponytail: sem logos oficiais no repo; ponha o arquivo em ui/ e o nome aqui (ex.: claude: "claude.png").
+const AGENT_LOGO = {};
+const agentIcons = new Map(); // "conn|agente" -> Promise<data URL | null>
+function agentIcon(conn, agent) {
+  const i = el("span", "ag-ico", (agent || "?")[0].toUpperCase());
+  i.setAttribute("aria-hidden", "true");
+  const k = conn + "|" + agent;
+  if (!agentIcons.has(k)) agentIcons.set(k, AGENT_LOGO[agent] ? Promise.resolve(AGENT_LOGO[agent]) : invoke("agent_icon_get", { conn, agent }).catch(() => null));
+  agentIcons.get(k).then((u) => { if (u) { i.textContent = ""; i.style.backgroundImage = `url("${u}")`; } });
+  return i;
+}
 const sessionKind = (label = "") => /\b(claude|openclaude|codex)\b/i.test(label) ? "agent" : /\bssh\b|@/i.test(label) ? "ssh" : "shell";
 let sideFilter = "";
 function sessionItem(conn, s) {
@@ -612,7 +624,9 @@ function sessionItem(conn, s) {
     txt.append(chips);
   }
   const st = el("span", s.state === "exited" ? "card-st muted" : "card-st dot-ok", s.state === "exited" ? "● parado" : "● ativo");
-  b.append(el("span", "tile", KIND_ICON[kind]), txt, st);
+  const tile = el("span", "tile", kind === "agent" ? null : KIND_ICON[kind]);
+  if (kind === "agent") tile.append(agentIcon(conn, (s.label.match(/\b(openclaude|claude|codex)\b/i) || [, "?"])[1].toLowerCase()));
+  b.append(tile, txt, st);
   b.firstChild.setAttribute("aria-hidden", "true");
   if (busy.has(key)) b.append(actDot());
   b.onclick = () => openSession(conn, s);

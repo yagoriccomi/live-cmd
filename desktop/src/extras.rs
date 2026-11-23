@@ -91,6 +91,9 @@ pub enum Req {
     SshKeyList(String),
     AgentDefaultGet,
     AgentDefaultSet(AgentDefault),
+    /// Ícone enviado pelo usuário para o agente (#40). `None` no set: apaga.
+    AgentIconGet(String),
+    AgentIconSet { agent: String, image: Option<Vec<u8>> },
     SettingsGet,
     /// Só os campos mandados mudam; o resto fica. Já validado contra a lista branca ([`Appearance::patch`]).
     SettingsSet(Map<String, Value>),
@@ -98,9 +101,9 @@ pub enum Req {
     Unsupported,
 }
 
-const KNOWN: [&str; 19] = ["agent_list", "agent_resume", "agent_create", "agent_remove", "ssh_list", "ssh_connect", "ssh_save", "ssh_remove",
+const KNOWN: [&str; 21] = ["agent_list", "agent_resume", "agent_create", "agent_remove", "ssh_list", "ssh_connect", "ssh_save", "ssh_remove",
     "ssh_probe", "ssh_reconnect", "history_query", "history_run", "history_clear", "folder_list", "ssh_key_list", "agent_default_get", "agent_default_set",
-    "settings_get", "settings_set"];
+    "agent_icon_get", "agent_icon_set", "settings_get", "settings_set"];
 
 /// Temas, fontes e faixas da aparência (telas Configurações do desktop e do celular).
 /// "dark" é o Aurora (padrão). Os antigos "light" e "contrast" foram aposentados: `legacy_theme` os leva ao Aurora.
@@ -145,6 +148,24 @@ impl Appearance {
         if a.valid() { Ok(a) } else { Err(InvalidMessage) }
     }
     pub fn json(&self) -> Value { serde_json::to_value(self).unwrap_or_default() }
+}
+
+/// Teto do ícone de agente: 48 KB viram 64000 em base64, abaixo de 65536 com o envelope.
+pub const MAX_ICON: usize = 48_000;
+const PNG: &[u8] = &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
+
+/// Tipo MIME do ícone pelos magic bytes (PNG, JPEG, WebP); `None` se outro formato, vazio ou acima de [`MAX_ICON`].
+pub fn icon_mime(b: &[u8]) -> Option<&'static str> {
+    if b.len() > MAX_ICON { return None; }
+    if b.starts_with(PNG) { Some("image/png") }
+    else if b.starts_with(&[0xFF, 0xD8, 0xFF]) { Some("image/jpeg") }
+    else if b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP" { Some("image/webp") }
+    else { None }
+}
+
+/// Nome do agente vira nome de arquivo no host: só agente conhecido.
+fn icon_agent(a: &str) -> R<String> {
+    if crate::proto::AGENTS.contains(&a) { Ok(a.to_owned()) } else { Err(InvalidMessage) }
 }
 
 /// `None`: o tipo não é extra. `Some(Err)`: é extra, mas inválido.
@@ -230,6 +251,20 @@ fn parse_known(ty: &str, o: &Map<String, Value>) -> R<Req> {
             if !crate::proto::valid_args(&args) { return Err(InvalidMessage); }
             let cwd = match o.get("cwd") { None | Some(Value::Null) => None, Some(_) => Some(text(s("cwd")?.trim(), 0, 1024)?).filter(|c| !c.is_empty()) };
             Req::AgentDefaultSet(AgentDefault { agent: agent.to_owned(), cwd, args })
+        }
+        "agent_icon_get" => { fields(&["agent"], &[])?; Req::AgentIconGet(icon_agent(s("agent")?)?) }
+        "agent_icon_set" => {
+            fields(&["agent", "image"], &[])?;
+            let image = match o.get("image") {
+                Some(Value::Null) => None,
+                _ => {
+                    use base64::Engine;
+                    let b = base64::engine::general_purpose::STANDARD.decode(s("image")?).map_err(|_| InvalidMessage)?;
+                    icon_mime(&b).ok_or(InvalidMessage)?;
+                    Some(b)
+                }
+            };
+            Req::AgentIconSet { agent: icon_agent(s("agent")?)?, image }
         }
         "settings_get" => { fields(&[], &[])?; Req::SettingsGet }
         "settings_set" => {
@@ -343,6 +378,8 @@ pub trait Provider: Send + Sync {
     fn session_gone(&self, _session_id: &[u8; 16]) {}
     fn agent_default(&self) -> Option<AgentDefault> { None }
     fn agent_default_save(&self, _d: &AgentDefault) -> Result<(), String> { Err("NOT_FOUND".into()) }
+    fn agent_icon(&self, _agent: &str) -> Option<Vec<u8>> { None }
+    fn agent_icon_save(&self, _agent: &str, _image: Option<&[u8]>) -> Result<(), String> { Err("NOT_FOUND".into()) }
     /// Aparência gravada; `None` = este PC não tem tela de configurações (`NOT_FOUND`).
     fn settings_get(&self) -> Option<Appearance> { None }
     /// Grava a aparência já validada e aplica nas janelas do desktop.
@@ -436,6 +473,13 @@ pub fn ssh_key_list_ok(root: &str, path: &str, dirs: &[String], keys: &[String])
     extra.insert("keys".into(), keys.iter().take(MAX_ITEMS).map(|k| Value::from(clip(k))).collect::<Vec<_>>().into());
     fit_max("ssh_key_list_ok", "dirs", dirs.iter().map(|d| Value::from(clip(d))).collect(), extra, MAX_ENTRIES)
 }
+/// Ícone como data URL, ou `image: null` sem ícone salvo.
+pub fn agent_icon_ok(agent: &str, image: Option<&[u8]>) -> Value {
+    use base64::Engine;
+    let url = image.and_then(|b| icon_mime(b).map(|m| format!("data:{m};base64,{}", base64::engine::general_purpose::STANDARD.encode(b))));
+    json!({"type": "agent_icon_get_ok", "api": API, "agent": agent, "image": url})
+}
+
 /// Padrão salvo, ou `agent: null` se nunca foi salvo.
 pub fn agent_default_ok(d: Option<&AgentDefault>) -> Value {
     match d {
@@ -495,6 +539,26 @@ pub fn merge_agents(live: Vec<Agent>, saved: Vec<Agent>) -> Vec<Agent> {
     for s in saved { if !all.iter().any(|a| a.session_id == s.session_id) { all.push(s); } }
     all.sort_by(|a, b| b.last_activity_ms.cmp(&a.last_activity_ms));
     all
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+    #[test]
+    fn icone_valida_formato_e_tamanho() {
+        assert_eq!(icon_mime([PNG, b"xx"].concat().as_slice()), Some("image/png"));
+        assert_eq!(icon_mime(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+        assert_eq!(icon_mime(b"RIFF    WEBPVP8 "), Some("image/webp"));
+        assert_eq!(icon_mime(b"GIF89a"), None);
+        assert_eq!(icon_mime(b""), None);
+        let mut big = PNG.to_vec(); big.resize(MAX_ICON + 1, 0);
+        assert_eq!(icon_mime(&big), None);
+        let o = |img: Value| json!({"api":1,"agent":"claude","image":img}).as_object().unwrap().clone();
+        assert!(matches!(parse("agent_icon_set", &o("R0lGODlh".into())), Some(Err(_))), "GIF recusado");
+        assert!(matches!(parse("agent_icon_set", &o(Value::Null)), Some(Ok(Req::AgentIconSet { image: None, .. }))));
+        assert!(matches!(parse("agent_icon_set", &o("iVBORw0KGgo=".into())), Some(Ok(Req::AgentIconSet { image: Some(_), .. }))));
+        assert!(MAX_ICON.div_ceil(3) * 4 + 200 < 65536);
+    }
 }
 
 #[cfg(test)]
