@@ -108,10 +108,6 @@
   };
   scrim.onmousedown = (e) => { if (e.target === scrim) close(); };
 
-  // Captura: vem antes do teclado do terminal.
-  addEventListener("keydown", (e) => {
-    if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyP") { e.preventDefault(); e.stopPropagation(); scrim.hidden ? open() : close(); }
-  }, true);
   document.addEventListener("term-action", (e) => {
     if (e.detail === "palette") open();
     if (e.detail === "theme") { open(); q.value = "Tema"; draw(); }

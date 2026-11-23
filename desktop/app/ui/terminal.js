@@ -361,7 +361,7 @@ function swapSides() {
 function splitMenu(anchor) {
   const t = activeTab();
   if (!t) return;
-  const opts = [["Terminal novo   Ctrl+Shift+5", splitNew]];
+  const opts = [["Terminal novo   Ctrl+Shift+D", splitNew]];
   for (const [conn, c] of Object.entries(conns)) for (const s of c.sessions || []) {
     const key = conn + "/" + s.session_id;
     if (s.state !== "exited" && key !== t.key && key !== t.split?.key) opts.push([titleOf(conn, s), () => split(t, conn, s.session_id)]);
@@ -584,6 +584,7 @@ function sessionItem(conn, s) {
   const li = el("li"), b = el("button");
   b.type = "button";
   const key = conn + "/" + s.session_id;
+  b.dataset.key = key; // F2/Delete fora do terminal
   if (key === active) b.setAttribute("aria-current", "true");
   // #11: nome = pasta atual (segue o `cd`), salvo se renomeado à mão.
   const cwd = dropCwds[key] || s.cwd;
@@ -1060,8 +1061,18 @@ function send(data, t = target()) {
 const termKey = (e) => {
   if (e.isComposing || e.key === "Process" || e.key === "Dead") return;
   if (paneKey(e) || screenKey(e)) return;
-  if (e.ctrlKey && e.shiftKey && ["C", "V", "T", "W", "F6", "B"].includes(e.key.length === 1 ? e.key.toUpperCase() : e.key)) return;
+  // Exceções da regra #23: ficam com o app mesmo com o terminal em foco. F5 vai ao programa (#26).
+  if (e.ctrlKey && e.shiftKey && ["C", "V", "T", "W", "F6", "B", "R"].includes(e.key.length === 1 ? e.key.toUpperCase() : e.key)) return;
   if (e.ctrlKey && e.key === "Tab") return;
+  if (e.key === "F11") return;
+  const z = zoomDir(e);
+  if (z != null) { e.preventDefault(); e.stopPropagation(); return zoom(z); } // #52: com foco, só os terminais
+  const pg = e.key === "PageUp" ? 1 : e.key === "PageDown" ? -1 : 0, t = target();
+  // Shift+PgUp/PgDn rola o histórico sempre; sem Shift, só no shell (tela cheia como vim/less recebe a tecla).
+  if (pg && t && !e.ctrlKey && !e.altKey && (e.shiftKey || !screens[t.key]?.alt)) {
+    e.preventDefault(); e.stopPropagation();
+    return invoke("term_scroll", { conn: t.conn, sessionId: t.sid, lines: pg * Math.max(1, size(pane()).rows - 1) }).catch(() => {});
+  }
   const b = keyBytes(e);
   if (b == null) return;
   e.preventDefault();
@@ -1101,7 +1112,7 @@ document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.altKey && !e.shiftKey && k === "T") { e.preventDefault(); reopen(); }
   else if (e.ctrlKey && e.shiftKey && k === "T") { e.preventDefault(); newSession(t ? t.conn : LOCAL); }
   else if (paneKey(e)) return;
-  else if (e.ctrlKey && e.shiftKey && k === "W") { e.preventDefault(); if (active) closeTab(active); }
+  else if (e.ctrlKey && e.shiftKey && k === "W") { e.preventDefault(); if (t?.split) closePane(focusPane); else if (active) closeTab(active); }
   else if (e.ctrlKey && k === "Tab") {
     e.preventDefault();
     const i = tabs.findIndex((t) => t.key === active);
@@ -1123,15 +1134,67 @@ document.addEventListener("keydown", (e) => {
     // Fechada, o foco dentro da coluna a expande por cima (:focus-within).
     ($("sidebar").querySelector("[aria-current=true]") || $("local-new")).focus();
   }
+  else if (e.key === "F11") { e.preventDefault(); fullscreen(); }
+  else if ((e.ctrlKey && e.shiftKey && !e.altKey && k === "R") || (e.key === "F5" && !e.ctrlKey && !e.altKey)) { e.preventDefault(); redraw(); }
+  else if (zoomDir(e) != null) { e.preventDefault(); appZoom(zoomDir(e)); } // #52: sem foco no terminal, só o app
+  else if (binds.palette && keyName(e) === binds.palette) { e.preventDefault(); action("palette")(); }
+  else if (!e.ctrlKey && !e.altKey && !e.shiftKey && !e.target.closest?.(".terminal, input, textarea, select")) itemKey(e);
 });
 
-// Atalhos dos painéis: Ctrl+Shift+5 divide com terminal novo; com divisão, Alt+setas alterna o foco,
-// Ctrl+W e Ctrl+Shift+W (com o foco num painel) fecham só o painel focado. true = consumida.
+// Fora do terminal (#24): F1 ajuda, F2 renomeia, Delete fecha, Enter abre; Esc sai da tela cheia (#26).
+function itemKey(e) {
+  const it = e.target.closest?.("[data-key]"), key = it?.dataset.key, tab = it?.getAttribute("role") === "tab";
+  if (e.key === "F1") help();
+  else if (e.key === "Escape" && isFull) fullscreen();
+  else if (!key) return;
+  else if (e.key === "F2") it.querySelector(".tab-name, .card-t")?.dispatchEvent(new MouseEvent("dblclick"));
+  else if (e.key === "Delete" && tab) closeTab(key, true);
+  else if (e.key === "Delete") {
+    const i = key.lastIndexOf("/"), conn = key.slice(0, i), s = conns[conn]?.sessions.find((s) => s.session_id === key.slice(i + 1));
+    if (s) endSession(conn, s);
+  }
+  else if (e.key === "Enter" && tab) activate(key);
+  else return; // Enter no item da lista já abre pelo clique nativo do botão
+  e.preventDefault();
+}
+let isFull = false;
+function fullscreen() {
+  const w = window.__TAURI__?.window?.getCurrentWindow?.();
+  if (w) { isFull = !isFull; w.setFullscreen(isFull).catch((err) => banner(msg(err), "err")); }
+}
+// F5 (fora do terminal) / Ctrl+Shift+R: redesenha. No dividido, só o painel focado; sem foco num terminal, os dois.
+function redraw() {
+  const t = activeTab();
+  if (!t) return;
+  const inTerm = !!document.activeElement?.closest?.(".terminal");
+  if (!inTerm || !focusPane || !t.split) draw(t.key, $("screen"));
+  if (t.split && (!inTerm || focusPane)) draw(t.split.key, $("screen2"));
+  resizeActive();
+}
+// Ctrl+= / Ctrl++ / Ctrl+- / Ctrl+0, normal e numpad: 1, -1, 0 ou null.
+function zoomDir(e) {
+  if (!e.ctrlKey || e.altKey) return null;
+  return { Equal: 1, NumpadAdd: 1, Minus: -1, NumpadSubtract: -1, Digit0: 0, Numpad0: 0 }[e.code] ?? null;
+}
+// Zoom do app (texto e ícones); a fonte dos terminais compensa para eles não mudarem (#52).
+let uiZoom = +localStorage.getItem("app-zoom") || 1;
+function appZoom(d) {
+  uiZoom = d ? Math.max(0.5, Math.min(2, Math.round((uiZoom + d / 10) * 10) / 10)) : 1;
+  localStorage.setItem("app-zoom", uiZoom);
+  applyUiZoom();
+}
+function applyUiZoom() {
+  document.body.style.zoom = uiZoom === 1 ? "" : uiZoom;
+  $("screen").style.fontSize = $("screen2").style.fontSize = font / uiZoom + "px";
+  fit();
+}
+
+// Atalhos dos painéis: Ctrl+Shift+D divide com terminal novo (#33); com divisão, Alt+setas alterna o foco.
+// Ctrl+W vai ao terminal; Ctrl+Shift+W fecha só o painel focado (#24). true = consumida.
 function paneKey(e) {
   const t = activeTab(), inTerm = !!e.target.closest?.(".terminal"), k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   let done = true;
-  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "Digit5") splitNew();
-  else if (t?.split && inTerm && e.ctrlKey && !e.altKey && k === "w") closePane(focusPane);
+  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyD") splitNew();
   else if (t?.split && inTerm && e.altKey && !e.ctrlKey && !e.shiftKey && ["ArrowLeft", "ArrowRight", ...(layout.stack ? ["ArrowUp", "ArrowDown"] : [])].includes(k)) setFocusPane(focusPane ? 0 : 1);
   else done = false;
   if (done) { e.preventDefault(); e.stopPropagation(); }
@@ -1234,7 +1297,7 @@ const action = (name) => () => document.dispatchEvent(new CustomEvent("term-acti
 function screenKey(e) {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key, plain = e.ctrlKey && !e.shiftKey && !e.altKey;
   let done = true;
-  const hit = Object.keys(SHORTCUTS).find((a) => keyName(e) === binds[a]);
+  const hit = Object.keys(SHORTCUTS).find((a) => a !== "help" && a !== "palette" && keyName(e) === binds[a]); // F1 só fora do terminal (#24)
   if (plain && k === "c" && hasSel()) copySel();
   else if (hit) SHORTCUTS[hit][1]();
   else if (k === "ContextMenu" || (e.shiftKey && k === "F10")) { const r = pane().getBoundingClientRect(); ctxMenu(r.left + 20, r.top + 20); }
@@ -1292,20 +1355,18 @@ foldToggle($("fold-top"), (on) => { $("hero").hidden = on; $("stats").hidden = o
 // Fonte: Ctrl+roda, Ctrl+=/-/0; salva por PC no localStorage e recalcula cols/rows.
 let FONT0 = 13; // V1 Aurora: Fira Code 13 px; a aparência (aparencia.js) troca o padrão
 window.setFontBase = (n) => { if (n === FONT0) return; FONT0 = n; font = 0; applyFont(); };
-const fontKey = () => "term-font:" + (curTab()?.conn ?? LOCAL);
 let font = FONT0;
 function applyFont() {
-  const f = +localStorage.getItem(fontKey()) || +localStorage.getItem("term-font") || FONT0;
+  const f = +localStorage.getItem("term-font") || FONT0; // um tamanho para todos os terminais (#52)
   if (f === font && $("screen").style.fontSize) return;
   font = f;
-  $("screen").style.fontSize = $("screen2").style.fontSize = font + "px";
-  fit();
+  applyUiZoom();
 }
 function zoom(d) {
-  localStorage.setItem(fontKey(), d ? Math.max(8, Math.min(32, font + d)) : FONT0);
+  localStorage.setItem("term-font", d ? Math.max(8, Math.min(32, font + d)) : FONT0);
   applyFont();
 }
-$("screen").style.fontSize = $("screen2").style.fontSize = font + "px";
+applyUiZoom();
 
 // Busca (Ctrl+F) nas linhas desenhadas, com CSS Highlight; no fim da tela rola o histórico (term_scroll).
 let findQ = "", findI = 0, findDir = 0, findHits = [];
@@ -1408,15 +1469,17 @@ window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload })
 // Ajuda (F1).
 const KEYS = [["Ctrl+C", "Copiar seleção (sem seleção: interrompe, ^C)"], ["Ctrl+V / Ctrl+Shift+V", "Colar"], ["Ctrl+Shift+C", "Copiar seleção"],
   ["Ctrl+Shift+F", "Buscar"], ["Enter / Shift+Enter", "Próximo / anterior na busca"], ["Ctrl+Shift+T", "Nova sessão"], ["Ctrl+Shift+W", "Fechar aba (com divisão: só o painel focado)"],
-  ["Ctrl+Shift+5", "Dividir com terminal novo"], ["Alt+← / Alt+→", "Alternar o foco entre os painéis divididos"], ["Ctrl+W (com divisão)", "Fechar só o painel focado"],
+  ["Ctrl+Shift+D", "Dividir com terminal novo"], ["Alt+← / Alt+→", "Alternar o foco entre os painéis divididos"],
+  ["F2 / Delete / Enter (fora do terminal)", "Renomear / fechar / abrir o item focado"], ["F11", "Tela cheia (Esc fora do terminal sai)"], ["F5 (fora do terminal) / Ctrl+Shift+R", "Redesenhar a tela"],
+  ["Ctrl+= / Ctrl+- / Ctrl+0", "Zoom: no terminal, a fonte de todos; fora, o app"], ["Shift+PgUp / Shift+PgDn", "Rolar o histórico (sem Shift: no shell rola, em tela cheia vai ao programa)"],
   ["Arrastar o divisor", "Ajustar os painéis · duplo clique volta a 50/50 · setas ajustam"],
   ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+Shift+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
-  ["Ctrl+roda do mouse", "Zoom da fonte"], ["Roda do mouse", "Rolar histórico"],
+  ["Ctrl+roda do mouse", "Zoom da fonte dos terminais"], ["Roda do mouse", "Rolar histórico"],
   ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito", "Colar (com seleção: copiar)"], ["Shift+botão direito / Shift+F10 / ☰", "Menu do terminal"], ["Arrastar arquivo", "Local: cola o caminho · Remoto/SSH: envia e cola o caminho"]];
 // Atalhos remapeáveis: ação fixa, tecla editável no F1 (clique na tecla e pressione a nova). Salvos no localStorage.
 const SHORTCUTS = {
   paste: ["Colar", () => paste(), "Ctrl+V"], find: ["Buscar", () => openFind(), "Ctrl+Shift+F"], clear: ["Limpar", () => clearTab(), "Ctrl+Shift+K"],
-  zin: ["Aumentar fonte", () => zoom(1), ""], zout: ["Diminuir fonte", () => zoom(-1), ""], z0: ["Redefinir fonte", () => zoom(0), ""],
+  palette: ["Paleta de comandos", () => action("palette")(), ""], // #33: sem atalho padrão
   help: ["Esta ajuda", () => help(), "F1"],
 };
 // Atalhos antigos (Ctrl+F, Ctrl+=…) iam contra programas do terminal: descartados se salvos.
@@ -1507,7 +1570,7 @@ ro.observe($("screen2"));
     dot.hidden = true;
     h.append(title, dot);
     for (const [act, text, label, fn] of [["swap", "⇆", "Inverter lados", swapSides], ["orient", "⇅", "Alternar orientação", toggleOrient], ["max", "⤢", "Maximizar painel", toggleMax],
-      ["unsplit", "⊟", "Desfazer divisão", () => unsplit(activeTab())], ["close", "×", "Fechar este painel (Ctrl+W)", () => closePane(i)]]) {
+      ["unsplit", "⊟", "Desfazer divisão", () => unsplit(activeTab())], ["close", "×", "Fechar este painel (Ctrl+Shift+W)", () => closePane(i)]]) {
       const b = el("button", "pane-btn", text);
       b.type = "button";
       b.dataset.act = act;

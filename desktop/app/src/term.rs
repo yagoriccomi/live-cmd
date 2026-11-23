@@ -114,7 +114,7 @@ fn render(vt: &vt100::Parser) -> Value {
         if runs.last().is_some_and(|l| l.0.is_empty()) { runs.pop(); }
         Value::Array(runs.into_iter().map(|(t, f, b, fl)| json!([t, f, b, fl])).collect())
     }).collect();
-    json!({ "rows": lines, "app_cursor": s.application_cursor() })
+    json!({ "rows": lines, "app_cursor": s.application_cursor(), "alt": s.alternate_screen() })
 }
 
 fn load(dir: &Path) -> Result<Vec<Remote>, String> {
