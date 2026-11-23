@@ -210,6 +210,7 @@ function renameSession(conn, sid, span, label) {
   if (!span) return;
   editInline(span, cur, async (v) => {
     await invoke("term_rename", { conn, sessionId: sid, label: v });
+    layoutOf(conn).named[sid] = true; saveSideOrder(conn); // nome manual não segue mais o `cd`
     for (const t of allRecs()) if (t.conn === conn && t.sid === sid) { t.label = v; t.title = titleOf(conn, { label: v }); window.histMeta?.(conn, { session_id: sid, label: v }); }
     await refresh(conn);
     renderTabs();
@@ -502,6 +503,7 @@ async function refresh(conn) {
     const v = await invoke("term_list", { conn });
     conns[conn].sessions = v.sessions;
     conns[conn].profiles = v.profiles;
+    if (!layouts[conn]) layouts[conn] = await invoke("term_layout_get", { conn }).catch(() => ({}));
   } catch { conns[conn].sessions = []; }
   renderSidebar();
 }
@@ -545,13 +547,15 @@ function sessionItem(conn, s) {
   b.type = "button";
   const key = conn + "/" + s.session_id;
   if (key === active) b.setAttribute("aria-current", "true");
-  const name = el("span", "card-t", (s.label || "Terminal").replace(/\\{2,}/g, "\\")); // host remoto manda barras escapadas
+  // #11: nome = pasta atual (segue o `cd`), salvo se renomeado à mão.
+  const cwd = dropCwds[key] || s.cwd;
+  const auto = !layoutOf(conn).named[s.session_id] && baseName(cwd);
+  const name = el("span", "card-t", auto || (s.label || "Terminal").replace(/\\{2,}/g, "\\")); // host remoto manda barras escapadas
   name.ondblclick = (e) => { e.stopPropagation(); renameSession(conn, s.session_id, name); };
   // Visual V1 Aurora: ícone pelo tipo, pasta atual (OSC 7) e estado por extenso.
   const kind = sessionKind(s.label);
   li.dataset.kind = kind;
   const txt = el("span", "card-txt");
-  const cwd = dropCwds[key] || s.cwd;
   txt.append(name, el("span", "card-s mono", cwd || (s.state === "exited" ? "sessão encerrada" : "")));
   // Aba em foco: dados do projeto, clique copia.
   if (key === active) {
@@ -580,7 +584,78 @@ function sessionItem(conn, s) {
   b.oncontextmenu = (e) => { e.preventDefault(); menu(b, [["Renomear", () => renameSession(conn, s.session_id, name)], ["Encerrar sessão", () => endSession(conn, s)]]); };
   b.onkeydown = (e) => { if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); b.oncontextmenu(e); } };
   li.append(b);
+  li.draggable = true;
+  li.ondragstart = (e) => { e.dataTransfer.setData("text/plain", s.session_id); dragFrom = conn; li.classList.add("dragging"); };
+  li.ondragend = () => li.classList.remove("dragging");
+  dropTarget(li, conn, () => groupKey(conn, s), s.session_id);
   return li;
+}
+
+// ---------- #9/#10/#37: grupos, arraste e ordem (salvos no host: `layout_get`/`layout_set`) ----------
+// Layout por conexão: { order: [sid], group: {sid: grupo manual}, named: {sid: true}, pinned: grupo }.
+const layouts = {};
+let dragFrom = null;
+const baseName = (p) => (p || "").replace(/\\{2,}/g, "\\").split(/[\\/]/).filter(Boolean).pop() || "";
+function layoutOf(conn) {
+  const L = layouts[conn] ||= {};
+  L.order ||= []; L.group ||= {}; L.named ||= {};
+  return L;
+}
+function saveSideOrder(conn) {
+  invoke("term_layout_set", { conn, layout: layoutOf(conn) }).catch((e) => banner(msg(e), "err"));
+}
+// Manual vence; senão raiz git; senão pasta atual.
+function groupKey(conn, s) {
+  const k = conn + "/" + s.session_id, git = s.ssh ? sshGit[k] : s.git;
+  return layoutOf(conn).group[s.session_id] || git?.root || dropCwds[k] || s.cwd || "Sem pasta";
+}
+// Solta antes de `before` (sid) ou no fim; muda de grupo se o destino for outro.
+function dropTarget(node, conn, key, before) {
+  node.ondragover = (e) => { if (dragFrom === conn) { e.preventDefault(); e.stopPropagation(); node.classList.add("drop"); } };
+  node.ondragleave = () => node.classList.remove("drop");
+  node.ondrop = (e) => {
+    e.preventDefault(); e.stopPropagation(); node.classList.remove("drop");
+    const sid = e.dataTransfer.getData("text/plain"), L = layoutOf(conn);
+    const s = conns[conn].sessions.find((x) => x.session_id === sid);
+    if (!s || sid === before) return;
+    const g = key();
+    delete L.group[sid];
+    if (groupKey(conn, s) !== g) L.group[sid] = g;
+    const ids = sorted(conn, conns[conn].sessions).map((x) => x.session_id).filter((x) => x !== sid);
+    const at = before ? ids.indexOf(before) : -1;
+    ids.splice(at < 0 ? ids.length : at, 0, sid);
+    L.order = ids;
+    saveSideOrder(conn);
+    renderSidebar();
+  };
+}
+function sorted(conn, list) {
+  const o = layoutOf(conn).order, i = (s) => { const n = o.indexOf(s.session_id); return n < 0 ? 1e9 : n; };
+  return [...list].sort((a, b) => i(a) - i(b));
+}
+// Cards agrupados; grupo fixo no topo; zona final cria grupo manual.
+function groupedItems(conn, list) {
+  const L = layoutOf(conn), groups = new Map();
+  for (const s of sorted(conn, list)) { const g = groupKey(conn, s); groups.set(g, [...(groups.get(g) || []), s]); }
+  const keys = [...groups.keys()].sort((a, b) => (b === L.pinned) - (a === L.pinned));
+  const out = keys.map((g) => {
+    const li = el("li", "sess-group"), h = el("button", "group-h small", (g === L.pinned ? "📌 " : "") + (baseName(g) || g)), ul = el("ul", "cards");
+    h.type = "button"; h.title = g;
+    h.oncontextmenu = (e) => { e.preventDefault(); menu(h, [[L.pinned === g ? "Desafixar" : "Fixar no topo", () => { L.pinned = L.pinned === g ? null : g; saveSideOrder(conn); renderSidebar(); }]]); };
+    h.onkeydown = (e) => { if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); h.oncontextmenu(e); } };
+    dropTarget(h, conn, () => g, null);
+    ul.append(...groups.get(g).map((s) => sessionItem(conn, s)));
+    li.append(h, ul);
+    return li;
+  });
+  if (list.length > 1) {
+    let n = 1;
+    while (Object.values(L.group).includes("Grupo " + n)) n++;
+    const z = el("li", "group-new muted small", "Solte aqui para criar um grupo");
+    dropTarget(z, conn, () => "Grupo " + n, null);
+    out.push(z);
+  }
+  return out;
 }
 
 function newButton(conn) {
@@ -594,7 +669,7 @@ function newButton(conn) {
 function renderSidebar() {
   if ($("sidebar").querySelector("input.rename")) { tabsLater = true; return; }
   const shown = conns[LOCAL].sessions.filter((s) => !sideFilter || (s.ssh ? "ssh" : sessionKind(s.label)) === sideFilter);
-  $("local-ul").replaceChildren(...shown.filter((s) => !s.ssh).map((s) => sessionItem(LOCAL, s)));
+  $("local-ul").replaceChildren(...groupedItems(LOCAL, shown.filter((s) => !s.ssh)));
   // Categoria SSH: um card por servidor (user@host:porta), abas embaixo, como os outros PCs.
   const servers = new Map();
   for (const s of shown.filter((s) => s.ssh)) {
@@ -634,7 +709,7 @@ function renderSidebar() {
     li.append(b);
     if (st === "ready") {
       const ul = el("ul");
-      ul.append(...c.sessions.map((s) => sessionItem(id, s)));
+      ul.append(...groupedItems(id, c.sessions));
       if (!c.sessions.length) ul.append(el("li", "muted small", `${c.name} não tem terminais abertos.`));
       const nl = el("li");
       nl.append(newButton(id));
@@ -1241,7 +1316,7 @@ for (const scr of [$("screen"), $("screen2")]) scr.addEventListener("click", (e)
 for (const scr of [$("screen"), $("screen2")]) scr.addEventListener("mousemove", (e) => scr.classList.toggle("ctrl", e.ctrlKey));
 
 // Arrastar arquivo(s): sessão local cola o(s) caminho(s) entre aspas; remota envia ao outro PC (pasta atual da sessão, senão a padrão do host).
-window.__TAURI__.event.listen("term-cwd", (e) => { dropCwds[e.payload.key] = e.payload.cwd || undefined; });
+window.__TAURI__.event.listen("term-cwd", (e) => { dropCwds[e.payload.key] = e.payload.cwd || undefined; renderSidebar(); }); // #11: nome do card segue o `cd`
 window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload }) => {
   if (payload.type !== "drop" || !payload.paths?.length) return;
   // Solto sobre um painel: ele vira o focado e recebe o(s) arquivo(s); fora dos painéis vale o focado.
