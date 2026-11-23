@@ -33,7 +33,10 @@
 body.term-body { font-family:var(--font); line-height:normal; }
 /* O mockup usa box-sizing content-box: larguras abaixo já somam padding e borda. */
 .term-body .term-layout { position:fixed; inset:20px; height:auto; display:flex; gap:16px; }
-.term-body .term-layout.collapsed .sidebar { display:none; }
+/* Coluna fechada: só o trilho; hover ou foco expande por cima do terminal, sem empurrá-lo. */
+.term-body .term-layout.collapsed .sidebar { position:absolute; left:76px; top:0; bottom:0; z-index:5; padding:18px; visibility:hidden; opacity:0; transition:opacity .15s, visibility .15s; }
+.term-body .term-layout.collapsed :is(.rail:hover, .rail:focus-within) ~ .sidebar,
+.term-body .term-layout.collapsed .sidebar:is(:hover, :focus-within) { visibility:visible; opacity:1; }
 
 /* Vidro */
 .rail, .term-body .sidebar, .stat, .aurora-pane .pane-l {

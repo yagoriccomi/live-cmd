@@ -995,7 +995,7 @@ document.addEventListener("keydown", (e) => {
   else if (e.ctrlKey && e.shiftKey && k === "V") { e.preventDefault(); paste(); }
   else if (e.ctrlKey && e.shiftKey && k === "F6") {
     e.preventDefault();
-    $("layout").classList.remove("collapsed");
+    // Fechada, o foco dentro da coluna a expande por cima (:focus-within).
     ($("sidebar").querySelector("[aria-current=true]") || $("local-new")).focus();
   }
 });

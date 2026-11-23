@@ -21,6 +21,7 @@
 <div class="term-layout" id="layout">
   <nav class="rail" aria-label="Telas">
     <span class="rail-logo" aria-hidden="true">›_</span>
+    <button type="button" class="rail-btn" id="fold-side" title="Fechar ou fixar a coluna (Ctrl+Shift+B)" aria-label="Fechar coluna lateral" aria-pressed="false">◧</button>
     <button type="button" class="rail-btn" id="nav-term" title="Terminais" aria-label="Terminais">›_</button>
     <button type="button" class="rail-btn nav-tool" id="nav-agents" title="Agentes de IA" aria-label="Agentes de IA" aria-controls="agents-panel" aria-expanded="false">✦</button>
     <button type="button" class="rail-btn" id="ssh-open" title="Servidores SSH" aria-label="Servidores SSH" aria-controls="ssh-panel" aria-expanded="false">⇄</button>
@@ -61,7 +62,6 @@
     </div>
     <div class="term-card">
     <div class="term-bar">
-      <button type="button" class="fold" id="fold-side" title="Recolher/expandir lista de terminais (Ctrl+Shift+B)" aria-label="Recolher lista de terminais" aria-pressed="false">◧</button>
       <button type="button" class="fold" id="fold-top" title="Recolher/expandir informações do topo" aria-label="Recolher informações do topo" aria-pressed="false">⬒</button>
       <div class="term-tabs" role="tablist" aria-label="Terminais abertos" id="tabs"></div>
     </div>
