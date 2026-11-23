@@ -1673,12 +1673,26 @@ renderTabs();
 updateBanner();
 
 // Item 20: aviso de atualização (mesmos comandos da janela principal).
-invoke("check_update").then((v) => {
-  if (!v) return;
+invoke("check_update").catch(() => null).then((v) => {
+  if (!v) return staleDaemon();
   $("upd-t").textContent = `Versão ${v} disponível.`;
   $("upd-banner").hidden = false;
-}).catch(() => {});
+});
 $("upd-x").onclick = () => { $("upd-banner").hidden = true; };
+// Atualização não troca o serviço de terminais em uso: avisa e oferece reiniciar (fecha os terminais deste PC).
+const staleDaemon = () => invoke("daemon_stale").then((stale) => {
+  if (!stale) return;
+  $("upd-t").textContent = "O serviço de terminais ainda é da versão anterior: conexões de outros PCs usam o código antigo.";
+  $("upd-go").textContent = "Reiniciar serviço";
+  $("upd-banner").hidden = false;
+  $("upd-go").onclick = async () => {
+    if (!await ask("Reiniciar o serviço de terminais?", "Os programas em execução nos terminais deste PC são encerrados e aparelhos conectados caem. Os terminais salvos reabrem em seguida.", "Reiniciar serviço")) return;
+    $("upd-go").disabled = true;
+    $("upd-t").textContent = "Reiniciando o serviço…";
+    try { await invoke("daemon_restart"); location.reload(); }
+    catch (e) { $("upd-go").disabled = false; $("upd-t").textContent = "Não foi possível reiniciar: " + msg(e); }
+  };
+}).catch(() => {});
 $("upd-go").onclick = async () => {
   $("upd-go").disabled = true;
   $("upd-t").textContent = "Baixando e instalando…";

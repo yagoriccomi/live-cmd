@@ -140,7 +140,16 @@ pub(crate) async fn read_msg<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result
 
 /// Resposta do daemon ao `hello`.
 #[derive(Clone, Debug)]
-pub struct Hello { pub ipc_version: u64, pub pid: u32, pub build: String }
+pub struct Hello { pub ipc_version: u64, pub pid: u32, pub build: String, pub app: String }
+/// Versão do app que instalou este daemon: nome da pasta `daemon\<versão>\` do exe; vazio fora dela (debug).
+pub fn app_tag() -> String {
+    let Ok(exe) = std::env::current_exe() else { return String::new() };
+    let dir = exe.parent();
+    match (dir.and_then(|d| d.file_name()), dir.and_then(|d| d.parent()).and_then(|d| d.file_name())) {
+        (Some(v), Some(p)) if p == "daemon" => v.to_string_lossy().into_owned(),
+        _ => String::new(),
+    }
+}
 /// Por que a conexão não abriu.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Fail {
@@ -189,7 +198,7 @@ pub(crate) async fn connect(ep: &Endpoint, allow_old: bool) -> std::result::Resu
         Ok(Err(_)) => return Err(Fail::Denied),
         _ => return Err(Fail::Io),
     };
-    let hello = Hello { ipc_version: v["ipc_version"].as_u64().unwrap_or(0), pid, build: v["build"].as_str().unwrap_or("").into() };
+    let hello = Hello { ipc_version: v["ipc_version"].as_u64().unwrap_or(0), pid, build: v["build"].as_str().unwrap_or("").into(), app: v["app"].as_str().unwrap_or("").into() };
     if hello.ipc_version != IPC_VERSION && !allow_old { return Err(Fail::Version(hello.ipc_version)); }
     Ok(Conn { pipe, hello })
 }
@@ -360,7 +369,7 @@ async fn serve_conn(pipe: NamedPipeServer, d: Arc<dyn Daemon>, token: Arc<String
     let hello = match tokio::time::timeout(HELLO, read_msg(&mut r)).await { Ok(Ok(Msg::Json(v))) if v["t"] == "hello" => v, _ => return };
     if !same(hello["token"].as_str().unwrap_or(""), &token) { return; }
     let current = hello["ipc_version"].as_u64() == Some(IPC_VERSION);
-    if w.write_all(&pack_json(&json!({"t":"hello","ipc_version":IPC_VERSION,"pid":std::process::id(),"build":BUILD}))).await.is_err() { return; }
+    if w.write_all(&pack_json(&json!({"t":"hello","ipc_version":IPC_VERSION,"pid":std::process::id(),"build":BUILD,"app":app_tag()}))).await.is_err() { return; }
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut app = events.0.subscribe();

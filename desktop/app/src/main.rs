@@ -222,6 +222,25 @@ fn set_appearance(handle: AppHandle, app: State<App>, patch: serde_json::Map<Str
     Ok(a.json())
 }
 
+/// Daemon no ar é de outra versão do app (sobreviveu à atualização): o host remoto ainda roda o código antigo.
+/// Daemon antigo não manda `app` e conta como desatualizado. Em debug o daemon não fica em `daemon\<versão>`: nunca.
+#[tauri::command(async)]
+fn daemon_stale(app: State<App>) -> bool {
+    if cfg!(debug_assertions) { return false; }
+    ipc::probe(&app.svc.ep).is_ok_and(|h| h.app != env!("CARGO_PKG_VERSION"))
+}
+
+/// Troca o daemon pelo desta versão: encerra o atual (terminais e aparelhos caem; as sessões salvas reabrem) e sobe outro.
+#[tauri::command(async)]
+fn daemon_restart(handle: AppHandle, app: State<App>) -> Result<(), String> {
+    term::shutdown(&handle);
+    app.svc.shutdown()?;
+    if !(0..50).any(|_| { std::thread::sleep(std::time::Duration::from_millis(100)); matches!(ipc::probe(&app.svc.ep), Err(ipc::Fail::Absent)) }) {
+        return Err("DAEMON_BUSY".into());
+    }
+    daemon::ensure(&app.svc.ep).map(drop)
+}
+
 /// Abre a pasta de dados (perfis, trust store e, no futuro, logs) no Explorer.
 #[tauri::command]
 fn open_data_dir(app: State<App>) -> Result<(), String> {
@@ -430,7 +449,7 @@ fn main() {
             term::term_export, term::term_export_file, term::term_clear, term::term_upload, term::term_conn_stats, term::term_busy, term::term_rename, term::term_dirs, term::term_layout_get, term::term_layout_set, term::remote_rename,
             agents::agent_list, agents::agent_resume, agents::agent_remove, agents::agent_default_get, agents::agent_default_set, agents::agent_args, agents::agent_icon_get, agents::agent_icon_set,
             ssh::ssh_list, ssh::ssh_save, ssh::ssh_import, ssh::ssh_remove, ssh::ssh_probe, ssh::ssh_connect, ssh::ssh_sessions, ssh::ssh_reconnect, ssh::ssh_git, ssh::ssh_stats,
-            hist::hist_meta, hist::hist_list, hist::hist_clear, hist::hist_sessions, sys::sys_stats, get_appearance, set_appearance])
+            hist::hist_meta, hist::hist_list, hist::hist_clear, hist::hist_sessions, sys::sys_stats, get_appearance, set_appearance, daemon_stale, daemon_restart])
         .setup(|a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;

@@ -924,6 +924,8 @@ fn with_cmd_prompt(p: Profile) -> Profile {
 // ponytail: arquivo simples com corte por tamanho; trocar por crate de log se precisar de níveis/rotação.
 pub fn hlog(msg: &str) {
     use std::io::Write;
+    // `cargo test` sobe hosts de teste: sem isto eles escreviam no host.log real do PC.
+    if cfg!(test) { return; }
     let Ok(dir) = default_data_dir() else { return };
     let p = dir.join("host.log");
     if std::fs::metadata(&p).is_ok_and(|m| m.len() > 1 << 20) { let _ = std::fs::rename(&p, dir.join("host.log.1")); }
