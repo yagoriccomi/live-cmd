@@ -123,9 +123,11 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .term-bar, .term-bar .term-tabs { background:transparent; border:0; box-shadow:none; backdrop-filter:none; }
 .term-bar { padding:2px 0; gap:6px; }
 .term-bar .term-tabs { gap:6px; min-height:0; padding:0; align-items:center; }
-.term-bar .term-tabs [role=tab] { padding:5px 12px; border:0; border-radius:999px; background:transparent; color:var(--text-muted); font-weight:500; }
-.term-bar .term-tabs [role=tab]:hover { background:var(--chip); color:var(--text); }
-.term-bar .term-tabs [role=tab][aria-selected=true] { background:var(--card-on); color:var(--card-on-ink); font-weight:700; }
+/* Guias estilo 2 (#21): retangulares com quinas das boxes (chip), ativa com contorno. */
+.term-bar .term-tabs { scrollbar-width:none; }
+.term-bar .term-tabs [role=tab] { padding:6px 14px; border:0; border-radius:10px; background:var(--chip); color:var(--text-muted); font-weight:500; }
+.term-bar .term-tabs [role=tab]:hover { color:var(--text); }
+.term-bar .term-tabs [role=tab][aria-selected=true] { background:var(--card-on); color:var(--card-on-ink); font-weight:700; outline:1px solid var(--accent); outline-offset:-1px; }
 .term-bar .term-tabs [role=tab][aria-selected=true] .x { color:inherit; }
 .term-body .term-area { flex:1; position:relative; min-height:0; }
 .term-body .terminal { padding:0; font-family:var(--font-mono); font-size:13px; line-height:1.65; }
@@ -332,8 +334,8 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .aurora-pane .card.device-row { position:relative; border:0; border-radius:18px; padding:13px 14px; min-height:66px; }
 /* Botão ao lado do status (nunca por cima dele); aparece no hover/foco. */
 .aurora-pane .device-row button { position:static; flex:none; margin-left:8px; opacity:0; pointer-events:none; }
-.term-bar .fold { flex:none; padding:4px 9px; margin-right:4px; border:0; border-radius:10px; background:var(--chip); color:var(--text); font-size:14px; line-height:1; }
-.term-bar .fold[aria-pressed=true] { background:var(--card-on); color:var(--card-on-ink); }
+.term-bar .fold, .side-head .fold { flex:none; padding:4px 9px; margin-right:4px; border:0; border-radius:10px; background:var(--chip); color:var(--text); font-size:14px; line-height:1; }
+.term-bar .fold[aria-pressed=true], .side-head .fold[aria-pressed=true] { background:var(--card-on); color:var(--card-on-ink); }
 .aurora-pane .device-row:is(:hover, :focus-within) button { opacity:1; pointer-events:auto; }
 .card-st.dot-ok { color:var(--ok); }
 #pair-pane .code-only { display:none; }
