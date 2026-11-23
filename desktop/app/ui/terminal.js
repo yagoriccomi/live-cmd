@@ -1047,6 +1047,21 @@ for (const s of [$("screen"), $("screen2")]) {
     const other = s === $("screen") ? $("screen2") : $("screen");
     if (selIn(other)) getSelection().removeAllRanges();
     other.classList.add("sel-lock");
+    // Arrastar além do topo/base rola o painel; mais longe da borda, mais rápido. A seleção acompanha via extend().
+    let y = e.clientY, x = e.clientX, raf = 0;
+    const move = (ev) => { y = ev.clientY; x = ev.clientX; };
+    const tick = () => {
+      if (!selecting.has(s)) { removeEventListener("mousemove", move); return; }
+      const r = s.getBoundingClientRect(), d = y < r.top ? y - r.top : y > r.bottom ? y - r.bottom : 0;
+      if (d) {
+        s.scrollTop += Math.sign(d) * Math.min(4 + Math.abs(d) / 2, 80);
+        const p = document.caretPositionFromPoint?.(Math.min(Math.max(x, r.left + 1), r.right - 1), d < 0 ? r.top + 1 : r.bottom - 1);
+        if (p && s.contains(p.offsetNode)) getSelection().extend(p.offsetNode, p.offset);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    addEventListener("mousemove", move);
+    raf = requestAnimationFrame(tick);
   });
   // Clique e foco escolhem o painel que recebe colar, arrastar, busca e exportar.
   s.addEventListener("focus", () => setFocusPane(s === $("screen2") ? 1 : 0, false));
