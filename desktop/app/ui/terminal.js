@@ -121,8 +121,11 @@ function renderTabs() {
     b.tabIndex = t.key === active ? 0 : -1;
     b.dataset.key = t.key;
     // Aba remota: só a cor do PC (nome do PC fica no tooltip e no leitor de tela).
-    if (t.conn !== LOCAL) { b.append(pcMark(t.conn)); b.title = t.title; }
-    const name = el("span", "tab-name", (t.label || "Terminal") + (t.split ? " | dividido" : ""));
+    if (t.conn !== LOCAL) b.append(pcMark(t.conn));
+    // Tooltip host · nome em todas as guias (#42); no dividido, os dois na ordem dos painéis.
+    const tip = (r) => r.conn === LOCAL ? "Este PC · " + (r.label || "Terminal") : r.title;
+    b.title = t.split ? tip(t) + " | " + tip(t.split) : tip(t);
+    const name = el("span", "tab-name", (t.label || "Terminal") + (t.split ? " | " + (t.split.label || "Terminal") : ""));
     if (t.conn !== LOCAL) name.setAttribute("aria-label", t.title);
     name.ondblclick = (e) => { e.stopPropagation(); renameSession(t.conn, t.sid, name, t.label); };
     b.append(name);
@@ -130,17 +133,17 @@ function renderTabs() {
     b.draggable = true;
     b.ondragstart = (e) => e.dataTransfer.setData("text/x-tab", t.key);
     b.ondragover = (e) => e.preventDefault();
-    b.ondrop = (e) => { e.preventDefault(); moveTab(e.dataTransfer.getData("text/x-tab"), t.key); };
+    b.ondrop = (e) => { e.preventDefault(); e.stopPropagation(); moveTab(e.dataTransfer.getData("text/x-tab"), t.key, e.clientX); };
     b.oncontextmenu = (e) => { e.preventDefault(); menu(b, tabMenu(t, name)); };
     const x = el("span", "x", "×");
     x.setAttribute("aria-hidden", "true");
     x.title = "Fechar aba (Ctrl+Shift+W)";
-    x.onclick = (e) => { e.stopPropagation(); closeTab(t.key); };
+    x.onclick = (e) => { e.stopPropagation(); closeTab(t.key, true); };
     b.append(x);
     b.onclick = () => { if (t.key !== active) activate(t.key); };
     // Botão do meio: sem preventDefault no mousedown o WebView2 entra em autoscroll e o auxclick some.
     b.onmousedown = (e) => { if (e.button === 1) e.preventDefault(); };
-    b.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t.key); } };
+    b.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t.key, true); } };
     return b;
   }));
   $("empty").hidden = tabs.length > 0;
@@ -149,19 +152,29 @@ function renderTabs() {
   renderSidebar();
 }
 
-function moveTab(from, to) {
-  const i = tabs.findIndex((t) => t.key === from), j = tabs.findIndex((t) => t.key === to);
-  if (i < 0 || j < 0 || i === j) return;
-  tabs.splice(j, 0, ...tabs.splice(i, 1));
+/** Reordena (#27): solta antes ou depois da guia alvo conforme a metade; sem alvo, vai para o fim. Só a ordem das guias muda. */
+function moveTab(from, to, x) {
+  const i = tabs.findIndex((t) => t.key === from);
+  if (i < 0 || from === to) return;
+  const [m] = tabs.splice(i, 1);
+  const b = to && $("tabs").querySelector(`[data-key="${CSS.escape(to)}"]`);
+  let j = to ? tabs.findIndex((t) => t.key === to) : -1;
+  if (j < 0) j = tabs.length;
+  else if (b && x != null) { const r = b.getBoundingClientRect(); if (x > r.left + r.width / 2) j++; }
+  tabs.splice(j, 0, m);
   renderTabs();
 }
+$("tabs").addEventListener("dragover", (e) => e.preventDefault());
+$("tabs").addEventListener("drop", (e) => { const k = e.dataTransfer.getData("text/x-tab"); if (k) { e.preventDefault(); moveTab(k, null); } });
+// Roda do mouse rola as guias na horizontal (#43).
+$("tabs").addEventListener("wheel", (e) => { if (!e.deltaY) return; e.preventDefault(); $("tabs").scrollLeft += e.deltaY; }, { passive: false });
 
 function tabMenu(t, name) {
   return [["Renomear", () => renameSession(t.conn, t.sid, name, t.label)],
     t.split ? ["Desfazer divisão", () => unsplit(t)] : ["Dividir", () => splitMenu(name)],
-    ...(t.split ? [["Alternar orientação", toggleOrient], [t.max != null ? "Restaurar painéis" : "Maximizar painel", toggleMax]] : []),
+    ...(t.split ? [["Inverter lados", swapSides], ["Alternar orientação", toggleOrient], [t.max != null ? "Restaurar painéis" : "Maximizar painel", toggleMax]] : []),
     ["Reabrir aba fechada (Ctrl+Alt+T)", reopen],
-    ["Fechar aba", () => closeTab(t.key)]];
+    ["Fechar aba", () => closeTab(t.key, true)]];
 }
 
 const actDot = () => { const d = el("span", "act", "•"); d.setAttribute("aria-label", "saída nova"); return d; };
@@ -320,6 +333,26 @@ function toggleMax() {
   pane().focus();
 }
 
+/** Inverte os painéis (#28): mesmos PTYs, foco e proporção seguem o terminal; a guia passa a ter o outro como dono. */
+function swapSides() {
+  const t = activeTab(), sp = t?.split;
+  if (!sp) return;
+  tabs[tabs.indexOf(t)] = sp;
+  sp.split = t;
+  t.split = null;
+  sp.max = t.max == null ? null : 1 - t.max;
+  t.max = null;
+  active = sp.key;
+  focusPane = 1 - focusPane;
+  layout.pct = 100 - layout.pct;
+  saveLayout();
+  renderTabs();
+  draw(sp.key);
+  draw(t.key, $("screen2"));
+  setPct(layout.pct);
+  pane().focus();
+}
+
 /** Menu para dividir: terminal novo ou outra sessão aberta (se já é aba, as duas viram uma só). */
 function splitMenu(anchor) {
   const t = activeTab();
@@ -462,9 +495,11 @@ async function openSession(conn, s) {
   activate(key);
 }
 
-async function closeTab(key) {
+async function closeTab(key, ask = false) {
   const i = tabs.findIndex((t) => t.key === key);
   if (i < 0) return;
+  // Fechar a guia não encerra o terminal (#31): só desanexa; a sessão segue na lista.
+  if (ask && !confirm("Fechar a guia? O terminal continua rodando e segue na lista de sessões.")) return;
   const [t] = tabs.splice(i, 1);
   // Fechar a aba solta as duas sessões; para fechar só uma, use o painel (closePane).
   if (t.split) release(t.split);
@@ -855,10 +890,11 @@ document.addEventListener("term-action", (e) => {
   else if (a === "split") splitMenu();
   else if (a === "split-new") splitNew();
   else if (a === "orient") toggleOrient();
+  else if (a === "swap") swapSides();
   else if (a === "maximize") toggleMax();
   else if (a === "unsplit" && activeTab()) unsplit(activeTab());
   else if (a === "new") newSession(t ? t.conn : LOCAL);
-  else if (a === "close" && t) activeTab().split ? closePane(focusPane) : closeTab(t.key);
+  else if (a === "close" && t) activeTab().split ? closePane(focusPane) : closeTab(t.key, true);
   else if (a === "export" && t) window.__TAURI__.dialog.save({ defaultPath: `${(t.label || "terminal").replace(/[\\/:*?"<>|]/g, "_")}.txt`, filters: [{ name: "Texto", extensions: ["txt"] }] })
     .then((path) => path && invoke("term_export_file", { conn: t.conn, sessionId: t.sid, path }).then(() => banner("Saída salva em " + path, "ok")))
     .catch((err) => banner(msg(err), "err"));
@@ -866,6 +902,15 @@ document.addEventListener("term-action", (e) => {
 listen("term-exited", ({ payload }) => {
   const t = allRecs().find((t) => t.key === payload.key);
   if (t) { t.exited = payload.code; if (t === target()) updateBanner(); paintSplit(); }
+  // Encerrar o terminal fecha a guia dele (#31); no dividido, só o painel.
+  const host = tabs.find((x) => x.key === payload.key || x.split?.key === payload.key);
+  if (host) {
+    const n = host.key === payload.key ? 0 : 1;
+    if (!host.split) closeTab(host.key);
+    else if (host.key === active) closePane(n);
+    else if (n) { release(host.split); host.split = null; host.max = null; renderTabs(); }
+    else { tabs[tabs.indexOf(host)] = host.split; release(host); host.split = null; renderTabs(); }
+  }
   refresh(payload.key.split("/")[0]);
 });
 listen("term-conn", async ({ payload }) => {
@@ -1124,7 +1169,7 @@ function ctxMenu(x, y) {
   menu(at, [
     ["Copiar   Ctrl+C", hasSel() ? copySel : null], ["Colar   Ctrl+V", paste], ["Selecionar tudo", selectAll], ["Buscar   Ctrl+Shift+F", openFind],
     ["Nova sessão   Ctrl+Shift+T", action("new")], ["Nova sessão nesta pasta", action("new-here")], ["Reabrir aba fechada   Ctrl+Alt+T", reopen],["Renomear aba", action("rename")], ["Fechar aba   Ctrl+Shift+W", action("close")],
-    ["Exportar saída", action("export")], ["Dividir painel", action("split")], ...(activeTab()?.split ? [["Alternar orientação", action("orient")], [activeTab().max != null ? "Restaurar painéis" : "Maximizar painel", action("maximize")], ["Desfazer divisão", action("unsplit")]] : []), ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
+    ["Exportar saída", action("export")], ["Dividir painel", action("split")], ...(activeTab()?.split ? [["Alternar orientação", action("orient")], ["Inverter lados", action("swap")], [activeTab().max != null ? "Restaurar painéis" : "Maximizar painel", action("maximize")], ["Desfazer divisão", action("unsplit")]] : []), ["Paleta de comandos", action("palette")], ["Tema", action("theme")],
     ["Aumentar fonte", () => zoom(1)], ["Diminuir fonte", () => zoom(-1)], ["Redefinir fonte", () => zoom(0)],
     ["Limpar", clearTab], ["Atalhos e ajuda   F1", () => help()],
   ].filter(([, fn]) => fn));
@@ -1376,7 +1421,7 @@ ro.observe($("screen2"));
     dot.classList.add("pane-act");
     dot.hidden = true;
     h.append(title, dot);
-    for (const [act, text, label, fn] of [["orient", "⇅", "Alternar orientação", toggleOrient], ["max", "⤢", "Maximizar painel", toggleMax],
+    for (const [act, text, label, fn] of [["swap", "⇆", "Inverter lados", swapSides], ["orient", "⇅", "Alternar orientação", toggleOrient], ["max", "⤢", "Maximizar painel", toggleMax],
       ["unsplit", "⊟", "Desfazer divisão", () => unsplit(activeTab())], ["close", "×", "Fechar este painel (Ctrl+W)", () => closePane(i)]]) {
       const b = el("button", "pane-btn", text);
       b.type = "button";
@@ -1414,7 +1459,11 @@ ro.observe($("screen2"));
   const stop = (e) => {
     const p = press;
     press = null;
-    if (p && moved && e.type === "pointerup" && over(e.clientX, e.clientY)) dropTab(p.key);
+    if (p && moved && e.type === "pointerup") {
+      const bar = $("tabs").getBoundingClientRect(), on = document.elementFromPoint(e.clientX, e.clientY)?.closest("#tabs [role=tab]");
+      if (on || (e.clientY >= bar.top && e.clientY <= bar.bottom)) moveTab(p.key, on?.dataset.key ?? null, e.clientX);
+      else if (over(e.clientX, e.clientY)) dropTab(p.key);
+    }
     showHint(false);
   };
   document.addEventListener("pointerup", stop);
