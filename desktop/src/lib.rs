@@ -510,6 +510,7 @@ impl Hub {
                 extras::ssh_key_list_ok(&root.to_string_lossy(), &shown, &dirs, &keys)
             }
             X::AgentDefaultGet => extras::agent_default_ok(p.agent_default().as_ref()),
+            X::AgentArgs(agent) => extras::agent_args_ok(&agent, &p.agent_args_used(&agent)),
             X::AgentDefaultSet(d) => { p.agent_default_save(&d).map_err(|c| extras::code(&c))?; extras::empty_ok("agent_default_set_ok") }
             X::HistoryRun { entry_id, session_id } => {
                 if self.s.size(&session_id).is_none() { return Err(auth::Error::NotFound); }

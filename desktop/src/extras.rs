@@ -91,6 +91,8 @@ pub enum Req {
     SshKeyList(String),
     AgentDefaultGet,
     AgentDefaultSet(AgentDefault),
+    /// Sugestões de comandos extras do agente: já usados neste host (mais recentes primeiro) + opções conhecidas.
+    AgentArgs(String),
     SettingsGet,
     /// Só os campos mandados mudam; o resto fica. Já validado contra a lista branca ([`Appearance::patch`]).
     SettingsSet(Map<String, Value>),
@@ -98,7 +100,7 @@ pub enum Req {
     Unsupported,
 }
 
-const KNOWN: [&str; 19] = ["agent_list", "agent_resume", "agent_create", "agent_remove", "ssh_list", "ssh_connect", "ssh_save", "ssh_remove",
+const KNOWN: [&str; 20] = ["agent_args", "agent_list", "agent_resume", "agent_create", "agent_remove", "ssh_list", "ssh_connect", "ssh_save", "ssh_remove",
     "ssh_probe", "ssh_reconnect", "history_query", "history_run", "history_clear", "folder_list", "ssh_key_list", "agent_default_get", "agent_default_set",
     "settings_get", "settings_set"];
 
@@ -231,6 +233,12 @@ fn parse_known(ty: &str, o: &Map<String, Value>) -> R<Req> {
             let cwd = match o.get("cwd") { None | Some(Value::Null) => None, Some(_) => Some(text(s("cwd")?.trim(), 0, 1024)?).filter(|c| !c.is_empty()) };
             Req::AgentDefaultSet(AgentDefault { agent: agent.to_owned(), cwd, args })
         }
+        "agent_args" => {
+            fields(&["agent"], &[])?;
+            let agent = s("agent")?;
+            if !crate::proto::AGENTS.contains(&agent) { return Err(InvalidMessage); }
+            Req::AgentArgs(agent.to_owned())
+        }
         "settings_get" => { fields(&[], &[])?; Req::SettingsGet }
         "settings_set" => {
             fields(&["settings"], &[])?;
@@ -342,6 +350,8 @@ pub trait Provider: Send + Sync {
     /// A sessão saiu da tabela: o provedor solta o que guardava dela.
     fn session_gone(&self, _session_id: &[u8; 16]) {}
     fn agent_default(&self) -> Option<AgentDefault> { None }
+    /// Comandos extras já usados com `agent` neste host, mais recentes primeiro (com repetição; o hub tira).
+    fn agent_args_used(&self, _agent: &str) -> Vec<String> { vec![] }
     fn agent_default_save(&self, _d: &AgentDefault) -> Result<(), String> { Err("NOT_FOUND".into()) }
     /// Aparência gravada; `None` = este PC não tem tela de configurações (`NOT_FOUND`).
     fn settings_get(&self) -> Option<Appearance> { None }
@@ -442,6 +452,26 @@ pub fn agent_default_ok(d: Option<&AgentDefault>) -> Value {
         Some(d) => json!({"type": "agent_default_ok", "api": API, "agent": d.agent, "cwd": d.cwd, "args": d.args}),
         None => json!({"type": "agent_default_ok", "api": API, "agent": null, "cwd": null, "args": ""}),
     }
+}
+
+/// Opções conhecidas de cada agente (autocomplete do campo "Comandos extras").
+fn known_args(agent: &str) -> &'static [&'static str] {
+    const CLAUDE: &[&str] = &["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"];
+    match agent {
+        "claude" | "openclaude" => CLAUDE,
+        "codex" => &["--model gpt-5", "--full-auto", "--search", "--sandbox read-only", "--sandbox workspace-write", "--ask-for-approval on-request"],
+        _ => &[],
+    }
+}
+/// Usados primeiro, depois os conhecidos; sem vazios, repetidos ou args fora da regra do `agent_create`.
+pub fn agent_args_ok(agent: &str, used: &[String]) -> Value {
+    let mut out: Vec<String> = vec![];
+    for a in used.iter().map(|a| a.trim()).chain(known_args(agent).iter().copied()) {
+        if !a.is_empty() && crate::proto::valid_args(a) && !out.iter().any(|o| o == a) { out.push(a.to_owned()); }
+    }
+    let mut extra = Map::new();
+    extra.insert("agent".into(), agent.into());
+    fit("agent_args_ok", "args", out.into_iter().map(Value::from).collect(), extra)
 }
 
 /// `%USERPROFILE%\.ssh` deste usuário (`None` sem perfil).
@@ -608,6 +638,18 @@ mod tests {
             Agent { session_id: sid(), agent: "claude".into(), args: "--model opus".into(), label: "api".into(), cwd: Some("C:/proj/api".into()), state: AgentState::Running, last_activity_ms: 1_700_000_000_000, profile_id: None, waiting: true },
             Agent { session_id: uuid_v4_lower("2f1e2d3c-4b5a-4968-8778-695a4b3c2d1e").unwrap(), agent: "codex".into(), args: String::new(), label: String::new(), cwd: None, state: AgentState::Saved, last_activity_ms: 5, profile_id: None, waiting: false },
         ]
+    }
+
+    #[test]
+    fn agent_args_sugestoes() {
+        let req = |a: Value| parse_control(&json!({"v":1,"connection_id":CID,"request_id":RID,"type":"agent_args","api":1,"agent":a}).to_string(), CID);
+        assert!(matches!(req("codex".into()), Ok(Control::Request { req: P::Extra(Req::AgentArgs(_)), .. })));
+        assert!(matches!(req("bash".into()), Err(InvalidMessage)), "agente desconhecido");
+        let used = ["--model haiku".to_string(), " --verbose ".into(), "--model haiku".into(), "& calc".into(), String::new()];
+        let v = agent_args_ok("claude", &used);
+        let a: Vec<&str> = v["args"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        assert_eq!(&a[..3], ["--model haiku", "--verbose", "--model opus"], "usados primeiro, sem repetir nem args perigosos");
+        assert_eq!(a.iter().filter(|x| **x == "--verbose").count(), 1);
     }
 
     #[test]
