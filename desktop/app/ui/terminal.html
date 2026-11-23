@@ -365,14 +365,20 @@
 
 <div class="dialog-scrim" id="ai-scrim" hidden>
   <dialog open aria-modal="true" aria-labelledby="ai-t" id="ai">
-    <h3 id="ai-t">Agente de IA</h3>
-    <label>Agente <select id="ai-agent"><option>claude</option><option>openclaude</option><option>codex</option></select></label>
-    <label>Pasta <input id="ai-cwd" placeholder="C:\projetos\app"></label>
-    <div id="ai-dirs" class="ai-dirs" aria-label="Pastas"></div>
-<label>Comandos extras <input id="ai-args" list="ai-sug" placeholder="--model opus"></label>
-<datalist id="ai-sug"></datalist>
-    <label><input type="checkbox" id="ai-def"> Salvar como padrão</label>
-    <div class="actions"><button type="button" id="ai-cancel">Cancelar</button><button type="button" class="btn-primary" id="ai-ok">Iniciar</button></div>
+    <h3 id="ai-t">Novo agente</h3>
+    <label for="ai-agent">Agente</label>
+    <select id="ai-agent"><option value="claude">Claude</option><option value="openclaude">OpenClaude</option><option value="codex">Codex</option></select>
+    <label for="ai-cwd" class="gap">Pasta</label>
+    <div class="inline"><input type="text" class="mono" id="ai-cwd" list="ai-cwd-sug" autocomplete="off" spellcheck="false" placeholder="C:\projetos\app" aria-describedby="ai-path">
+      <button type="button" id="ai-pick" aria-label="Procurar pasta" aria-controls="ai-dirs" aria-expanded="false">📁</button></div>
+    <datalist id="ai-cwd-sug"></datalist>
+    <p class="muted mono ai-path" id="ai-path" aria-live="polite"></p>
+    <div id="ai-dirs" class="ai-dirs" aria-label="Pastas" hidden></div>
+    <label for="ai-args" class="gap">Comandos extras</label>
+    <input type="text" class="mono" id="ai-args" list="ai-sug" autocomplete="off" spellcheck="false" placeholder="--model opus">
+    <datalist id="ai-sug"></datalist>
+    <label class="gap"><input type="checkbox" id="ai-def"> Salvar como padrão deste PC</label>
+    <div class="actions"><button type="button" id="ai-cancel">Cancelar</button><button type="button" class="btn-primary" id="ai-ok">▶ Iniciar</button></div>
   </dialog>
 </div>
 <div class="dialog-scrim" id="ssh-scrim" hidden>

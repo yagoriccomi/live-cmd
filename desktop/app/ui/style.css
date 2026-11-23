@@ -309,6 +309,8 @@ input.rename { font:inherit; padding:0 var(--sp-4); width:12em; }
 :root:not([data-theme=light]):not([data-theme=contrast]) .hist-panel { background:transparent; backdrop-filter:blur(30px); }
 :root:not([data-theme=light]):not([data-theme=contrast]) .hist-item { box-shadow:var(--glow); }
 :root:not([data-theme=light]):not([data-theme=contrast]) .hist-item mark { background:linear-gradient(135deg, var(--accent), #ff4fd8); }
-.ai-dirs { max-height:12em; overflow:auto; display:flex; flex-direction:column; border:1px solid var(--border, #444); margin:var(--sp-4) 0; }
+.ai-dirs { max-height:12em; overflow:auto; display:flex; flex-direction:column; border:1px solid var(--border, #444); border-radius:var(--r-10); margin:var(--sp-4) 0; }
+.ai-dirs[hidden] { display:none; }
+.ai-path { margin:var(--sp-4) 0 0; overflow-wrap:anywhere; min-height:1.2em; }
 .ai-dirs button { text-align:left; background:none; border:0; padding:var(--sp-2) var(--sp-6); color:inherit; font:inherit; cursor:pointer; }
 .ai-dirs button:hover, .ai-dirs button:focus { background:rgba(127,127,127,.2); }

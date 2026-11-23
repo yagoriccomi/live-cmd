@@ -180,3 +180,62 @@
   $("screen").addEventListener("focus", () => { if (!panel.hidden) hide(false); });
   panel.onkeydown = (e) => { if (e.key === "Escape") { e.preventDefault(); hide(); } };
 })();
+
+// Formulário "Novo agente" (modelo B, #17). Padrão (agente + comandos extras) mora no host da conexão (#15);
+// a pasta vem das recentes (sessões de agente registradas para essa conexão).
+// ponytail: listas de sugestão (#ai-cwd-sug, #ai-sug) ficam vazias/fixas; o autocomplete é o ticket 020.
+const AI_SUG = {
+  claude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
+  openclaude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
+  codex: ["--model gpt-5", "--full-auto", "--search", "--sandbox read-only", "--sandbox workspace-write", "--ask-for-approval on-request"],
+};
+async function newAi(conn) {
+  localStorage.removeItem("ai-default"); // resto de versão antiga; o padrão agora é do host
+  const [d, list] = await Promise.all([
+    invoke("agent_default_get", { conn }).catch(() => null),
+    invoke("agent_list", { conn }).catch(() => null),
+  ]);
+  const recent = [...new Set((list?.groups || []).map((g) => g.path).filter(Boolean))];
+  const opt = (v) => { const o = el("option"); o.value = v; return o; };
+  const cwdIn = $("ai-cwd"), dirs = $("ai-dirs"), pick = $("ai-pick");
+  $("ai-agent").value = d?.agent || "claude";
+  if (!$("ai-agent").value) $("ai-agent").value = "claude";
+  cwdIn.value = recent[0] || ""; $("ai-args").value = d?.args || ""; $("ai-def").checked = false;
+  $("ai-cwd-sug").replaceChildren(...recent.map(opt));
+  const sug = () => $("ai-sug").replaceChildren(...(AI_SUG[$("ai-agent").value] || []).map(opt));
+  $("ai-agent").onchange = sug; sug();
+  // Caminho completo embaixo do campo: o que vai para o host, sem barra final.
+  const path = () => { $("ai-path").textContent = cwdIn.value.trim().replace(/[\/]+$/, "") || "Pasta inicial do perfil (~)"; };
+  // 📁 abre a navegação: subpastas no PC da conexão; clique entra, ".." sobe, raiz lista as unidades.
+  const browse = async (p) => {
+    let ds = [];
+    try { ds = await invoke("term_dirs", { conn, path: p }); } catch (e) { banner(msg(e), "err"); }
+    const base = p.replace(/[\/]+$/, ""), up = base.includes("\\") ? base.slice(0, base.lastIndexOf("\\") + 1) : "";
+    const item = (name, to) => { const b = el("button", null, name); b.type = "button"; b.onclick = () => { cwdIn.value = to; path(); browse(to); }; return b; };
+    dirs.replaceChildren(...(p ? [item("..", up)] : []), ...ds.map((x) => item(x, p ? base + "\\" + x : x)));
+  };
+  const show = (on) => { dirs.hidden = !on; pick.setAttribute("aria-expanded", on); if (on) browse(cwdIn.value.trim()); };
+  pick.onclick = () => show(dirs.hidden);
+  cwdIn.oninput = path;
+  cwdIn.onchange = () => { path(); if (!dirs.hidden) browse(cwdIn.value.trim()); };
+  show(false); path();
+  $("ai-scrim").hidden = false; cwdIn.focus();
+  const ok = await new Promise((done) => {
+    const end = (v) => { $("ai-scrim").hidden = true; done(v); };
+    $("ai-ok").onclick = () => end(true); $("ai-cancel").onclick = () => end(false);
+    trap($("ai"), () => end(false));
+  });
+  if (!ok) return;
+  const agent = $("ai-agent").value, cwd = cwdIn.value.trim().replace(/[\/]+$/, "") || null, args = $("ai-args").value.trim();
+  if ($("ai-def").checked) await invoke("agent_default_set", { conn, agent, args }).catch((e) => banner(msg(e), "err"));
+  const p = conns[conn].profiles[0];
+  if (!p) return banner(msg("NOT_FOUND"), "err");
+  // Grupo = nome da pasta raiz.
+  const label = `${(cwd || "").split(/[\/]/).filter(Boolean).pop() || "~"} · ${agent}`.slice(0, 64);
+  const { cols, rows } = size();
+  try {
+    const sid = await invoke("term_create", { conn, profileId: p.profile_id, label, cols, rows, cwd, agent, args });
+    await openSession(conn, { session_id: sid, label, state: "running" });
+    refresh(conn);
+  } catch (e) { banner(msg(e), "err"); }
+}

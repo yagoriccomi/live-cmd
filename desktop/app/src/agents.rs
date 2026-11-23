@@ -7,14 +7,19 @@ use tauri::AppHandle;
 
 use crate::{settings, term};
 
-pub use live_cmd_echo::appdata::agents::{AiDefault, Agent, read, read_default, record, remove_entry, save_default};
+pub use live_cmd_echo::appdata::agents::{Agent, read, record, remove_entry};
 
-#[tauri::command]
-pub fn agent_default_get() -> Option<AiDefault> { read_default(&settings::data_dir().ok()?) }
+/// Padrão do agente (agente + comandos extras) salvo no host da conexão (#15):
+/// todo cliente do mesmo PC lê o mesmo. `null` quando nunca foi salvo.
+#[tauri::command(async)]
+pub fn agent_default_get(app: AppHandle, conn: String) -> Result<Value, String> {
+    let v = term::client(&app, &conn)?.request(json!({ "type": "agent_default_get" }))?;
+    Ok(if v["agent"].is_string() { json!({ "agent": v["agent"], "args": v["args"] }) } else { Value::Null })
+}
 
-#[tauri::command]
-pub fn agent_default_set(agent: String, cwd: Option<String>, args: String) -> Result<AiDefault, String> {
-    save_default(&settings::data_dir()?, AiDefault { agent, cwd, args })
+#[tauri::command(async)]
+pub fn agent_default_set(app: AppHandle, conn: String, agent: String, args: String) -> Result<(), String> {
+    term::client(&app, &conn)?.request(json!({ "type": "agent_default_set", "agent": agent, "cwd": null, "args": args })).map(drop)
 }
 
 /// Pasta raiz do agrupamento: (chave normalizada, nome exibido). Sem pasta, a pasta inicial do perfil ("~").

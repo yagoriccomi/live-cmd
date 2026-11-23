@@ -682,55 +682,7 @@ function profileMenu(anchor, conn) {
   menu(anchor, p.length ? [...p.map((x) => [x.label, () => newSession(conn, x)]), ["Agente de IA…", () => newAi(conn)]] : [["Nenhum perfil disponível."]]);
 }
 
-const AI_SUG = {
-  claude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
-  openclaude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
-  codex: ["--model gpt-5", "--full-auto", "--search", "--sandbox read-only", "--sandbox workspace-write", "--ask-for-approval on-request"],
-};
-// Agente de IA: pergunta agente, pasta e args; o host salva e retoma pelo id da sessão.
-async function newAi(conn) {
-  // "Salvar como padrão" fica no PC (`agent-default.json`), o mesmo que o celular lê e grava.
-  // Versão anterior guardava no localStorage: migra uma vez.
-  let d = await invoke("agent_default_get").catch(() => null);
-  const old = localStorage.getItem("ai-default");
-  if (!d && old) {
-    try { const o = JSON.parse(old); d = await invoke("agent_default_set", { agent: o.agent || "claude", cwd: o.cwd || null, args: o.args || "" }); } catch { d = null; }
-  }
-  if (old) localStorage.removeItem("ai-default");
-  d = d || {};
-  $("ai-agent").value = d.agent || "claude"; $("ai-cwd").value = d.cwd || ""; $("ai-args").value = d.args || ""; $("ai-def").checked = false;
-  const sug = () => $("ai-sug").replaceChildren(...(AI_SUG[$("ai-agent").value] || []).map((v) => { const o = el("option"); o.value = v; return o; }));
-  $("ai-agent").onchange = sug; sug();
-  // Navegação: subpastas no PC da conexão; clique entra, ".." sobe, raiz lista as unidades.
-  const browse = async (path) => {
-    let dirs = [];
-    try { dirs = await invoke("term_dirs", { conn, path }); } catch (e) { banner(msg(e), "err"); }
-    const base = path.replace(/[\/]+$/, ""), up = base.includes("\\") ? base.slice(0, base.lastIndexOf("\\") + 1) : "";
-    const item = (name, to) => { const b = el("button", null, name); b.type = "button"; b.onclick = () => { $("ai-cwd").value = to; browse(to); }; return b; };
-    $("ai-dirs").replaceChildren(...(path ? [item("..", up)] : []), ...dirs.map((d) => item(d, path ? base + "\\" + d : d)));
-  };
-  $("ai-cwd").onchange = () => browse($("ai-cwd").value.trim());
-  browse($("ai-cwd").value.trim());
-  $("ai-scrim").hidden = false; $("ai-cwd").focus();
-  const ok = await new Promise((done) => {
-    const end = (v) => { $("ai-scrim").hidden = true; done(v); };
-    $("ai-ok").onclick = () => end(true); $("ai-cancel").onclick = () => end(false);
-    trap($("ai"), () => end(false));
-  });
-  if (!ok) return;
-  const agent = $("ai-agent").value, cwd = $("ai-cwd").value.trim() || null, args = $("ai-args").value.trim();
-  if ($("ai-def").checked) await invoke("agent_default_set", { agent, cwd, args }).catch((e) => banner(msg(e), "err"));
-  const p = conns[conn].profiles[0];
-  if (!p) return banner(msg("NOT_FOUND"), "err");
-  // Grupo = nome da pasta raiz.
-  const label = `${(cwd || "").split(/[\/]/).filter(Boolean).pop() || "~"} · ${agent}`.slice(0, 64);
-  const { cols, rows } = size();
-  try {
-    const sid = await invoke("term_create", { conn, profileId: p.profile_id, label, cols, rows, cwd, agent, args });
-    await openSession(conn, { session_id: sid, label, state: "running" });
-    refresh(conn);
-  } catch (e) { banner(msg(e), "err"); }
-}
+// Agente de IA: newAi(conn) mora em agents.js (formulário do ticket 019).
 
 // ---------- Diálogos ----------
 function trap(dialog, onEscape) {
