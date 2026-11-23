@@ -545,7 +545,7 @@ function sessionItem(conn, s) {
   b.type = "button";
   const key = conn + "/" + s.session_id;
   if (key === active) b.setAttribute("aria-current", "true");
-  const name = el("span", "card-t", s.label || "Terminal");
+  const name = el("span", "card-t", (s.label || "Terminal").replace(/\\{2,}/g, "\\")); // host remoto manda barras escapadas
   name.ondblclick = (e) => { e.stopPropagation(); renameSession(conn, s.session_id, name); };
   // Visual V1 Aurora: ícone pelo tipo, pasta atual (OSC 7) e estado por extenso.
   const kind = sessionKind(s.label);

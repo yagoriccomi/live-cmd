@@ -88,6 +88,8 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .card-st { font-size:11px; font-weight:700; white-space:nowrap; margin-left:auto; }
 .card-st.muted { color:var(--off); }
 [aria-current=true] .card-s, [aria-current=true] .card-st { color:inherit; }
+[aria-current=true] :is(.card-t, .chip, .tile) { color:inherit; } [aria-current=true] .chip { background:rgb(42 20 96 / .12); }
+::placeholder { color:var(--text-muted); opacity:1; }
 
 /* Coluna principal */
 .term-body .term-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:16px; }
