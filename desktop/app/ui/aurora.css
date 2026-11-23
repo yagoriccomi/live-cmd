@@ -397,3 +397,10 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .titlebar .tb-btns button:hover, .titlebar .tb-btns button:focus-visible { background:rgba(255,255,255,.1); color:var(--text, #fff); }
 .titlebar .tb-btns .tb-close:hover, .titlebar .tb-btns .tb-close:focus-visible { background:#c42b1c; color:#fff; }
 .term-body .term-layout { top:36px; }
+/* #9/#10: grupos e arraste da lista de sessões */
+.sess-group { list-style:none; margin-top:var(--sp-8); }
+.sess-group > .cards { padding:0; margin:var(--sp-4) 0 0; }
+.group-h { display:block; width:100%; text-align:left; border:0; background:none; padding:var(--sp-2) var(--sp-4); color:var(--text-muted); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.group-new { list-style:none; margin-top:var(--sp-8); padding:var(--sp-8); border:1px dashed var(--border); border-radius:var(--r-8); text-align:center; }
+.dragging { opacity:.5; }
+.drop { outline:2px dashed var(--accent); outline-offset:var(--sp-2); border-radius:var(--r-8); }

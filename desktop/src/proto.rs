@@ -85,6 +85,9 @@ pub enum Req {
     /// Subpastas de `path` (vazio: unidades) para escolher a pasta do agente.
     Dirs(String),
     Stats,
+    /// Ordem, grupos e nomes manuais da lista de sessões (#9–#11): objeto JSON opaco salvo em `layout.json`.
+    LayoutGet,
+    LayoutSet(Value),
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Control {
@@ -131,6 +134,8 @@ pub fn parse_control(text: &str, connection_id: &str) -> R<Control> {
         }
         "session_list" => { fields(&[], &["info"])?; Req::List { info: match o.get("info") { None => false, Some(v) => v.as_bool().ok_or(InvalidMessage)? } } }
         "sys_stats" => { fields(&[], &[])?; Req::Stats }
+        "layout_get" => { fields(&[], &[])?; Req::LayoutGet }
+        "layout_set" => { fields(&["layout"], &[])?; Req::LayoutSet(Some(o["layout"].clone()).filter(Value::is_object).ok_or(InvalidMessage)?) }
         "dir_list" => {
             fields(&["path"], &[])?;
             let p = s("path")?;
@@ -410,6 +415,9 @@ mod tests {
         let cr = |extra: Value| { let mut m = json!({"v":1,"connection_id":CID,"request_id":RID,"type":"session_create","profile_id":"p","cols":80,"rows":24}); for (k, v) in extra.as_object().unwrap() { m[k] = v.clone(); } parse_control(&m.to_string(), CID) };
         assert!(matches!(cr(json!({"agent":"claude","resume_id":SID})), Ok(Control::Request { req: Req::Create { resume_id: Some(r), .. }, .. }) if r == sid()));
         assert!(matches!(cr(json!({"resume_id":SID})), Err(InvalidMessage)), "resume_id sem agent");
+        let ly = |l: Value| parse_control(&json!({"v":1,"connection_id":CID,"request_id":RID,"type":"layout_set","layout":l}).to_string(), CID);
+        assert!(matches!(ly(json!({"order":[]})), Ok(Control::Request { req: Req::LayoutSet(_), .. })));
+        assert!(matches!(ly(json!([1])), Err(InvalidMessage)), "layout precisa ser objeto");
         assert!(matches!(cr(json!({"agent":"claude","resume_id":"x"})), Err(InvalidMessage)));
         let m: Value = serde_json::from_str(&encode_control(CID, Some(RID), json!({"type":"replay_end","session_id":SID,"offset":u64s(u64::MAX)}))).unwrap();
         assert_eq!(m, json!({"v":1,"connection_id":CID,"request_id":RID,"type":"replay_end","session_id":SID,"offset":"18446744073709551615"}));

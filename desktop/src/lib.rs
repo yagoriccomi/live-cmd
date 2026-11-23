@@ -415,8 +415,21 @@ impl Hub {
             }
             Req::Dirs(path) => json!({"type":"dir_list_ok","dirs":list_dirs(&path)}),
             Req::Stats => { let mut v = stats::sys_stats(); v["type"] = "sys_stats_ok".into(); v }
+            // Ao lado de `sessions.json`; sem disco (testes) não guarda.
+            Req::LayoutGet => {
+                let l = self.layout_path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice::<Value>(&b).ok()).filter(Value::is_object);
+                json!({"type":"layout_get_ok","layout":l.unwrap_or_else(|| json!({}))})
+            }
+            Req::LayoutSet(l) => {
+                if let Some(p) = self.layout_path() {
+                    let tmp = p.with_extension("json.tmp");
+                    std::fs::write(&tmp, l.to_string()).and_then(|_| std::fs::rename(&tmp, &p)).map_err(|_| auth::Error::IoError)?;
+                }
+                json!({"type":"layout_set_ok"})
+            }
         })
     }
+    fn layout_path(&self) -> Option<PathBuf> { self.store.as_ref().map(|p| p.with_file_name("layout.json")) }
     /// Telas do celular (`extras.rs`). Dados das fatias desktop vêm de `extras::provider()`.
     fn extra(&mut self, r: extras::Req, now: u64) -> std::result::Result<Value, auth::Error> {
         use extras::Req as X;
@@ -603,7 +616,9 @@ fn git_info(dir: &std::path::Path) -> Option<Value> {
     };
     let branch = run(&["branch", "--show-current"])?.trim().to_owned();
     let dirty = run(&["status", "--porcelain"]).map_or(0, |s| s.lines().count());
-    Some(json!({"branch": branch, "dirty": dirty}))
+    // Raiz do projeto: agrupa as sessões na lista (#10).
+    let root = run(&["rev-parse", "--show-toplevel"]).map(|s| s.trim().to_owned());
+    Some(json!({"branch": branch, "dirty": dirty, "root": root}))
 }
 /// Perfil gravado das sessões SSH (o comando sai de `Saved::ssh`, não de `profiles.json`).
 const SSH_PROFILE: &str = "ssh";
