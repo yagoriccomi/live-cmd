@@ -113,7 +113,7 @@
     const detail = el("span", "muted small mono", short);
     detail.title = `${full} · ${x.dir}`;
     info.append(el("span", "ag-label", name), detail, el("span", "sr-only", `${full}. Pasta ${x.dir}`));
-    const go = el("button", isLive(x) ? null : "btn-primary", isLive(x) ? "Abrir" : "Retomar");
+    const go = el("button", null, isLive(x) ? "Abrir" : "Retomar");
     go.type = "button";
     go.disabled = x.status === "desconhecido";
     go.setAttribute("aria-label", `${go.textContent} ${name}`);
