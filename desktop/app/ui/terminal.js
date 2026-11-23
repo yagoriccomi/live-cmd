@@ -23,6 +23,8 @@ const MSG = {
 };
 const msg = (code) => MSG[code] || "Algo deu errado. Tente de novo.";
 
+// #44: badges manuais (salvas no host junto do layout, celular lê o mesmo `layout.json`).
+const BADGES = { wait: ["⏳", "Em espera"], lock: ["🔒", "Travado"], me: ["❗", "Precisa de mim"], run: ["▶", "Em andamento"], done: ["✓", "Concluído"], err: ["✕", "Erro"], fav: ["★", "Favorito"] };
 const conns = { [LOCAL]: { name: "Este PC", status: { state: "ready" }, sessions: [], profiles: [] } };
 let remoteOrder = [];
 const tabs = [];       // { key, conn, sid, label, title, exited, split?, max? }  split = registro igual ao da aba (painel direito/inferior); max = 0|1 painel maximizado
@@ -125,7 +127,8 @@ function renderTabs() {
     // Tooltip host · nome em todas as guias (#42); no dividido, os dois na ordem dos painéis.
     const tip = (r) => r.conn === LOCAL ? "Este PC · " + (r.label || "Terminal") : r.title;
     b.title = t.split ? tip(t) + " | " + tip(t.split) : tip(t);
-    const name = el("span", "tab-name", (t.label || "Terminal") + (t.split ? " | " + (t.split.label || "Terminal") : ""));
+    const bi = (r) => BADGES[layouts[r.conn]?.badge?.[r.sid]]?.[0], bt = [t, t.split].filter(Boolean).map(bi).filter(Boolean).join("");
+  const name = el("span", "tab-name", (bt ? bt + " " : "") + (t.label || "Terminal") + (t.split ? " | " + (t.split.label || "Terminal") : ""));
     if (t.conn !== LOCAL) name.setAttribute("aria-label", t.title);
     name.ondblclick = (e) => { e.stopPropagation(); renameSession(t.conn, t.sid, name, t.label); };
     b.append(name);
@@ -611,7 +614,10 @@ function sessionItem(conn, s) {
     if (ms) { const d = new Date(ms).toLocaleString("pt-BR"); chip("🕒 " + d, d, "Criado em"); }
     txt.append(chips);
   }
-  const st = el("span", s.state === "exited" ? "card-st muted" : "card-st dot-ok", s.state === "exited" ? "● parado" : "● ativo");
+  // #44: badge manual no lugar de "● ativo"; online/offline fica no cabeçalho do host (#46).
+  const bd = BADGES[layoutOf(conn).badge[s.session_id]];
+  const st = el("span", "card-st" + (s.state === "exited" ? " muted" : ""), s.state === "exited" ? "● parado" : bd ? bd[0] : "");
+  if (bd) st.title = bd[1];
   b.append(el("span", "tile", KIND_ICON[kind]), txt, st);
   b.firstChild.setAttribute("aria-hidden", "true");
   if (busy.has(key)) b.append(actDot());
@@ -644,6 +650,8 @@ function cardMenu(conn, s, name, b, cwd, git) {
     ["Copiar caminho", cwd && (() => copy(cwd)), "", "⧉"],
     ["Copiar nome da branch", git?.branch && (() => copy(git.branch)), "", "⎇"],
     ["Iniciar agente aqui", () => newAi(conn, cwd), "", "🤖"],
+    "#Badge",
+    ...Object.entries({ "": ["", "Nenhuma"], ...BADGES }).map(([k, [ic, lb]]) => [(L.badge[s.session_id] || "") === k ? "✓ " + lb : lb, () => { if (k) L.badge[s.session_id] = k; else delete L.badge[s.session_id]; saveSideOrder(conn); renderSidebar(); renderTabs(); }, "", ic]),
     "#Organizar",
     ["Mover para grupo…", () => { let n = 1; while (Object.values(L.group).includes("Grupo " + n)) n++; menu(b, [...groups.map((x) => [baseName(x) || x, () => move(x)]), ["Novo grupo", () => move("Grupo " + n)]]); }, "", "▤"],
     "#Perigo",
@@ -658,13 +666,13 @@ function splitCard(conn, s) {
 }
 
 // ---------- #9/#10/#37: grupos, arraste e ordem (salvos no host: `layout_get`/`layout_set`) ----------
-// Layout por conexão: { order: [sid], group: {sid: grupo manual}, named: {sid: true}, pinned: grupo }.
+// Layout por conexão: { order: [sid], group: {sid: grupo manual}, named: {sid: true}, badge: {sid: chave}, pinned: grupo }.
 const layouts = {};
 let dragFrom = null;
 const baseName = (p) => (p || "").replace(/\\{2,}/g, "\\").split(/[\\/]/).filter(Boolean).pop() || "";
 function layoutOf(conn) {
   const L = layouts[conn] ||= {};
-  L.order ||= []; L.group ||= {}; L.named ||= {};
+  L.order ||= []; L.group ||= {}; L.named ||= {}; L.badge ||= {};
   return L;
 }
 function saveSideOrder(conn) {
