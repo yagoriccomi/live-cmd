@@ -1477,7 +1477,7 @@ window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(async ({ payload })
   }
   if (!t || t.conn === LOCAL) { send(payload.paths.map((p) => `"${p}"`).join(" "), t); pane().focus(); return; }
   for (const [i, path] of payload.paths.entries()) {
-    const name = path.split(/[\/]/).pop();
+    const name = path.split(/[\\/]/).pop();
     banner(`Enviando ${name} (${i + 1}/${payload.paths.length})…`);
     try { await invoke("term_upload", { conn: t.conn, path, sessionId: t.sid }); }
     catch (e) { return banner(`Falha ao enviar ${name}: ${msg(e)}`, "err"); }
@@ -1516,7 +1516,8 @@ $("keys-list").prepend(...Object.entries(SHORTCUTS).map(([a, [d]]) => {
     const n = keyName(e);
     if (!n) return;
     e.preventDefault(); e.stopPropagation();
-    if (n !== "Escape") { binds[a] = n; localStorage.setItem("term-keys", JSON.stringify(binds)); }
+    // Tecla sem Ctrl/Alt (Enter, letras…) é do terminal: só F1–F12 passam sozinhas.
+    if (n !== "Escape" && (e.ctrlKey || e.altKey || /^F\d+$/.test(e.key))) { binds[a] = n; localStorage.setItem("term-keys", JSON.stringify(binds)); }
     b.textContent = binds[a] || "—"; b.onkeydown = null;
   }; };
   const li = el("li");

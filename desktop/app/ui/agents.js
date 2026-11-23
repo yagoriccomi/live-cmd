@@ -235,12 +235,12 @@ async function newAi(conn, dir) {
   };
   $("ai-agent").onchange = sug; sug();
   // Caminho completo embaixo do campo: o que vai para o host, sem barra final.
-  const path = () => { $("ai-path").textContent = cwdIn.value.trim().replace(/[\/]+$/, "") || "Pasta inicial do perfil (~)"; };
+  const path = () => { $("ai-path").textContent = cwdIn.value.trim().replace(/[\\/]+$/, "") || "Pasta inicial do perfil (~)"; };
   // 📁 abre a navegação: subpastas no PC da conexão; clique entra, ".." sobe, raiz lista as unidades.
   const browse = async (p) => {
     let ds = [];
     try { ds = await invoke("term_dirs", { conn, path: p }); } catch (e) { banner(msg(e), "err"); }
-    const base = p.replace(/[\/]+$/, ""), up = base.includes("\\") ? base.slice(0, base.lastIndexOf("\\") + 1) : "";
+    const base = p.replace(/[\\/]+$/, ""), up = base.includes("\\") ? base.slice(0, base.lastIndexOf("\\") + 1) : "";
     const item = (name, to) => { const b = el("button", null, name); b.type = "button"; b.onclick = () => { cwdIn.value = to; path(); browse(to); }; return b; };
     dirs.replaceChildren(...(p ? [item("..", up)] : []), ...ds.map((x) => item(x, p ? base + "\\" + x : x)));
   };
@@ -268,12 +268,12 @@ async function newAi(conn, dir) {
     trap($("ai"), () => end(false));
   });
   if (!ok) return;
-  const agent = $("ai-agent").value, cwd = cwdIn.value.trim().replace(/[\/]+$/, "") || null, args = $("ai-args").value.trim();
+  const agent = $("ai-agent").value, cwd = cwdIn.value.trim().replace(/[\\/]+$/, "") || null, args = $("ai-args").value.trim();
   if ($("ai-def").checked) await invoke("agent_default_set", { conn, agent, args }).catch((e) => banner(msg(e), "err"));
   const p = conns[conn].profiles[0];
   if (!p) return banner(msg("NOT_FOUND"), "err");
   // Grupo = nome da pasta raiz.
-  const label = `${(cwd || "").split(/[\/]/).filter(Boolean).pop() || "~"} · ${agent}`.slice(0, 64);
+  const label = `${(cwd || "").split(/[\\/]/).filter(Boolean).pop() || "~"} · ${agent}`.slice(0, 64);
   const { cols, rows } = size();
   try {
     const sid = await invoke("term_create", { conn, profileId: p.profile_id, label, cols, rows, cwd, agent, args });
