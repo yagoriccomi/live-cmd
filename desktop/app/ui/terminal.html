@@ -259,16 +259,13 @@
             <button type="button" class="chip" data-go="cfg-look" aria-pressed="true">Aparência</button>
             <button type="button" class="chip" data-go="cfg-term" aria-pressed="false">Terminal</button>
             <button type="button" class="chip" data-go="cfg-keys" aria-pressed="false">Atalhos</button>
-            <button type="button" class="chip" data-open="nav-agents">Agentes</button>
+            <button type="button" class="chip" data-go="cfg-about" aria-pressed="false">Sobre</button>
             <button type="button" class="chip pane-x" id="cfg-x" aria-label="Fechar configurações (Esc)">×</button>
           </div>
           <ul class="cards cfg-nav" aria-label="Seções">
             <li><button type="button" class="card on" data-go="cfg-look" aria-current="true"><span class="tile" aria-hidden="true">◐</span><span class="card-txt"><span class="card-t">Aparência</span><span class="card-s mono">tema, vidro, fontes</span></span><span class="card-st ok" id="cfg-look-st">● padrão</span></button></li>
-            <li><button type="button" class="card" data-go="cfg-term"><span class="tile" aria-hidden="true">›_</span><span class="card-txt"><span class="card-t">Terminal</span><span class="card-s mono">shell padrão, rolagem</span></span><span class="card-st ok">● ok</span></button></li>
+            <li><button type="button" class="card" data-go="cfg-term"><span class="tile" aria-hidden="true">›_</span><span class="card-txt"><span class="card-t">Terminal</span><span class="card-s mono">shells, rolagem</span></span><span class="card-st ok">● ok</span></button></li>
             <li><button type="button" class="card" data-go="cfg-keys"><span class="tile" aria-hidden="true">⌘</span><span class="card-txt"><span class="card-t">Atalhos</span><span class="card-s mono" id="cfg-keys-n">atalhos</span></span><span class="card-st ok">● ok</span></button></li>
-            <li><button type="button" class="card" data-open="nav-agents"><span class="tile" aria-hidden="true">✦</span><span class="card-txt"><span class="card-t">Agentes</span><span class="card-s mono">claude, codex</span></span><span class="card-st ok">● ok</span></button></li>
-            <li><button type="button" class="card" data-open="ssh-open"><span class="tile" aria-hidden="true">⇄</span><span class="card-txt"><span class="card-t">SSH</span><span class="card-s mono">chaves e hosts</span></span><span class="card-st ok">● ok</span></button></li>
-            <li><button type="button" class="card" data-go="cfg-srv"><span class="tile" aria-hidden="true">▣</span><span class="card-txt"><span class="card-t">Celular</span><span class="card-s mono">pareamento</span></span><span class="card-st ok">● ok</span></button></li>
             <li><button type="button" class="card" data-go="cfg-about"><span class="tile" aria-hidden="true">↺</span><span class="card-txt"><span class="card-t">Sobre</span><span class="card-s mono">versão e atualizações</span></span><span class="card-st ok">● ok</span></button></li>
           </ul>
         </div>
@@ -323,12 +320,13 @@
               <p id="sb-e" class="field-error" hidden>Use um número inteiro de 100 a 100000.</p>
               <p id="sb-msg" class="ok-text" role="status"></p>
             </fieldset>
-            <fieldset><legend>Perfis de terminal</legend>
+            <fieldset id="cfg-shells"><legend>Shells</legend>
+              <p class="muted small">Detectados no PC entram sozinhos em "+ Nova sessão". Cadastre aqui shells extras ou ajuste os detectados.</p>
               <div class="alert alert-warn" role="alert" id="prof-err" hidden><p></p></div>
               <p class="muted" id="prof-default" hidden>Usando perfis padrão (PowerShell e WSL).</p>
               <table id="prof-table" hidden><thead><tr><th scope="col">Nome</th><th scope="col">Comando</th><th scope="col"><span class="sr-only">Ações</span></th></tr></thead><tbody id="prof-body"></tbody></table>
               <datalist id="prof-shells"></datalist>
-              <p class="inline"><button type="button" id="prof-add">Adicionar perfil</button><button type="button" class="btn-primary" id="prof-save">Salvar perfis</button></p>
+              <p class="inline"><button type="button" id="prof-add">Adicionar shell</button><button type="button" class="btn-primary" id="prof-save">Salvar perfis</button></p>
               <p class="field-error" role="alert" id="prof-e" hidden>Cada perfil precisa de nome (até 40 caracteres) e comando, sem caracteres de controle.</p>
               <p class="ok-text" role="status" id="prof-msg"></p>
               <button type="button" id="open-dir">Abrir pasta de configuração</button>
