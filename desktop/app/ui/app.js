@@ -291,6 +291,8 @@ $("prof-save").onclick = async () => {
     $("prof-body").replaceChildren(...saved.map(profRow));
     $("prof-default").hidden = true; $("prof-err").hidden = true;
     $("prof-msg").textContent = "Perfis salvos. Valem para os próximos terminais.";
+    // O host reinicia para reler os perfis: atualiza o menu "+ Nova sessão" quando ele voltar.
+    for (const ms of [1500, 4000]) setTimeout(() => window.refresh?.("local"), ms);
   } catch { $("prof-e").hidden = false; }
 };
 

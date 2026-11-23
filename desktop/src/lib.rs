@@ -869,7 +869,19 @@ async fn c3_message(ch: &Arc<dyn DataChannel>, id: &str, host: &Host, l: &mut Li
     Ok(None)
 }
 /// Perfis do host (`profiles.json` ao lado da trust store); sem arquivo, pwsh e WSL com integração OSC 133/7.
+/// Mais os shells detectados ([`appdata::settings::detect_shells`]) cujo comando ainda não está na lista.
 fn profiles(path: &std::path::Path) -> Result<Vec<(String, Profile)>> {
+    let mut v = profiles_base(path)?;
+    for (label, command) in appdata::settings::detect_shells() {
+        let exe = command.split(' ').next().unwrap_or_default().to_ascii_lowercase();
+        if v.iter().any(|(_, p)| p.command.eq_ignore_ascii_case(&command) || (command == exe && p.command.to_ascii_lowercase().starts_with(&exe))) { continue; }
+        let id = format!("det-{}", label.to_ascii_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>());
+        if v.iter().any(|(i, _)| *i == id) { continue; }
+        v.push((id, with_cmd_prompt(Profile { label, command, osc: false })));
+    }
+    Ok(v)
+}
+fn profiles_base(path: &std::path::Path) -> Result<Vec<(String, Profile)>> {
     let Ok(t) = std::fs::read_to_string(path) else {
         let utf16: Vec<u8> = screen::PWSH_PROMPT.encode_utf16().flat_map(u16::to_le_bytes).collect();
         let on_path = |exe: &str| std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(exe).is_file()));
