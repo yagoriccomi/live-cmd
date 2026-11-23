@@ -1490,7 +1490,7 @@ const KEYS = [["Ctrl+C", "Copiar seleção (sem seleção: interrompe, ^C)"], ["
   ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+Shift+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
   ["Ctrl+roda do mouse", "Zoom da fonte dos terminais"], ["Roda do mouse", "Rolar histórico"],
   ["Ctrl+clique", "Abrir link ou caminho"], ["Botão direito", "Colar (com seleção: copiar)"], ["Shift+botão direito / Shift+F10 / ☰", "Menu do terminal"], ["Arrastar arquivo", "Local: cola o caminho · Remoto/SSH: envia e cola o caminho"]];
-// Atalhos remapeáveis: ação fixa, tecla editável no F1 (clique na tecla e pressione a nova). Salvos no localStorage.
+// Atalhos remapeáveis: ação fixa, tecla editável em Configurações > Atalhos (#55; clique na tecla e pressione a nova). Salvos no localStorage.
 const SHORTCUTS = {
   paste: ["Colar", () => paste(), "Ctrl+V"], find: ["Buscar", () => openFind(), "Ctrl+Shift+F"], clear: ["Limpar", () => clearTab(), "Ctrl+Shift+K"],
   palette: ["Paleta de comandos", () => action("palette")(), ""], // #33: sem atalho padrão
@@ -1503,20 +1503,25 @@ function keyName(e) {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
   return [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
 }
+// Configurações > Atalhos: as teclas remapeáveis entram no topo da lista, editáveis (#55).
+$("keys-list").prepend(...Object.entries(SHORTCUTS).map(([a, [d]]) => {
+  const b = el("button", "mono", binds[a] || "—");
+  b.type = "button"; b.title = "Clique e pressione a nova tecla";
+  b.onclick = () => { b.textContent = "…"; b.onkeydown = (e) => {
+    const n = keyName(e);
+    if (!n) return;
+    e.preventDefault(); e.stopPropagation();
+    if (n !== "Escape") { binds[a] = n; localStorage.setItem("term-keys", JSON.stringify(binds)); }
+    b.textContent = binds[a] || "—"; b.onkeydown = null;
+  }; };
+  const li = el("li");
+  li.append(el("span", null, d), b);
+  return li;
+}));
 function help() {
   const opener = document.activeElement;
-  const rows = Object.entries(SHORTCUTS).flatMap(([a, [d]]) => {
-    const b = el("button", "mono", binds[a]);
-    b.type = "button"; b.title = "Clique e pressione a nova tecla";
-    b.onclick = () => { b.textContent = "…"; b.onkeydown = (e) => {
-      const n = keyName(e);
-      if (!n) return;
-      e.preventDefault(); e.stopPropagation();
-      if (n !== "Escape") { binds[a] = n; localStorage.setItem("term-keys", JSON.stringify(binds)); }
-      b.textContent = binds[a]; b.onkeydown = null;
-    }; };
-    return [el("dt", null, b), el("dd", null, d)];
-  });
+  // F1 só lista (#55): a edição fica em Configurações > Atalhos.
+  const rows = Object.entries(SHORTCUTS).flatMap(([a, [d]]) => [el("dt", "mono", binds[a] || "—"), el("dd", null, d)]);
   $("help-list").replaceChildren(...rows, ...KEYS.flatMap(([k, d]) => [el("dt", "mono", k), el("dd", null, d)]));
   $("help-scrim").hidden = false;
   const end = () => { $("help-scrim").hidden = true; opener?.focus(); };
