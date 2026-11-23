@@ -9,11 +9,12 @@
     "settings",
     "ssh_opts",
     "agent_waiting",
-    "history_sessions"
+    "history_sessions",
+    "agent_args"
   ],
   "caps_probe": {
     "auth_ok_host_antigo": "{\"type\":\"auth_ok\",\"v\":1,\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\"}",
-    "reply": "{\"api\":1,\"caps\":[\"agents\",\"ssh\",\"history\",\"folders\",\"ssh_keys\",\"agent_default\",\"settings\",\"ssh_opts\",\"agent_waiting\",\"history_sessions\"],\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"caps_ok\",\"v\":1}",
+    "reply": "{\"api\":1,\"caps\":[\"agents\",\"ssh\",\"history\",\"folders\",\"ssh_keys\",\"agent_default\",\"settings\",\"ssh_opts\",\"agent_waiting\",\"history_sessions\",\"agent_args\"],\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"caps_ok\",\"v\":1}",
     "reply_host_antigo": "{\"code\":\"NOT_FOUND\",\"connection_id\":\"9b2f6c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d\",\"request_id\":\"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"type\":\"error\",\"v\":1}",
     "request": {
       "from_offset": null,
