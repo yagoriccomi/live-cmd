@@ -1401,7 +1401,7 @@ async fn presence(i: &Inner) {
         let ready = i.link.ready.load(Relaxed);
         if ready { backoff = Duration::from_secs(1); } else if failed { i.link.state.store(ERROR, Relaxed); }
         tokio::select! { _ = tokio::time::sleep(backoff) => {}, _ = stopped(&mut stop) => break }
-        if !ready { backoff = (backoff * 2).min(Duration::from_secs(30)); }
+        if !ready { backoff = (backoff * 2).min(Duration::from_secs(300)); }
     }
     // Cada tentativa vê o `stop` e fecha a PeerConnection em até 2 s.
     let _ = tokio::time::timeout(Duration::from_secs(3), futures_util::future::join_all(attempts)).await;

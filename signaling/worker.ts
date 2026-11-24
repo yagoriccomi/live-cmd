@@ -30,21 +30,35 @@ export default {
   }
 };
 // Reusable: no consumed marker. Room id is not authorization; C2 authenticates end to end (SPEC-C1-presenca §5).
+// Hibernation API: an idle host socket costs no Durable Object duration (the free tier ran out with accept()).
+// Peer state lives in each socket's attachment and is rebuilt when the object wakes.
 export class SignalingRoom {
   room = new Room();
-  timer?: ReturnType<typeof setInterval>;
+  ctx: DurableObjectState;
+  constructor(ctx: DurableObjectState) {
+    this.ctx = ctx;
+    for (const ws of ctx.getWebSockets()) {
+      const peer = ws.deserializeAttachment();
+      if (peer) this.room.peers.push({ ...peer, socket: ws });
+    }
+  }
   async fetch(): Promise<Response> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     // Socket cap (MAX_SOCKETS); per-role limits answer busy inside the room.
     if (!this.room.add(server)) return new Response('Room busy', { status: 409 });
-    server.accept();
-    const cleanup = () => {
-      if (!this.room.peers.length && this.timer !== undefined) { clearInterval(this.timer); this.timer = undefined; }
-    };
-    server.addEventListener('message', event => { this.room.receive(server, event.data); cleanup(); });
-    for (const type of ['close', 'error'] as const) server.addEventListener(type, () => { this.room.left(server); cleanup(); });
-    this.timer ??= setInterval(() => { this.room.expire(); cleanup(); }, 100);
+    this.ctx.acceptWebSocket(server);
+    await this.sync();
     return new Response(null, { status: 101, webSocket: client });
+  }
+  async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) { this.room.receive(ws, data); await this.sync(); }
+  async webSocketClose(ws: WebSocket) { this.room.left(ws); await this.sync(); }
+  async webSocketError(ws: WebSocket) { this.room.left(ws); await this.sync(); }
+  async alarm() { this.room.expire(); await this.sync(); }
+  // Saves every peer; wakes only while a client attempt can still expire, so a lone host sleeps.
+  async sync() {
+    for (const { socket, ...peer } of this.room.peers) try { (socket as WebSocket).serializeAttachment(peer); } catch { /* Closed socket. */ }
+    if (this.room.peers.some(p => p.role !== 'host')) await this.ctx.storage.setAlarm(Date.now() + 5_000);
+    else await this.ctx.storage.deleteAlarm();
   }
 }
