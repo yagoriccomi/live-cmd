@@ -13,13 +13,13 @@ pub use live_cmd_echo::appdata::agents::{Agent, read, record, remove_entry};
 /// todo cliente do mesmo PC lê o mesmo. `null` quando nunca foi salvo.
 #[tauri::command(async)]
 pub fn agent_default_get(app: AppHandle, conn: String) -> Result<Value, String> {
-    let v = term::client(&app, &conn)?.request(json!({ "type": "agent_default_get" }))?;
+    let v = term::client(&app, &conn)?.request(json!({ "type": "agent_default_get", "api": live_cmd_echo::extras::API }))?;
     Ok(if v["agent"].is_string() { json!({ "agent": v["agent"], "args": v["args"] }) } else { Value::Null })
 }
 
 #[tauri::command(async)]
 pub fn agent_default_set(app: AppHandle, conn: String, agent: String, args: String) -> Result<(), String> {
-    term::client(&app, &conn)?.request(json!({ "type": "agent_default_set", "agent": agent, "cwd": null, "args": args })).map(drop)
+    term::client(&app, &conn)?.request(json!({ "type": "agent_default_set", "api": live_cmd_echo::extras::API, "agent": agent, "cwd": null, "args": args })).map(drop)
 }
 
 /// Sugestões do campo "Comandos extras": já usados com o agente no host da conexão + opções conhecidas (#19, #20).
