@@ -630,7 +630,14 @@ function sessionItem(conn, s) {
   // #44: badge manual no lugar de "● ativo"; online/offline fica no cabeçalho do host (#46).
   const bd = BADGES[layoutOf(conn).badge[s.session_id]];
   const st = el("span", "card-st" + (s.state === "exited" ? " muted" : ""), s.state === "exited" ? "● parado" : bd ? bd[0] : "");
-  if (bd) st.title = bd[1];
+  // #60: o espaço do badge abre a lista pequena (sem badge, aparece só no hover/foco).
+  if (s.state !== "exited") {
+    st.classList.add("badge-slot");
+    if (!bd) st.textContent = "◌";
+    st.title = (bd ? bd[1] : "Sem badge") + " (clique troca)";
+    st.setAttribute("role", "button");
+    st.onclick = (e) => { e.stopPropagation(); menu(st, badgeMenu(conn, s.session_id)); };
+  }
   const tile = el("span", "tile", kind === "agent" ? null : KIND_ICON[kind]);
   if (kind === "agent") tile.append(agentIcon(conn, (s.label.match(/\b(openclaude|claude|codex)\b/i) || [, "?"])[1].toLowerCase()));
   b.append(tile, txt, st);
@@ -663,13 +670,16 @@ function cardMenu(conn, s, name, b, cwd, git) {
     ["Copiar caminho", cwd && (() => copy(cwd)), "", "⧉"],
     ["Copiar nome da branch", git?.branch && (() => copy(git.branch)), "", "⎇"],
     ["Iniciar agente aqui", () => newAi(conn, cwd), "", "🤖"],
-    "#Badge",
-    ...Object.entries({ "": ["", "Nenhuma"], ...BADGES }).map(([k, [ic, lb]]) => [(L.badge[s.session_id] || "") === k ? "✓ " + lb : lb, () => { if (k) L.badge[s.session_id] = k; else delete L.badge[s.session_id]; saveSideOrder(conn); renderSidebar(); renderTabs(); }, "", ic]),
     "#Organizar",
     ["Mover para grupo…", () => { let n = 1; while (Object.values(L.group).includes("Grupo " + n)) n++; menu(b, [...groups.map((x) => [baseName(x) || x, () => move(x)]), ["Novo grupo", () => move("Grupo " + n)]]); }, "", "▤"],
     "#Perigo",
     ["Encerrar sessão", () => endSession(conn, s), "Del", "✕", "danger"],
   ].filter((it) => typeof it === "string" || it.row || it[1]);
+}
+// #60/#61: badge pertence à sessão (layout.badge[sid]), não à posição na guia.
+function badgeMenu(conn, sid) {
+  const L = layoutOf(conn);
+  return Object.entries({ "": ["", "Nenhuma"], ...BADGES }).map(([k, [ic, lb]]) => [(L.badge[sid] || "") === k ? "✓ " + lb : lb, () => { if (k) L.badge[sid] = k; else delete L.badge[sid]; saveSideOrder(conn); renderSidebar(); renderTabs(); }, "", ic]);
 }
 // #36: a sessão do card vai para o segundo painel da guia atual; a que estava lá vira guia separada (unsplit em split()).
 function splitCard(conn, s) {
