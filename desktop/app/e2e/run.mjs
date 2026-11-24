@@ -5,7 +5,7 @@
 // Isolado do app do usuário: LIVE_CMD_INSTANCE=e2e (pipe/token próprios, sem instância única) e pasta de dados temporária.
 // Cenários: um arquivo por ticket em specs/NNN-*.mjs, exportando `default async (s, h)`; rodam em ordem de nome.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, existsSync } from "node:fs";
+import { mkdtempSync, readdirSync, existsSync, openSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,11 +14,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const app = process.env.APP || join(here, "..", "target", "debug", "live-cmd-app.exe");
 const termd = join(dirname(app), "live-cmd-termd.exe");
 const edge = process.env.MSEDGEDRIVER || "S:\\tools\\msedgedriver\\msedgedriver.exe";
-const env = { ...process.env, LIVE_CMD_INSTANCE: "e2e", LIVE_CMD_DATA_DIR: mkdtempSync(join(tmpdir(), "live-cmd-e2e-")) };
+const data = mkdtempSync(join(tmpdir(), "live-cmd-e2e-"));
+// WebView2 próprio: com a pasta padrão (dev.livecmd.app\EBWebView) o E2E dividia o processo de navegador com o app
+// aberto do usuário e a sessão caía no meio ("browser has closed the connection").
+const env = { ...process.env, LIVE_CMD_INSTANCE: "e2e", LIVE_CMD_DATA_DIR: data, WEBVIEW2_USER_DATA_FOLDER: join(data, "webview") };
 for (const f of [app, termd, edge]) if (!existsSync(f)) { console.error("falta: " + f); process.exit(2); }
 
 const PORT = 4444, base = `http://127.0.0.1:${PORT}`;
-const driver = spawn("tauri-driver", ["--port", String(PORT), "--native-driver", edge], { env, stdio: "ignore" });
+const driver = spawn("tauri-driver", ["--port", String(PORT), "--native-driver", edge], { env, stdio: ["ignore", openSync(join(env.LIVE_CMD_DATA_DIR, "driver.log"), "a"), openSync(join(env.LIVE_CMD_DATA_DIR, "driver.log"), "a")] });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function wd(method, path, body) {
@@ -78,8 +81,18 @@ try {
   await h.ready();
   for (const f of readdirSync(join(here, "specs")).filter((f) => f.endsWith(".mjs")).sort()) {
     const t0 = Date.now();
-    try { await (await import(pathToFileURL(join(here, "specs", f)))).default(h); console.log(`ok   ${f} (${Date.now() - t0} ms)`); }
-    catch (e) { fails++; console.log(`FALHA ${f}: ${e.message}`); }
+    const spec = (await import(pathToFileURL(join(here, "specs", f)))).default;
+    // msedgedriver às vezes perde o renderer no meio de `/actions` ("browser has closed the connection"):
+    // sessão nova e uma segunda tentativa; a falha não derruba os cenários seguintes.
+    for (let n = 1; ; n++) {
+      try { await spec(h); console.log(`ok   ${f} (${Date.now() - t0} ms)${n > 1 ? " [2a tentativa]" : ""}`); break; }
+      catch (e) {
+        const lost = /invalid session id/.test(e.message);
+        if (lost) { await fetch(`${base}/session/${id}`, { method: "DELETE" }).catch(() => {}); id = await open(); await h.ready(); }
+        if (lost && n < 2) continue;
+        fails++; console.log(`FALHA ${f}: ${e.message}`); break;
+      }
+    }
   }
 } catch (e) { fails++; console.log("FALHA ao abrir o app: " + e.message); }
 finally {

@@ -8,7 +8,8 @@ export default async (h) => {
   await h.drag(`#local-ul [data-key="${before[2]}"]`, `#local-ul [data-key="${before[0]}"]`, 0, -5);
   await h.until(`return document.querySelector("#local-ul [data-key]")?.dataset.key === arguments[0]`, 5000, before[2]);
   const after = await h.js(ids);
-  h.eq(after, [before[2], before[0], before[1]], "ordem após arrastar");
+  // Só os 3 primeiros: numa 2a tentativa (run.mjs) as sessões da primeira continuam na lista.
+  h.eq(after.slice(0, 3), [before[2], before[0], before[1]], "ordem após arrastar");
   await new Promise((r) => setTimeout(r, 1500)); // `term_layout_set` é assíncrono
   await h.reopen();
   await h.until(`return document.querySelectorAll("#local-ul [data-key]").length >= 3`, 15000);
