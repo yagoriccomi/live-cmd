@@ -1,4 +1,4 @@
-import { Room, UUID, ROOM_UUID } from './room.ts';
+import { Room, UUID, ROOM_UUID, TURN_TTL_S, turnCredential } from './room.ts';
 // ponytail: per-isolate memory, not distributed (multiple isolates/colos each count separately); move to a DO or Rate Limiting binding when exposed publicly.
 const IP_WINDOW_MS = 60_000, MAX_CONNECTIONS_PER_IP = 20;
 export const connectionsByIp = new Map<string, { start: number; count: number }>();
@@ -10,7 +10,7 @@ export function admitIp(ip: string, now = Date.now()): boolean {
 }
 // ROOM_ID: the one local host room (SPEC-C1-presenca); each client hello brings its own connection_id.
 // PUBLIC=1 (deployed): any v4 room; the room id comes from the QR/code and is not authorization (C2 authenticates end to end).
-type Env = { ROOM: DurableObjectNamespace; ROOM_ID: string; PUBLIC?: string };
+type Env = { ROOM: DurableObjectNamespace; ROOM_ID: string; PUBLIC?: string; TURN_SECRET?: string; TURN_URLS?: string; TURN_SERVICE?: string };
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -35,8 +35,10 @@ export default {
 export class SignalingRoom {
   room = new Room();
   ctx: DurableObjectState;
-  constructor(ctx: DurableObjectState) {
+  env: Env;
+  constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
+    this.env = env;
     for (const ws of ctx.getWebSockets()) {
       const peer = ws.deserializeAttachment();
       if (peer) this.room.peers.push({ ...peer, socket: ws });
@@ -51,7 +53,15 @@ export class SignalingRoom {
     await this.sync();
     return new Response(null, { status: 101, webSocket: client });
   }
-  async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) { this.room.receive(ws, data); await this.sync(); }
+  // Refreshes the TURN credential when under 5 h of life is left, so every hello carries at least 5 h.
+  async refreshTurn() {
+    const { TURN_SECRET, TURN_URLS, TURN_SERVICE } = this.env;
+    if (!TURN_SECRET) return;
+    const expiry = Number(this.room.turn?.username.split(':')[0] ?? 0);
+    if (expiry - Date.now() / 1000 > TURN_TTL_S - 3600) return;
+    this.room.turn = await turnCredential(TURN_SECRET, (TURN_URLS ?? '').split(',').map(u => u.trim()).filter(Boolean), TURN_SERVICE || 'live-cmd');
+  }
+  async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) { await this.refreshTurn(); this.room.receive(ws, data); await this.sync(); }
   async webSocketClose(ws: WebSocket) { this.room.left(ws); await this.sync(); }
   async webSocketError(ws: WebSocket) { this.room.left(ws); await this.sync(); }
   async alarm() { this.room.expire(); await this.sync(); }

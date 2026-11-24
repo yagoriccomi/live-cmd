@@ -252,3 +252,19 @@ test('per-IP connection limit with window reset', () => {
   assert.ok(admitIp('1.2.3.4', 60_000), 'window resets');
   connectionsByIp.clear();
 });
+
+test('TURN credential: coturn vector and hello field only with a credential', async () => {
+  const { createHmac } = await import('node:crypto');
+  const { turnCredential, TURN_TTL_S } = await import('./room.ts');
+  const t = await turnCredential('s3cret', ['turn:x:3478'], 'live-cmd', 1_000);
+  assert.equal(t.username, `${1_000 + TURN_TTL_S}:live-cmd`);
+  assert.equal(t.credential, createHmac('sha1', 's3cret').update(t.username).digest('base64'));
+  for (const turn of [undefined, t]) {
+    const room = new Room(() => 0);
+    room.turn = turn;
+    const ws = { messages: [] as any[], send(s: string) { this.messages.push(JSON.parse(s)); }, close() {} };
+    room.add(ws);
+    room.receive(ws, JSON.stringify({ v: 1, type: 'hello', connection_id: null, request_id: 'r', payload: { role: 'host' } }));
+    assert.deepEqual(ws.messages[0].payload, turn ? { status: 'waiting', turn } : { status: 'waiting' });
+  }
+});

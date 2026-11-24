@@ -4,6 +4,14 @@ export const ROOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3
 export const MAX_MESSAGE_BYTES = 65_536, MAX_MESSAGES_PER_SECOND = 64;
 // Simultaneous clients per host room (C3 §6: 4 attachments); one spare socket so the excess client hears `busy`.
 export const MAX_CLIENTS = 4, MAX_SOCKETS = MAX_CLIENTS + 2;
+// coturn use-auth-secret: username = <expiry unix s>:<service>, credential = base64(HMAC-SHA1(secret, username)). Secret never logged.
+export const TURN_TTL_S = 21_600;
+export async function turnCredential(secret: string, urls: string[], service: string, nowS = Math.floor(Date.now() / 1000)) {
+  const username = `${nowS + TURN_TTL_S}:${service}`;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(username)));
+  return { urls, username, credential: btoa(String.fromCharCode(...mac)) };
+}
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 const object = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
 type Socket = { send(data: string): void; close(code: number, reason: string): void };
@@ -21,10 +29,13 @@ const REASONS = ['done', 'timeout', 'peer_left', 'protocol_error'];
 export class Room {
   peers: Peer[] = [];
   readonly now: () => number;
+  // TURN credential the Worker hands out (set only with TURN_SECRET); rides every `hello` as an extra field old peers ignore.
+  turn?: { urls: string[]; username: string; credential: string };
   constructor(now = () => Date.now()) { this.now = now; }
   get host() { return this.peers.find(p => p.role === 'host'); }
   clients() { return this.peers.filter(p => p.role === 'mobile'); }
   send(peer: Peer, type: string, payload: unknown, request_id = crypto.randomUUID() as string, connection_id = peer.role === 'mobile' ? peer.id : null) {
+    if (type === 'hello' && this.turn) payload = { ...(payload as object), turn: this.turn };
     peer.socket.send(JSON.stringify({ v: 1, type, connection_id, request_id, payload }));
   }
   add(socket: Socket): boolean {
