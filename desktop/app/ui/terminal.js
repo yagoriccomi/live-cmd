@@ -588,6 +588,9 @@ const agentIcons = new Map(); // "conn|agente" -> Promise<data URL | null>
 function agentIcon(conn, agent) {
   const i = el("span", "ag-ico", (agent || "?")[0].toUpperCase());
   i.setAttribute("aria-hidden", "true");
+  // 025: cada agente com a sua cor (matiz pelo nome), texto branco legível.
+  i.style.backgroundColor = `hsl(${[...(agent || "?")].reduce((h, c) => h * 31 + c.charCodeAt(0), 7) % 360} 60% 40%)`;
+  i.style.color = "#fff";
   const k = conn + "|" + agent;
   if (!agentIcons.has(k)) agentIcons.set(k, AGENT_LOGO[agent] ? Promise.resolve(AGENT_LOGO[agent]) : invoke("agent_icon_get", { conn, agent }).catch(() => null));
   agentIcons.get(k).then((u) => { if (u) { i.textContent = ""; i.style.backgroundImage = `url("${u}")`; } });

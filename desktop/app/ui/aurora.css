@@ -408,7 +408,7 @@ ul.keys li:first-child { border-top:0; }
 .dragging { opacity:.5; }
 .drop { outline:2px dashed var(--accent); outline-offset:var(--sp-2); border-radius:var(--r-8); }
 /* Ícone do agente (#40, #41): redondo 20 px, imagem ou inicial. */
-.ag-ico { width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--grad) center/cover no-repeat; color:var(--grad-ink); font-size:11px; font-weight:800; }
+.ag-ico { width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:center/cover no-repeat; font-size:11px; font-weight:800; }
 .aurora-pane .ag-row .ag-ico-btn { padding:0; background:none; flex:none; }
 /* #60: espaco do badge no card; vazio fica discreto ate o hover. */
 .card-st.badge-slot { cursor:pointer; min-width:18px; text-align:center; border-radius:6px; padding:1px 4px; }

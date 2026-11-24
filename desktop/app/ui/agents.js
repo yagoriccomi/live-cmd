@@ -95,8 +95,21 @@
     $("ag-list").replaceChildren(ul);
   }
 
+  const pickIcon = (agent) => pickAgentIcon(conn, agent, load);
+  // Configurações > Agentes (025): um por agente conhecido, ícone + "Trocar imagem" (vale para este PC).
+  const cfg = $("cfg-agents-list");
+  const paintCfg = () => cfg?.replaceChildren(...Object.entries(AGENT_NAME).map(([a, n]) => {
+    const li = el("li"), b = el("button", null, "Trocar imagem");
+    b.type = "button"; b.setAttribute("aria-label", `Trocar imagem de ${n}`);
+    b.onclick = () => pickAgentIcon(LOCAL, a, paintCfg);
+    const name = el("span", "inline"); name.append(agentIcon(LOCAL, a), el("span", null, n));
+    li.append(name, b);
+    return li;
+  }));
+  setTimeout(paintCfg); // AGENT_NAME é declarado mais abaixo no arquivo
+
   // Só PNG, JPEG ou WebP até 48 KB (o host confere de novo); fora disso avisa e não muda nada.
-  function pickIcon(agent) {
+  function pickAgentIcon(conn, agent, done) {
     const f = Object.assign(document.createElement("input"), { type: "file", accept: "image/png,image/jpeg,image/webp" });
     f.onchange = async () => {
       const file = f.files[0];
@@ -108,7 +121,7 @@
       try {
         await invoke("agent_icon_set", { conn, agent, image: btoa(s) });
         agentIcons.delete(conn + "|" + agent);
-        load();
+        done();
       } catch (e) { banner(e === "INVALID_MESSAGE" ? "Imagem recusada pelo host: use PNG, JPEG ou WebP até 48 KB." : msg(e), "err"); }
     };
     f.click();
