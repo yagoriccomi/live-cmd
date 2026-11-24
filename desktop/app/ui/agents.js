@@ -215,7 +215,8 @@ const AI_SUG = {
   openclaude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
   codex: ["--model gpt-5", "--full-auto", "--search", "--sandbox read-only", "--sandbox workspace-write", "--ask-for-approval on-request"],
 };
-async function newAi(conn, dir) {
+const AGENT_NAME = { claude: "Claude Code", openclaude: "OpenClaude", codex: "Codex" };
+async function newAi(conn, dir, agent0) {
   localStorage.removeItem("ai-default"); // resto de versão antiga; o padrão agora é do host
   const [d, list] = await Promise.all([
     invoke("agent_default_get", { conn }).catch(() => null),
@@ -224,7 +225,7 @@ async function newAi(conn, dir) {
   const recent = [...new Set((list?.groups || []).map((g) => g.path).filter(Boolean))];
   const opt = (v) => { const o = el("option"); o.value = v; return o; };
   const cwdIn = $("ai-cwd"), dirs = $("ai-dirs"), pick = $("ai-pick");
-  $("ai-agent").value = d?.agent || "claude";
+  $("ai-agent").value = agent0 || d?.agent || "claude";
   if (!$("ai-agent").value) $("ai-agent").value = "claude";
   cwdIn.value = dir || recent[0] || ""; $("ai-args").value = d?.args || ""; $("ai-def").checked = false;
   $("ai-cwd-sug").replaceChildren(...recent.map(opt));

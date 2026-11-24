@@ -28,7 +28,7 @@ Fontes:
 | B1 | M2: `.disable_drag_drop_handler()` em `main.rs:275`. Ordem e grupos de cards (017). Arrastar guia para dividir (021) | alto | feito: E2E passa (arrasto por ponteiro; layout salvo não era lido ao abrir) |
 | B2 | Badges: clique no badge do card abre a lista. Os badges saem do menu de contexto. O badge segue a sessão ao inverter ou mover (#60, #61) | alto | feito: espaço do badge no card abre a lista; cenário 060 |
 | B3 | 016: coluna única visual. O hover abre o painel do item sobre o terminal. QR navega. O vão não fecha o hover (#62) | alto | feito: trilho e lista numa coluna; hover em Agentes/SSH/Histórico abre o painel, clique fixa, QR/Dispositivos/Ajustes só no clique; cenário 062 |
-| B4 | 018: shells cadastrados e agentes num menu de novo chat com grupos (#63). 019: o padrão do host salva | alto | aberto |
+| B4 | 018: shells cadastrados e agentes num menu de novo chat com grupos (#63). 019: o padrão do host salva | alto | feito: menu com grupos Shells/Agentes; padrão falhava com INVALID_MESSAGE (pedido sem `api`); cenário 063 |
 | B5 | 019/020: seletor nativo no local (`tauri-plugin-dialog`) e navegador Aurora no remoto (#64). Autocomplete com Tab, lista ao digitar, conteúdo sem `\` final e visual Aurora | alto | aberto |
 | B6 | 023: Shift+clique direito não destrói a seleção (#65). Exportar abre "Salvar como" e grava `.txt`: com seleção só o trecho, sem seleção o buffer sem repetição (#66) | alto | aberto |
 | B7 | 027: seleção arrastando além da borda rola. Ctrl+Home vai ao início | alto | aberto |

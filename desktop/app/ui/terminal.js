@@ -884,7 +884,8 @@ document.addEventListener("mousedown", (e) => { if (!$("menu").hidden && !$("men
 
 function profileMenu(anchor, conn) {
   const p = conns[conn].profiles;
-  menu(anchor, p.length ? [...p.map((x) => [x.label, () => newSession(conn, x)]), ["Agente de IA…", () => newAi(conn)]] : [["Nenhum perfil disponível."]]);
+  // #63: uma lista só, grupos "Shells" (perfis do host, cadastrados inclusive) e "Agentes" (abre o formulário já com o agente).
+  menu(anchor, p.length ? ["#Shells", ...p.map((x) => [x.label, () => newSession(conn, x)]), "#Agentes", ...Object.keys(AI_SUG).map((a) => [AGENT_NAME[a] || a, () => newAi(conn, undefined, a)])] : [["Nenhum perfil disponível."]]);
 }
 
 // Agente de IA: newAi(conn) mora em agents.js (formulário do ticket 019).
