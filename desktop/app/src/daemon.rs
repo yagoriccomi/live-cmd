@@ -38,7 +38,9 @@ fn wait(mut f: impl FnMut() -> bool, n: u32) -> bool {
 
 fn root() -> Result<PathBuf, String> {
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).ok_or("IO_ERROR")?;
-    Ok(base.join("live-cmd").join("daemon"))
+    // E2E (`LIVE_CMD_INSTANCE`): pasta própria, a limpeza de versões antigas não mexe na do usuário.
+    let inst = std::env::var("LIVE_CMD_INSTANCE").map(|i| format!("-{i}")).unwrap_or_default();
+    Ok(base.join("live-cmd").join(format!("daemon{inst}")))
 }
 
 /// Exe a executar. Release: copia o do instalador para a pasta da versão, se ainda não estiver lá.

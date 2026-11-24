@@ -39,7 +39,9 @@ impl Endpoint {
     /// Pipe e token deste usuário do Windows.
     pub fn user() -> std::result::Result<Endpoint, String> {
         let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).ok_or("IO_ERROR")?;
-        Ok(Endpoint { pipe: format!(r"\\.\pipe\live-cmd-termd-{}", user_sid()?), token_file: base.join("live-cmd").join("termd").join("token") })
+        // `LIVE_CMD_INSTANCE` (robô E2E): pipe e token próprios, sem tocar no daemon do usuário.
+        let inst = std::env::var("LIVE_CMD_INSTANCE").map(|i| format!("-{i}")).unwrap_or_default();
+        Ok(Endpoint { pipe: format!(r"\\.\pipe\live-cmd-termd-{}{inst}", user_sid()?), token_file: base.join("live-cmd").join("termd").join(format!("token{inst}")) })
     }
 }
 

@@ -273,7 +273,7 @@ fn open_terminal(app: &AppHandle) {
 
 fn build_terminal(app: &AppHandle, url: &str) {
     let w = WebviewWindowBuilder::new(app, "terminal", WebviewUrl::App(url.into()))
-        .title("Terminal Desktop — live-cmd").decorations(false).inner_size(1280.0, 800.0).min_inner_size(560.0, 360.0).center().build();
+        .title("Terminal Desktop — live-cmd").decorations(false).inner_size(1280.0, 800.0).min_inner_size(560.0, 360.0).center().disable_drag_drop_handler().build();
     if let Ok(w) = w { apply_opacity(app, &w); fit_window(&w, true); }
 }
 
@@ -436,12 +436,15 @@ fn tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
 }
 
 fn main() {
-    tauri::Builder::default()
+    // E2E (app/e2e): `LIVE_CMD_INSTANCE` isola o pipe do daemon, dispensa a instância única e abre o terminal.
+    let e2e = std::env::var_os("LIVE_CMD_INSTANCE").is_some();
+    let mut b = tauri::Builder::default();
+    if !e2e { b = b.plugin(tauri_plugin_single_instance::init(|app, _, _| open_terminal(app))); }
+    b
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| open_terminal(app)))
         .invoke_handler(tauri::generate_handler![tray_action, status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, get_profiles, save_profiles, set_scrollback, check_update, install_update,
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
@@ -450,7 +453,7 @@ fn main() {
             agents::agent_list, agents::agent_resume, agents::agent_remove, agents::agent_default_get, agents::agent_default_set, agents::agent_args, agents::agent_icon_get, agents::agent_icon_set,
             ssh::ssh_list, ssh::ssh_save, ssh::ssh_import, ssh::ssh_remove, ssh::ssh_probe, ssh::ssh_connect, ssh::ssh_sessions, ssh::ssh_reconnect, ssh::ssh_git, ssh::ssh_stats,
             hist::hist_meta, hist::hist_list, hist::hist_clear, hist::hist_sessions, sys::sys_stats, get_appearance, set_appearance, daemon_stale, daemon_restart])
-        .setup(|a| {
+        .setup(move |a| {
             let dir = settings::data_dir()?;
             let s = settings::load(&dir)?;
             // Host, sessões deste PC e telas do celular (Agentes, SSH, Histórico) moram no daemon, que lê os
@@ -471,6 +474,7 @@ fn main() {
             term::start(a.handle());
             tray(a.handle())?;
             refresh_tray(a.handle(), true);
+            if e2e { open_terminal(a.handle()); }
             // Laço de 1 s: bandeja segue o host; link sai do clipboard quando a OTK expira ou é usada.
             // A cada 5 s confere o daemon e sobe outro se ele saiu (travou, foi encerrado por fora).
             let h = a.handle().clone();
