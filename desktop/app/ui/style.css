@@ -181,7 +181,9 @@ select { font:inherit; padding:var(--sp-6) var(--sp-10); border-radius:var(--rad
 .find-bar input { width:200px; padding:var(--sp-2) var(--sp-8); }
 .find-bar button { padding:var(--sp-2) var(--sp-8); }
 .keys { display:grid; grid-template-columns:auto 1fr; gap:var(--sp-4) var(--sp-16); margin:0; max-height:60vh; overflow:auto; }
-.keys dd { margin:0; }
+.keys dd { margin:0; align-self:center; }
+/* 022: tecla legível, mesmo chip no F1 e em Configurações > Atalhos. */
+.keys dt, .keys kbd, .keys li > button { justify-self:start; align-self:center; padding:var(--sp-2) var(--sp-6); border-radius:var(--r-4); background:var(--surface-2); color:var(--text); border:1px solid var(--border); font-weight:600; }
 /* F3 */
 /* Divisão: --sp = fatia do 1º painel (arrastável); cabeçalho de --hh em cada painel; .stack = um sobre o outro */
 .term-area { --sp:50%; --hh:26px; }
