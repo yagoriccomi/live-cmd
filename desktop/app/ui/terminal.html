@@ -371,11 +371,11 @@
     <label for="ai-agent">Agente</label>
     <select id="ai-agent"><option value="claude">Claude</option><option value="openclaude">OpenClaude</option><option value="codex">Codex</option></select>
     <label for="ai-cwd" class="gap">Pasta</label>
-    <div class="inline"><input type="text" class="mono" id="ai-cwd" list="ai-cwd-sug" autocomplete="off" spellcheck="false" placeholder="C:\projetos\app" aria-describedby="ai-path">
-      <button type="button" id="ai-pick" aria-label="Procurar pasta" aria-controls="ai-dirs" aria-expanded="false">📁</button></div>
-    <datalist id="ai-cwd-sug"></datalist>
+    <div class="inline"><input type="text" class="mono" id="ai-cwd" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="ai-ac" aria-expanded="false" spellcheck="false" placeholder="C:\projetos\app" aria-describedby="ai-path">
+      <button type="button" id="ai-pick" aria-label="Procurar pasta" aria-controls="ai-browser" aria-expanded="false">📁</button></div>
+    <div id="ai-ac" class="ai-ac" role="listbox" aria-label="Sugestões de pasta" hidden></div>
     <p class="muted mono ai-path" id="ai-path" aria-live="polite"></p>
-    <div id="ai-dirs" class="ai-dirs" aria-label="Pastas" hidden></div>
+    <div id="ai-browser" class="ai-browser" hidden><div class="inline"><button type="button" id="ai-back" aria-label="Voltar para a pasta acima">←</button><input type="text" class="mono" id="ai-addr" aria-label="Endereço" spellcheck="false" autocomplete="off"></div><div id="ai-dirs" class="ai-dirs" aria-label="Pastas"></div></div>
     <label for="ai-args" class="gap">Comandos extras</label>
     <input type="text" class="mono" id="ai-args" list="ai-sug" autocomplete="off" spellcheck="false" placeholder="--model opus">
     <datalist id="ai-sug"></datalist>

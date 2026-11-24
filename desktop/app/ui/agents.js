@@ -228,7 +228,6 @@ async function newAi(conn, dir, agent0) {
   $("ai-agent").value = agent0 || d?.agent || "claude";
   if (!$("ai-agent").value) $("ai-agent").value = "claude";
   cwdIn.value = dir || recent[0] || ""; $("ai-args").value = d?.args || ""; $("ai-def").checked = false;
-  $("ai-cwd-sug").replaceChildren(...recent.map(opt));
   // Comandos extras já usados com o agente no host + opções conhecidas; texto livre continua valendo.
   const sug = async () => {
     const a = $("ai-agent").value, l = await invoke("agent_args", { conn, agent: a }).catch(() => null);
@@ -237,31 +236,70 @@ async function newAi(conn, dir, agent0) {
   $("ai-agent").onchange = sug; sug();
   // Caminho completo embaixo do campo: o que vai para o host, sem barra final.
   const path = () => { $("ai-path").textContent = cwdIn.value.trim().replace(/[\\/]+$/, "") || "Pasta inicial do perfil (~)"; };
-  // 📁 abre a navegação: subpastas no PC da conexão; clique entra, ".." sobe, raiz lista as unidades.
+  // 📁 (#64): no PC local, o seletor nativo do Windows; no remoto, navegador próprio (voltar, endereço, pastas).
+  const addr = $("ai-addr"), brw = $("ai-browser");
   const browse = async (p) => {
     let ds = [];
     try { ds = await invoke("term_dirs", { conn, path: p }); } catch (e) { banner(msg(e), "err"); }
-    const base = p.replace(/[\\/]+$/, ""), up = base.includes("\\") ? base.slice(0, base.lastIndexOf("\\") + 1) : "";
-    const item = (name, to) => { const b = el("button", null, name); b.type = "button"; b.onclick = () => { cwdIn.value = to; path(); browse(to); }; return b; };
-    dirs.replaceChildren(...(p ? [item("..", up)] : []), ...ds.map((x) => item(x, p ? base + "\\" + x : x)));
+    const base = p.replace(/[\\/]+$/, "");
+    addr.value = base;
+    const item = (name, to) => { const b = el("button", null, "📁 " + name); b.type = "button"; b.onclick = () => { cwdIn.value = to; path(); browse(to); }; return b; };
+    dirs.replaceChildren(...(Array.isArray(ds) ? ds : []).map((x) => item(x, base ? base + "\\" + x : x)));
   };
-  const show = (on) => { dirs.hidden = !on; pick.setAttribute("aria-expanded", on); if (on) browse(cwdIn.value.trim()); };
-  pick.onclick = () => show(dirs.hidden);
-  // Recentes primeiro; com "\\" no campo, as subpastas reais do pai que começam pelo trecho digitado.
-  // Pasta inexistente ou sem permissão: o host devolve vazio/erro e ficam só as recentes.
-  let seq = 0;
-  cwdIn.oninput = async () => {
+  const up = (p) => { const b = p.replace(/[\\/]+$/, ""); return b.includes("\\") ? b.slice(0, b.lastIndexOf("\\")) : ""; };
+  $("ai-back").onclick = () => { cwdIn.value = up(addr.value); path(); browse(cwdIn.value); };
+  addr.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); cwdIn.value = addr.value.trim(); path(); browse(cwdIn.value); } };
+  const show = (on) => { brw.hidden = !on; pick.setAttribute("aria-expanded", on); if (on) browse(cwdIn.value.trim()); };
+  pick.onclick = async () => {
+    if (conn !== LOCAL) return show(brw.hidden);
+    const r = await window.__TAURI__.dialog.open({ directory: true, multiple: false, defaultPath: cwdIn.value.trim() || undefined, title: "Pasta do agente" }).catch(() => null);
+    if (r) { cwdIn.value = r; path(); }
+  };
+  // Autocomplete (020): lista própria abaixo do campo enquanto se digita; recentes + subpastas reais.
+  // "C:\proj" já lista o conteúdo de proj (sem exigir a "\" final) e as irmãs que começam por "proj".
+  // Tab completa com a sugestão marcada (ou a primeira); setas movem; Enter escolhe; Esc fecha a lista.
+  const ac = $("ai-ac");
+  let seq = 0, sel = -1, items = [];
+  const paint = () => {
+    ac.replaceChildren(...items.map((v, i) => {
+      const o = el("div", "ac-item" + (i === sel ? " on" : ""), v); o.setAttribute("role", "option"); o.setAttribute("aria-selected", i === sel);
+      o.onmousedown = (e) => { e.preventDefault(); take(v); }; return o;
+    }));
+    ac.hidden = !items.length; cwdIn.setAttribute("aria-expanded", !ac.hidden);
+  };
+  const take = (v) => { cwdIn.value = v; items = []; sel = -1; paint(); suggest(); };
+  const suggest = async () => {
     path();
-    const v = cwdIn.value, i = v.lastIndexOf("\\"), n = ++seq;
-    const rec = recent.filter((r) => r.toLowerCase().startsWith(v.toLowerCase()));
-    if (i < 0) return $("ai-cwd-sug").replaceChildren(...(v ? rec : recent).map(opt));
-    const ds = await invoke("term_dirs", { conn, path: v.slice(0, i + 1) }).catch(() => []);
+    const v = cwdIn.value, n = ++seq, lv = v.toLowerCase();
+    const rec = recent.filter((r) => r.toLowerCase().startsWith(lv) && r.toLowerCase() !== lv);
+    let sub = [];
+    const i = v.lastIndexOf("\\");
+    if (i >= 0) {
+      const par = v.slice(0, i + 1), pre = v.slice(i + 1).toLowerCase(), base = v.replace(/[\\/]+$/, "");
+      const [sib, kids] = await Promise.all([
+        pre ? invoke("term_dirs", { conn, path: par }).catch(() => []) : [],
+        invoke("term_dirs", { conn, path: v }).catch(() => []),
+      ]);
+      if (n !== seq) return;
+      sub = [...(Array.isArray(sib) ? sib : []).filter((d) => d.toLowerCase().startsWith(pre) && d.toLowerCase() !== pre).map((d) => par + d),
+        ...(Array.isArray(kids) ? kids : []).map((d) => base + "\\" + d)];
+    }
     if (n !== seq) return;
-    const pre = v.slice(i + 1).toLowerCase(), sub = (Array.isArray(ds) ? ds : []).filter((d) => d.toLowerCase().startsWith(pre)).map((d) => v.slice(0, i + 1) + d);
-    $("ai-cwd-sug").replaceChildren(...[...new Set([...rec, ...sub])].map(opt));
+    items = [...new Set([...rec, ...sub])]; sel = -1; paint();
   };
-  cwdIn.onchange = () => { path(); if (!dirs.hidden) browse(cwdIn.value.trim()); };
-  show(false); path();
+  cwdIn.oninput = suggest;
+  cwdIn.onblur = () => { seq++; items = []; paint(); };
+  cwdIn.onkeydown = (e) => {
+    if (e.key === "Tab" && !e.shiftKey && items.length) { e.preventDefault(); take(items[Math.max(sel, 0)]); }
+    else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) {
+      e.preventDefault(); sel = e.key === "ArrowDown" ? (sel + 1) % items.length : (sel <= 0 ? items.length : sel) - 1;
+      paint(); ac.children[sel]?.scrollIntoView({ block: "nearest" });
+    }
+    else if (e.key === "Enter" && sel >= 0) { e.preventDefault(); e.stopPropagation(); take(items[sel]); }
+    else if (e.key === "Escape" && items.length) { e.preventDefault(); e.stopPropagation(); seq++; items = []; paint(); }
+  };
+  cwdIn.onchange = () => { path(); if (!brw.hidden) browse(cwdIn.value.trim()); };
+  show(false); items = []; paint(); path();
   $("ai-scrim").hidden = false; cwdIn.focus();
   const ok = await new Promise((done) => {
     const end = (v) => { $("ai-scrim").hidden = true; done(v); };
