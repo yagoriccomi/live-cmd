@@ -200,7 +200,7 @@ function editInline(span, value, save) {
     document.removeEventListener("pointerdown", down, true);
     const v = inp.value.trim();
     inp.replaceWith(span);
-    if (tabsLater) { tabsLater = false; renderTabs(); }
+    if (tabsLater) { tabsLater = false; renderTabs(); renderSidebar(); } // 014: a lista adiada também volta
     if (ok && v && v !== value) { try { await save(v); } catch (e) { banner(msg(e), "err"); } }
   };
   inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") end(true); else if (e.key === "Escape") end(false); };
