@@ -444,8 +444,9 @@ pub fn term_export(app: AppHandle, conn: String, session_id: String) -> String {
 
 /// "Salvar como": grava a exportação no caminho escolhido no diálogo do sistema.
 #[tauri::command(async)]
-pub fn term_export_file(app: AppHandle, conn: String, session_id: String, path: String) -> Result<(), String> {
-    std::fs::write(path, term_export(app, conn, session_id)).map_err(|_| "IO_ERROR".into())
+/// `text` (trecho selecionado) vai como está; sem ele, o buffer inteiro da sessão.
+pub fn term_export_file(app: AppHandle, conn: String, session_id: String, path: String, text: Option<String>) -> Result<(), String> {
+    std::fs::write(path, text.unwrap_or_else(|| term_export(app, conn, session_id))).map_err(|_| "IO_ERROR".into())
 }
 
 /// Envia arquivo deste PC ao host remoto `conn`, em `target_dir` (pasta atual da sessão) ou na pasta padrão do host.

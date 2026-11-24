@@ -1018,10 +1018,14 @@ document.addEventListener("term-action", (e) => {
   else if (a === "unsplit" && activeTab()) unsplit(activeTab());
   else if (a === "new") newSession(t ? t.conn : LOCAL);
   else if (a === "close" && t) activeTab().split ? closePane(focusPane) : closeTab(t.key, true);
-  else if (a === "export" && t) window.__TAURI__.dialog.save({ defaultPath: `${(t.label || "terminal").replace(/[\\/:*?"<>|]/g, "_")}.txt`, filters: [{ name: "Texto", extensions: ["txt"] }] })
-    .then((path) => path && invoke("term_export_file", { conn: t.conn, sessionId: t.sid, path }).then(() => banner("Saída salva em " + path, "ok")))
-    .catch((err) => banner(msg(err), "err"));
+  else if (a === "export" && t) exportOut(t, "");
 });
+// Exportar (#66): "Salvar como" .txt; com seleção, só o trecho; sem, o buffer da sessão (vt100, sem repetição).
+function exportOut(t, text) {
+  window.__TAURI__.dialog.save({ defaultPath: `${(t.label || "terminal").replace(/[\\/:*?"<>|]/g, "_")}.txt`, filters: [{ name: "Texto", extensions: ["txt"] }] })
+    .then((path) => path && invoke("term_export_file", { conn: t.conn, sessionId: t.sid, path, text: text || null }).then(() => banner((text ? "Seleção salva em " : "Saída salva em ") + path, "ok")))
+    .catch((err) => banner(msg(err), "err"));
+}
 listen("term-exited", ({ payload }) => {
   const t = allRecs().find((t) => t.key === payload.key);
   if (t) { t.exited = payload.code; if (t === target()) updateBanner(); paintSplit(); }
@@ -1272,6 +1276,8 @@ function flushDraw() {
 for (const s of [$("screen"), $("screen2")]) {
   // Arrastar/duplo/triplo clique: o outro painel fica sem seleção (user-select:none) até soltar, e a seleção não vaza.
   s.addEventListener("mousedown", (e) => {
+    // Shift+botão direito (#65): sem isso o WebView estende/troca a seleção até o ponto do clique.
+    if (e.button === 2 && e.shiftKey) return e.preventDefault();
     if (e.button !== 0) return;
     selecting.add(s);
     const other = s === $("screen") ? $("screen2") : $("screen");
@@ -1351,11 +1357,11 @@ function screenKey(e) {
 // Menu de contexto da tela (substitui o nativo do WebView: Recarregar, Inspecionar…).
 function ctxMenu(x, y) {
   const at = { getBoundingClientRect: () => ({ left: x, bottom: y }), focus: () => pane().focus() };
-  const sp = activeTab()?.split;
+  const sp = activeTab()?.split, sel = hasSel() ? getSelection().toString() : "";
   // A9 (#32/#34): Copiar/Colar, Tema, fontes, Paleta, Nova sessão, Reabrir e Atalhos saíram do menu.
   menu(at, [
     { row: [["🔍", "Buscar", openFind, binds.find], ["⌫", "Limpar", clearTab, binds.clear],
-      ["⤢", sp && activeTab().max != null ? "Restaurar painéis" : "Maximizar painel", sp ? action("maximize") : () => banner("Maximizar vale com a guia dividida.", "warn")], ["⇩", "Exportar saída", action("export")]] },
+      ["⤢", sp && activeTab().max != null ? "Restaurar painéis" : "Maximizar painel", sp ? action("maximize") : () => banner("Maximizar vale com a guia dividida.", "warn")], ["⇩", sel ? "Exportar seleção" : "Exportar saída", () => { const t = target(); if (t) exportOut(t, sel); }]] },
     "#Painel",
     sp ? ["Desfazer divisão", action("unsplit"), "", "◫"] : ["Dividir", action("split-new"), "Ctrl+Shift+D", "◫"],
     ["Inverter lados", sp && action("swap"), "", "⇄"],
