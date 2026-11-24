@@ -244,7 +244,7 @@ input.rename { font:inherit; padding:0 var(--sp-4); width:12em; }
     var(--bg);
   background-attachment: fixed;
 }
-:root:not([data-theme=light]):not([data-theme=contrast]) :is(.sidebar, .menu, dialog, .find-bar, .status-banner, .device-row, [role=tablist]) {
+:root:not([data-theme=light]):not([data-theme=contrast]) :is(.sidebar, .menu, dialog, .find-bar, .status-banner, .device-row, [role=tablist]:not(.term-tabs)) {
   backdrop-filter: blur(30px); box-shadow: var(--glow);
 }
 :root:not([data-theme=light]):not([data-theme=contrast]) .btn-primary { background:linear-gradient(135deg, var(--accent), #ff4fd8); border-color:transparent; box-shadow:0 0 20px rgb(255 79 216 / .45); }
