@@ -31,13 +31,13 @@ pub fn agent_args(app: AppHandle, conn: String, agent: String) -> Result<Value, 
 /// Ícone enviado pelo usuário, salvo no host (#40): data URL ou `null`.
 #[tauri::command(async)]
 pub fn agent_icon_get(app: AppHandle, conn: String, agent: String) -> Result<Value, String> {
-    term::client(&app, &conn)?.request(json!({ "type": "agent_icon_get", "agent": agent })).map(|v| v["image"].clone())
+    term::client(&app, &conn)?.request(json!({ "type": "agent_icon_get", "api": live_cmd_echo::extras::API, "agent": agent })).map(|v| v["image"].clone())
 }
 
 /// `image`: base64 de PNG/JPEG/WebP até 48 KB (o host confere); `null` apaga.
 #[tauri::command(async)]
 pub fn agent_icon_set(app: AppHandle, conn: String, agent: String, image: Option<String>) -> Result<(), String> {
-    term::client(&app, &conn)?.request(json!({ "type": "agent_icon_set", "agent": agent, "image": image })).map(drop)
+    term::client(&app, &conn)?.request(json!({ "type": "agent_icon_set", "api": live_cmd_echo::extras::API, "agent": agent, "image": image })).map(drop)
 }
 
 /// Pasta raiz do agrupamento: (chave normalizada, nome exibido). Sem pasta, a pasta inicial do perfil ("~").
