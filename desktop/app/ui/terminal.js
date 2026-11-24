@@ -133,10 +133,6 @@ function renderTabs() {
     name.ondblclick = (e) => { e.stopPropagation(); renameSession(t.conn, t.sid, name, t.label); };
     b.append(name);
     if (busy.has(t.key)) b.append(actDot());
-    b.draggable = true;
-    b.ondragstart = (e) => e.dataTransfer.setData("text/x-tab", t.key);
-    b.ondragover = (e) => e.preventDefault();
-    b.ondrop = (e) => { e.preventDefault(); e.stopPropagation(); moveTab(e.dataTransfer.getData("text/x-tab"), t.key, e.clientX); };
     b.oncontextmenu = (e) => { e.preventDefault(); menu(b, tabMenu(t, name)); };
     const x = el("span", "x", "×");
     x.setAttribute("aria-hidden", "true");
@@ -167,8 +163,6 @@ function moveTab(from, to, x) {
   tabs.splice(j, 0, m);
   renderTabs();
 }
-$("tabs").addEventListener("dragover", (e) => e.preventDefault());
-$("tabs").addEventListener("drop", (e) => { const k = e.dataTransfer.getData("text/x-tab"); if (k) { e.preventDefault(); moveTab(k, null); } });
 // Roda do mouse rola as guias na horizontal (#43).
 $("tabs").addEventListener("wheel", (e) => { if (!e.deltaY) return; e.preventDefault(); $("tabs").scrollLeft += e.deltaY; }, { passive: false });
 
@@ -544,8 +538,9 @@ async function refresh(conn) {
   } catch { conns[conn].sessions = []; }
   renderSidebar();
   // Ordem/grupos chegam depois: host lento não segura a lista de sessões.
-  if (!layouts[conn]) {
-    layouts[conn] = {};
+  // `layoutOf` já cria um vazio no primeiro desenho: a marca de "buscado" é separada (senão a ordem salva nunca vinha).
+  if (!layoutFetched.has(conn)) {
+    layoutFetched.add(conn);
     layouts[conn] = await invoke("term_layout_get", { conn }).catch(() => ({})) || {};
     renderSidebar();
   }
@@ -649,9 +644,7 @@ function sessionItem(conn, s) {
     else if (e.key === "Delete") { e.preventDefault(); endSession(conn, s); }
   };
   li.append(b);
-  li.draggable = true;
-  li.ondragstart = (e) => { e.dataTransfer.setData("text/plain", s.session_id); dragFrom = conn; li.classList.add("dragging"); };
-  li.ondragend = () => li.classList.remove("dragging");
+  li.onpointerdown = (e) => { if (e.button === 0 && !e.target.closest("input")) cardDrag = { li, conn, sid: s.session_id, x: e.clientX, y: e.clientY, on: false }; };
   dropTarget(li, conn, () => groupKey(conn, s), s.session_id);
   return li;
 }
@@ -688,7 +681,28 @@ function splitCard(conn, s) {
 // ---------- #9/#10/#37: grupos, arraste e ordem (salvos no host: `layout_get`/`layout_set`) ----------
 // Layout por conexão: { order: [sid], group: {sid: grupo manual}, named: {sid: true}, badge: {sid: chave}, pinned: grupo }.
 const layouts = {};
-let dragFrom = null;
+const layoutFetched = new Set();
+// Arraste de card por ponteiro: passa de 8 px, marca o alvo sob o cursor; ao soltar, chama o `__drop` dele.
+let cardDrag = null, dropAt = null;
+const dropUnder = (e) => { const n = document.elementFromPoint(e.clientX, e.clientY)?.closest("#sidebar [data-drop]"); return n?.__drop && n.__conn === cardDrag.conn ? n : null; };
+document.addEventListener("pointermove", (e) => {
+  const d = cardDrag;
+  if (!d || (!d.on && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 8)) return;
+  if (!d.on) { d.on = true; d.li.classList.add("dragging"); }
+  const n = dropUnder(e);
+  if (n !== dropAt) { dropAt?.classList.remove("drop"); dropAt = n; n?.classList.add("drop"); }
+});
+const cardStop = (e) => {
+  const d = cardDrag, n = dropAt;
+  cardDrag = null; dropAt = null;
+  if (!d) return;
+  d.li.classList.remove("dragging"); n?.classList.remove("drop");
+  if (d.on && e.type === "pointerup" && n) { n.__drop(d.sid); eatClick(); }
+};
+// O soltar não vira clique (que abriria o card arrastado).
+function eatClick() { const f = (c) => { c.stopPropagation(); c.preventDefault(); }; document.addEventListener("click", f, true); setTimeout(() => document.removeEventListener("click", f, true)); }
+document.addEventListener("pointerup", cardStop);
+document.addEventListener("pointercancel", cardStop);
 const baseName = (p) => (p || "").replace(/\\{2,}/g, "\\").split(/[\\/]/).filter(Boolean).pop() || "";
 function layoutOf(conn) {
   const L = layouts[conn] ||= {};
@@ -705,11 +719,9 @@ function groupKey(conn, s) {
 }
 // Solta antes de `before` (sid) ou no fim; muda de grupo se o destino for outro.
 function dropTarget(node, conn, key, before) {
-  node.ondragover = (e) => { if (dragFrom === conn) { e.preventDefault(); e.stopPropagation(); node.classList.add("drop"); } };
-  node.ondragleave = () => node.classList.remove("drop");
-  node.ondrop = (e) => {
-    e.preventDefault(); e.stopPropagation(); node.classList.remove("drop");
-    const sid = e.dataTransfer.getData("text/plain"), L = layoutOf(conn);
+  node.__conn = conn; node.dataset.drop = "";
+  node.__drop = (sid) => {
+    const L = layoutOf(conn);
     const s = conns[conn].sessions.find((x) => x.session_id === sid);
     if (!s || sid === before) return;
     const g = key();
@@ -1617,11 +1629,7 @@ ro.observe($("screen2"));
   };
   const over = (x, y) => { const r = area.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; };
   const showHint = (on) => { hint.hidden = !on; hint.classList.toggle("stack", layout.stack); };
-  // HTML5 (quando o WebView entrega drag/drop de DOM).
-  area.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("text/x-tab")) { e.preventDefault(); showHint(true); } });
-  area.addEventListener("dragleave", (e) => { if (!area.contains(e.relatedTarget)) showHint(false); });
-  area.addEventListener("drop", (e) => { const k = e.dataTransfer.getData("text/x-tab"); if (k) { e.preventDefault(); dropTab(k); } });
-  // Ponteiro (alternativa: o handler de arquivos do Tauri pode engolir o drag de DOM no Windows).
+  // Por ponteiro, não HTML5: no WebView2 o drag nativo de DOM não entrega `drop` de forma confiável (e o robô E2E não o sintetiza).
   let press = null, moved = false;
   $("tabs").addEventListener("pointerdown", (e) => { const b = e.button === 0 && e.target.closest("[role=tab]"); press = b ? { key: b.dataset.key, x: e.clientX, y: e.clientY } : null; moved = false; });
   document.addEventListener("pointermove", (e) => {
