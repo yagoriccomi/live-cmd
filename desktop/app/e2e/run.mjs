@@ -56,6 +56,13 @@ function helpers() {
         mv((x0 + x1) >> 1, (y0 + y1) >> 1, 200), mv(x1, y1, 200), { type: "pause", duration: 200 }, { type: "pointerUp", button: 0 }] }] });
       await wd("DELETE", S() + "/actions");
     },
+    // Move o ponteiro real pelos pontos [x, y, pausa ms] (hover).
+    async hover(pts) {
+      await wd("POST", S() + "/actions", { actions: [{ type: "pointer", id: "m", parameters: { pointerType: "mouse" }, actions:
+        pts.flatMap(([x, y, ms = 0]) => [{ type: "pointerMove", origin: "viewport", x, y, duration: 60 }, { type: "pause", duration: ms }]) }] });
+    },
+    async click(css) { const [x, y] = await h.at(css); await wd("POST", S() + "/actions", { actions: [{ type: "pointer", id: "m", parameters: { pointerType: "mouse" }, actions: [
+      { type: "pointerMove", origin: "viewport", x, y, duration: 0 }, { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 }] }] }); },
     // Fecha e reabre o app (mesma pasta de dados e daemon): testa o que persiste.
     async reopen() { await wd("DELETE", S()); id = await open(); await h.ready(); },
     ready: () => h.until(`return document.readyState === "complete" && !!document.getElementById("tabs")`, 20000),

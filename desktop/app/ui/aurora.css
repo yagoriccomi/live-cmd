@@ -35,7 +35,7 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .term-body .term-layout { position:fixed; inset:20px; height:auto; display:flex; gap:var(--sp-16); }
 /* Coluna fechada: só o trilho; hover ou foco expande por cima do terminal, sem empurrá-lo. */
 .term-body .term-layout.collapsed .sidebar { position:absolute; left:76px; top:0; bottom:0; z-index:5; padding:var(--sp-16); visibility:hidden; opacity:0; transition:opacity .15s, visibility .15s; }
-.term-body .term-layout.collapsed :is(.rail:hover, .rail:focus-within) ~ .sidebar,
+.term-body .term-layout.collapsed .rail:has(#nav-term:is(:hover, :focus-visible)) ~ .sidebar,
 .term-body .term-layout.collapsed .sidebar:is(:hover, :focus-within) { visibility:visible; opacity:1; }
 
 /* Vidro */
@@ -51,6 +51,9 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .rail-btn { border:0; padding:0; background:none; color:var(--text-muted); font-size:16px; line-height:1; }
 .rail-btn:hover { background:var(--chip); }
 .rail-btn[aria-current=page] { background:var(--card-on); color:var(--card-on-ink); }
+/* #62: trilho + lista abertos formam uma coluna só (sem vão, cantos de fora arredondados). */
+.term-body .term-layout:not(.collapsed) > .rail { border-radius:var(--r-24) 0 0 var(--r-24); border-right:0; margin-right:calc(-1 * var(--sp-16)); }
+.term-body .term-layout:not(.collapsed) > .sidebar { border-radius:0 var(--r-24) var(--r-24) 0; border-left:1px solid var(--glass-line); }
 
 /* Lista (coluna de 390 px) */
 .term-body .sidebar { width:428px; flex:none; padding:var(--sp-16); display:flex; flex-direction:column; gap:var(--sp-10); overflow:auto; }
