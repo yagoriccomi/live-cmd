@@ -13,6 +13,11 @@ Copy-Item "$target\release\live-cmd-termd.exe" "binaries\live-cmd-termd-x86_64-p
 # tauri.bundle.conf.json só no pacote: o tauri-build recusa externalBin ausente num `cargo build` comum.
 npx --yes @tauri-apps/cli@2.12.5 build --config tauri.bundle.conf.json
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
+# Robô E2E no exe do pacote (e2e/run.mjs): falhou, não há release.
+Copy-Item "$target\release\live-cmd-termd.exe" "target\release\live-cmd-termd.exe" -Force
+$env:APP = "$PWD\target\release\live-cmd-app.exe"
+npm --prefix e2e test
+if ($LASTEXITCODE) { "E2E reprovou: release bloqueada."; exit 1 }
 $ver = (Get-Content -Raw tauri.conf.json | ConvertFrom-Json).version
 if (!$ver) { $ver = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value }
 $dir = "target\release\bundle\nsis"
