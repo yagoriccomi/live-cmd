@@ -70,6 +70,9 @@ function draw(key, s = $("screen")) {
     lines.push(line);
   }
   s.replaceChildren(...keep, ...lines);
+  const g = s.dataset.drag && drags[key];
+  if (g) { const lo = Math.min(g.anchor, g.focus), hi = Math.max(g.anchor, g.focus), off = scr.off || 0;
+    lines.forEach((r, i) => { const k = off + lines.length - 1 - i; if (k >= lo && k <= hi) r.classList.add("sel-row"); }); }
   if (s === pane()) afterDraw();
 }
 
@@ -1119,6 +1122,9 @@ const termKey = (e) => {
     e.preventDefault(); e.stopPropagation();
     return invoke("term_scroll", { conn: t.conn, sessionId: t.sid, lines: pg * Math.max(1, size(pane()).rows - 1) }).catch(() => {});
   }
+  // Ctrl+Home / Ctrl+End: topo / fim do histórico (027), fora da tela cheia.
+  const he = e.ctrlKey && !e.altKey && !e.shiftKey ? { Home: 1e6, End: -1e6 }[e.key] : 0;
+  if (he && t && !screens[t.key]?.alt) { e.preventDefault(); e.stopPropagation(); return invoke("term_scroll", { conn: t.conn, sessionId: t.sid, lines: he }).catch(() => {}); }
   const b = keyBytes(e);
   if (b == null) return;
   e.preventDefault();
@@ -1264,7 +1270,9 @@ const rowsEl = (s = pane()) => [...s.children].filter((n) => n.id !== "measure")
 const selecting = new Set(), pendingDraw = new Set();
 const selIn = (s) => { const g = getSelection(); return !g.isCollapsed && s.contains(g.anchorNode); };
 const hasSel = (s = pane()) => selIn(s);
-function holdDraw(s = $("screen")) { const h = selecting.has(s) || selIn(s); if (h) pendingDraw.add(s); return h; }
+// Seleção arrastada que já rolou (027): o painel redesenha a cada passo e repinta as linhas marcadas.
+const drags = {};
+function holdDraw(s = $("screen")) { const h = !s.dataset.drag && (selecting.has(s) || selIn(s)); if (h) pendingDraw.add(s); return h; }
 function flushDraw() {
   for (const s of [...pendingDraw]) {
     if (holdDraw(s)) continue;
@@ -1283,21 +1291,46 @@ for (const s of [$("screen"), $("screen2")]) {
     const other = s === $("screen") ? $("screen2") : $("screen");
     if (selIn(other)) getSelection().removeAllRanges();
     other.classList.add("sel-lock");
-    // Arrastar além do topo/base rola o painel; mais longe da borda, mais rápido. A seleção acompanha via extend().
-    let y = e.clientY, x = e.clientX, raf = 0;
-    const move = (ev) => { y = ev.clientY; x = ev.clientX; };
+    // 027: arrastar além do topo/base rola o histórico (term_scroll); mais longe da borda, mais rápido.
+    // A tela é redesenhada a cada passo, então a seleção vira um intervalo de linhas contadas do fim do buffer;
+    // ao soltar, o texto dessas linhas vem do vt100 (term_lines) e vai para a área de transferência.
+    // ponytail: depois de rolar, a seleção é por linha inteira (sem coluna); refinar se pedirem trecho parcial.
+    const t = s === $("screen2") ? activeTab()?.split : activeTab();
+    const fromEnd = (y) => {
+      const rs = rowsEl(s), n = rs.length, off = screens[t?.key]?.off || 0;
+      let i = rs.findIndex((r) => y < r.getBoundingClientRect().bottom);
+      if (i < 0) i = n - 1;
+      return off + (n - 1 - Math.max(0, i));
+    };
+    let y = e.clientY, n = 0;
+    const drag = { anchor: fromEnd(y), focus: null };
+    const paint = () => {
+      const rs = rowsEl(s), off = screens[t?.key]?.off || 0, lo = Math.min(drag.anchor, drag.focus), hi = Math.max(drag.anchor, drag.focus);
+      rs.forEach((r, i) => { const k = off + rs.length - 1 - i; r.classList.toggle("sel-row", k >= lo && k <= hi); });
+    };
+    const move = (ev) => { y = ev.clientY; if (drag.focus != null) { drag.focus = fromEnd(Math.min(Math.max(y, s.getBoundingClientRect().top), s.getBoundingClientRect().bottom - 1)); paint(); } };
     const tick = () => {
-      if (!selecting.has(s)) { removeEventListener("mousemove", move); return; }
-      const r = s.getBoundingClientRect(), d = y < r.top ? y - r.top : y > r.bottom ? y - r.bottom : 0;
-      if (d) {
-        s.scrollTop += Math.sign(d) * Math.min(4 + Math.abs(d) / 2, 80);
-        const p = document.caretPositionFromPoint?.(Math.min(Math.max(x, r.left + 1), r.right - 1), d < 0 ? r.top + 1 : r.bottom - 1);
-        if (p && s.contains(p.offsetNode)) getSelection().extend(p.offsetNode, p.offset);
+      if (!selecting.has(s)) {
+        removeEventListener("mousemove", move);
+        if (drag.focus == null || !t) return;
+        delete s.dataset.drag; delete drags[t.key];
+        getSelection().removeAllRanges();
+        invoke("term_lines", { conn: t.conn, sessionId: t.sid, hi: drag.anchor, lo: drag.focus })
+          .then((text) => text && invoke("clip_copy", { text }).then(() => banner("Seleção copiada.", "ok")))
+          .catch((err) => banner(msg(err), "err"));
+        return draw(t.key, s);
       }
-      raf = requestAnimationFrame(tick);
+      const r = s.getBoundingClientRect(), d = y < r.top ? y - r.top : y > r.bottom ? y - r.bottom : 0;
+      if (d && t && ++n % 3 === 0) {
+        if (drag.focus == null) { drag.focus = drag.anchor; s.dataset.drag = "1"; drags[t.key] = drag; getSelection().removeAllRanges(); }
+        const k = Math.min(1 + Math.floor(Math.abs(d) / 15), 10);
+        drag.focus = Math.max(0, drag.focus + (d < 0 ? k : -k));
+        invoke("term_scroll", { conn: t.conn, sessionId: t.sid, lines: d < 0 ? k : -k }).catch(() => {});
+      }
+      requestAnimationFrame(tick);
     };
     addEventListener("mousemove", move);
-    raf = requestAnimationFrame(tick);
+    requestAnimationFrame(tick);
   });
   // Clique e foco escolhem o painel que recebe colar, arrastar, busca e exportar.
   s.addEventListener("focus", () => setFocusPane(s === $("screen2") ? 1 : 0, false));
@@ -1520,6 +1553,7 @@ const KEYS = [["Ctrl+C", "Copiar seleção (sem seleção: interrompe, ^C)"], ["
   ["Ctrl+Shift+D", "Dividir com terminal novo"], ["Alt+← / Alt+→", "Alternar o foco entre os painéis divididos"],
   ["F2 / Delete / Enter (fora do terminal)", "Renomear / fechar / abrir o item focado"], ["F11", "Tela cheia (Esc fora do terminal sai)"], ["F5 (fora do terminal) / Ctrl+Shift+R", "Redesenhar a tela"],
   ["Ctrl+= / Ctrl+- / Ctrl+0", "Zoom: no terminal, a fonte de todos; fora, o app"], ["Shift+PgUp / Shift+PgDn", "Rolar o histórico (sem Shift: no shell rola, em tela cheia vai ao programa)"],
+  ["Ctrl+Home / Ctrl+End", "Topo / fim do histórico"],
   ["Arrastar o divisor", "Ajustar os painéis · duplo clique volta a 50/50 · setas ajustam"],
   ["Ctrl+Tab / Ctrl+Shift+Tab", "Próxima / aba anterior"], ["Ctrl+Shift+B", "Mostrar/ocultar lista lateral"], ["Ctrl+Shift+F6", "Ir para a lista lateral"],
   ["Ctrl+roda do mouse", "Zoom da fonte dos terminais"], ["Roda do mouse", "Rolar histórico"],

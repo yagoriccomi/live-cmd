@@ -449,7 +449,7 @@ fn main() {
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove,
-            term::term_export, term::term_export_file, term::term_clear, term::term_upload, term::term_conn_stats, term::term_busy, term::term_rename, term::term_dirs, term::term_layout_get, term::term_layout_set, term::remote_rename,
+            term::term_export, term::term_export_file, term::term_lines, term::term_clear, term::term_upload, term::term_conn_stats, term::term_busy, term::term_rename, term::term_dirs, term::term_layout_get, term::term_layout_set, term::remote_rename,
             agents::agent_list, agents::agent_resume, agents::agent_remove, agents::agent_default_get, agents::agent_default_set, agents::agent_args, agents::agent_icon_get, agents::agent_icon_set,
             ssh::ssh_list, ssh::ssh_save, ssh::ssh_import, ssh::ssh_remove, ssh::ssh_probe, ssh::ssh_connect, ssh::ssh_sessions, ssh::ssh_reconnect, ssh::ssh_git, ssh::ssh_stats,
             hist::hist_meta, hist::hist_list, hist::hist_clear, hist::hist_sessions, sys::sys_stats, get_appearance, set_appearance, daemon_stale, daemon_restart])

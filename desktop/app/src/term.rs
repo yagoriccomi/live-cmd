@@ -48,7 +48,23 @@ fn parser(app: &AppHandle, rows: u16, cols: u16) -> vt100::Parser {
 fn view(vt: vt100::Parser) -> View { View { vt, next: 0, osc: false, busy: false } }
 
 /// Histórico + tela em texto puro; linha quebrada pela largura (wrap) volta a ser uma só.
-fn export(vt: &mut vt100::Parser) -> String {
+fn export(vt: &mut vt100::Parser) -> String { join(lines(vt)) }
+
+/// Trecho por linhas contadas a partir do fim do buffer (0 = última linha da tela), `hi >= lo`.
+fn slice(vt: &mut vt100::Parser, hi: usize, lo: usize) -> String {
+    let l = lines(vt);
+    let n = l.len();
+    join(l.into_iter().take(n.saturating_sub(lo)).skip(n.saturating_sub(hi + 1)).collect())
+}
+
+fn join(out: Vec<(String, bool)>) -> String {
+    let mut s = String::new();
+    for (l, wrap) in out { if wrap { s.push_str(&l) } else { s.push_str(l.trim_end()); s.push('\n') } }
+    s.truncate(s.trim_end().len());
+    s
+}
+
+fn lines(vt: &mut vt100::Parser) -> Vec<(String, bool)> {
     let (keep, cols) = (vt.screen().scrollback(), vt.screen().size().1.get());
     vt.screen_mut().set_scrollback(usize::MAX);
     // (texto, continua na linha seguinte)
@@ -58,10 +74,7 @@ fn export(vt: &mut vt100::Parser) -> String {
     let rows: Vec<String> = vt.screen().rows(0, cols).collect();
     out.extend(rows.into_iter().enumerate().map(|(i, l)| { let w = vt.screen().row_wrapped(i as u16); (l, w) }));
     vt.screen_mut().set_scrollback(keep);
-    let mut s = String::new();
-    for (l, wrap) in out { if wrap { s.push_str(&l) } else { s.push_str(l.trim_end()); s.push('\n') } }
-    s.truncate(s.trim_end().len());
-    s
+    out
 }
 
 /// Saída a partir de `offset`; o que já foi desenhado (replay repetido) é pulado.
@@ -114,7 +127,7 @@ fn render(vt: &vt100::Parser) -> Value {
         if runs.last().is_some_and(|l| l.0.is_empty()) { runs.pop(); }
         Value::Array(runs.into_iter().map(|(t, f, b, fl)| json!([t, f, b, fl])).collect())
     }).collect();
-    json!({ "rows": lines, "app_cursor": s.application_cursor(), "alt": s.alternate_screen() })
+    json!({ "rows": lines, "app_cursor": s.application_cursor(), "alt": s.alternate_screen(), "off": s.scrollback() })
 }
 
 fn load(dir: &Path) -> Result<Vec<Remote>, String> {
@@ -442,6 +455,14 @@ pub fn term_export(app: AppHandle, conn: String, session_id: String) -> String {
     s
 }
 
+/// Seleção que rolou além da tela (027): texto das linhas `hi..=lo`, contadas do fim do buffer.
+#[tauri::command]
+pub fn term_lines(app: AppHandle, conn: String, session_id: String, hi: usize, lo: usize) -> String {
+    let mut s = String::new();
+    with_view(&app, &conn, &session_id, |v| s = slice(&mut v.vt, hi.max(lo), hi.min(lo)));
+    s
+}
+
 /// "Salvar como": grava a exportação no caminho escolhido no diálogo do sistema.
 #[tauri::command(async)]
 /// `text` (trecho selecionado) vai como está; sem ele, o buffer inteiro da sessão.
@@ -550,6 +571,14 @@ mod tests {
         vt.process(b"\x1b[H\x1b[2J");
         vt.screen_mut().clear_scrollback();
         assert_eq!(export(&mut vt), "");
+    }
+
+    #[test]
+    fn slice_conta_linhas_do_fim() {
+        let mut vt = parser(3, 5);
+        vt.process(b"a\r\nb\r\nc\r\nd\r\ne");
+        assert_eq!(slice(&mut vt, 3, 1), "b\nc\nd");
+        assert_eq!(slice(&mut vt, 99, 0), "a\nb\nc\nd\ne");
     }
 
     #[test]

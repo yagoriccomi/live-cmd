@@ -173,6 +173,7 @@ select { font:inherit; padding:var(--sp-6) var(--sp-10); border-radius:var(--rad
 .terminal { font-size:13.6px; }
 .terminal.ctrl { cursor:pointer; }
 .terminal.sel-lock { user-select:none; }
+.terminal .sel-row { background:var(--term-sel); }
 .terminal[contenteditable] { caret-color:transparent; outline:0; }
 ::highlight(find) { background:#6b5a00; color:#fff; }
 ::highlight(find-cur) { background:#f0c000; color:#000; }

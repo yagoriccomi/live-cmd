@@ -31,5 +31,5 @@ Fontes:
 | B4 | 018: shells cadastrados e agentes num menu de novo chat com grupos (#63). 019: o padrão do host salva | alto | feito: menu com grupos Shells/Agentes; padrão falhava com INVALID_MESSAGE (pedido sem `api`); cenário 063 |
 | B5 | 019/020: seletor nativo no local (`tauri-plugin-dialog`) e navegador Aurora no remoto (#64). Autocomplete com Tab, lista ao digitar, conteúdo sem `\` final e visual Aurora | alto | feito: nativo no local, navegador Aurora no remoto, autocomplete próprio; cenário 064 |
 | B6 | 023: Shift+clique direito não destrói a seleção (#65). Exportar abre "Salvar como" e grava `.txt`: com seleção só o trecho, sem seleção o buffer sem repetição (#66) | alto | feito: menu sem mexer na seleção, exportar seleção ou buffer; cenário 065 |
-| B7 | 027: seleção arrastando além da borda rola. Ctrl+Home vai ao início | alto | aberto |
+| B7 | 027: seleção arrastando além da borda rola. Ctrl+Home vai ao início | alto | feito: arrasto rola via term_scroll e copia via term_lines; Ctrl+Home/End; cenário 066 |
 | B8 | 014: o rename trava a seleção. 021: barra escura atrás das pílulas. 022: lista do F1 e contraste das teclas. 025: Configurações > Agentes com "Trocar imagem" e inicial colorida para todos (#67) | alto | aberto |
