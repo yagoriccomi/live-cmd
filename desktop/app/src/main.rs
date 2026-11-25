@@ -247,7 +247,8 @@ fn daemon_stale(app: State<App>) -> bool {
 
 /// Troca o daemon pelo desta versão: encerra o atual (terminais e aparelhos caem; as sessões salvas reabrem) e sobe outro.
 #[tauri::command(async)]
-fn daemon_restart(handle: AppHandle, app: State<App>) -> Result<(), String> {
+fn daemon_restart(handle: AppHandle) -> Result<(), String> {
+    let app = handle.state::<App>();
     term::shutdown(&handle);
     app.svc.shutdown()?;
     if !(0..50).any(|_| { std::thread::sleep(std::time::Duration::from_millis(100)); matches!(ipc::probe(&app.svc.ep), Err(ipc::Fail::Absent)) }) {
@@ -378,6 +379,17 @@ fn stop_terminals(app: &AppHandle) {
     app.exit(0);
 }
 
+/// Bandeja: troca o daemon pelo desta versão sem fechar o app (o aviso de versão só aparece quando o daemon é antigo).
+fn restart_terminals(app: &AppHandle) {
+    let msg = "Reiniciar o serviço de terminais?\n\nOs programas em execução nos terminais deste PC são encerrados e aparelhos conectados caem. Os terminais salvos reabrem em seguida.";
+    if !ask(msg, MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2) { return; }
+    let app = app.clone();
+    std::thread::spawn(move || match daemon_restart(app.clone()) {
+        Ok(()) => if let Some(w) = app.get_webview_window("terminal") { let _ = w.eval("location.reload()"); },
+        Err(e) => live_cmd_echo::hlog(&format!("app: reiniciar terminais falhou ({e})")),
+    });
+}
+
 fn build_menu(app: &AppHandle, state: HostState, connected: usize) -> tauri::Result<Menu<tauri::Wry>> {
     let sep = || PredefinedMenuItem::separator(app);
     let menu = Menu::new(app)?;
@@ -397,6 +409,7 @@ fn build_menu(app: &AppHandle, state: HostState, connected: usize) -> tauri::Res
     menu.append(&CheckMenuItem::with_id(app, "autostart", "Iniciar com o Windows", true, autostart::is_enabled(autostart::RUN_KEY), None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "settings", "Configurações", true, None::<&str>)?)?;
     menu.append(&sep()?)?;
+    menu.append(&MenuItem::with_id(app, "restart_terminals", "Reiniciar terminais…", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "stop_terminals", "Encerrar terminais…", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?)?;
     Ok(menu)
@@ -445,6 +458,7 @@ fn tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
             }
             "quit" => quit(app),
             "stop_terminals" => stop_terminals(app),
+            "restart_terminals" => restart_terminals(app),
             _ => {}
         })
         .build(app)
