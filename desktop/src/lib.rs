@@ -1035,14 +1035,23 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
     let (out, mut out_rx) = mpsc::unbounded_channel::<String>();
     let mut routes: HashMap<String, mpsc::UnboundedSender<String>> = HashMap::new();
     let mut first: Option<tokio::task::JoinHandle<Result<()>>> = None;
+    // Keepalive: ping a cada 30 s; 75 s sem nenhum quadro = socket morto sem fechamento, sai e o laço reconecta.
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + Duration::from_secs(30), Duration::from_secs(30));
+    let mut last = tokio::time::Instant::now();
     loop {
         let frame = tokio::select! {
-            f = ws.next() => f.ok_or("websocket closed")??,
+            f = ws.next() => { last = tokio::time::Instant::now(); f.ok_or("websocket closed")?? }
+            _ = ping.tick() => {
+                if last.elapsed() > Duration::from_secs(75) { hlog("presença: sem resposta ao ping"); return Err("websocket silent".into()) }
+                tokio::time::timeout(Duration::from_secs(5), ws.send(tokio_tungstenite::tungstenite::Message::Ping(Default::default()))).await??;
+                continue
+            }
             Some(wire) = out_rx.recv() => { tokio::time::timeout(Duration::from_secs(2), ws.send(wire.into())).await??; continue }
             r = async { first.as_mut().unwrap().await }, if first.is_some() => return r?,
             _ = stopped(&mut stop) => return Ok(()),
         };
-        let raw = match frame { tokio_tungstenite::tungstenite::Message::Text(t) => t, tokio_tungstenite::tungstenite::Message::Close(_) => return Ok(()), _ => return Err("websocket type".into()) };
+        let raw = match frame { tokio_tungstenite::tungstenite::Message::Text(t) => t, tokio_tungstenite::tungstenite::Message::Close(_) => return Ok(()),
+            tokio_tungstenite::tungstenite::Message::Pong(_) | tokio_tungstenite::tungstenite::Message::Ping(_) => continue, _ => return Err("websocket type".into()) };
         let m = envelope_any(&raw)?;
         if m["type"] == "hello" { *WORKER_TURN.lock().unwrap() = worker_turn(&m["payload"]); }
         match (m["type"].as_str(), m["payload"]["status"].as_str(), &m["connection_id"]) {
