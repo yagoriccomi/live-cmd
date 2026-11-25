@@ -1044,7 +1044,7 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
         };
         let raw = match frame { tokio_tungstenite::tungstenite::Message::Text(t) => t, tokio_tungstenite::tungstenite::Message::Close(_) => return Ok(()), _ => return Err("websocket type".into()) };
         let m = envelope_any(&raw)?;
-        if m["type"] == "hello" { if let Some(t) = worker_turn(&m["payload"]) { *WORKER_TURN.lock().unwrap() = Some(t); } }
+        if m["type"] == "hello" { *WORKER_TURN.lock().unwrap() = worker_turn(&m["payload"]); }
         match (m["type"].as_str(), m["payload"]["status"].as_str(), &m["connection_id"]) {
             (Some("hello"), Some("waiting"), Value::Null) => link.state.store(RUNNING, Relaxed),
             (Some("hello"), Some("ready"), Value::String(id)) if auth::uuid_v4_lower(id).is_some() => {
