@@ -1047,7 +1047,7 @@ listen("term-exited", ({ payload }) => {
   refresh(payload.key.split("/")[0]);
 });
 listen("term-conn", async ({ payload }) => {
-  const id = payload.conn, prev = conns[id]?.status;
+  const id = payload.conn;
   if (!conns[id] || !remoteOrder.includes(id)) await refreshRemotes();
   if (!conns[id]) return;
   conns[id].status = payload;
@@ -1064,11 +1064,10 @@ listen("term-conn", async ({ payload }) => {
   }
   if (payload.state === "ready") {
     await refresh(id);
-    // Reconectou: anexa de novo as abas abertas (tela nova a partir do começo do buffer).
-    if (prev?.state === "connecting" && prev.attempt > 0) {
-      const { cols, rows } = size();
-      for (const t of allRecs().filter((t) => t.conn === id && t.exited == null)) invoke("term_attach", { conn: id, sessionId: t.sid, cols, rows }).catch(() => {});
-    }
+    // Toda conexão nova começa sem sessões anexadas (o client descarta input de sessão não anexada):
+    // anexa de novo as abas abertas, tanto na reconexão automática quanto no "Reconectar" depois de `closed`.
+    const { cols, rows } = size();
+    for (const t of allRecs().filter((t) => t.conn === id && t.exited == null)) invoke("term_attach", { conn: id, sessionId: t.sid, cols, rows }).catch(() => {});
   }
   renderSidebar();
   updateBanner();
