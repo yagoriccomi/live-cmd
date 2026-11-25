@@ -2530,7 +2530,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "live-cmd-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64 0.22.1",
  "live-cmd-echo",
@@ -2564,6 +2564,7 @@ dependencies = [
  "rcgen",
  "serde",
  "serde_json",
+ "sha1 0.10.7",
  "sha2",
  "tokio",
  "tokio-tungstenite",
