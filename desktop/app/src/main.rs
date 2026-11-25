@@ -204,6 +204,21 @@ fn set_scrollback(app: State<App>, lines: usize) -> Result<(), String> {
     Ok(())
 }
 
+/// TURN: caminho do `.env` (vazio = `<dados>/turn.env`) e "Forçar TURN". Vale na próxima conexão (lido a cada peer).
+/// Nunca devolve o conteúdo do `.env`: só se ele existe.
+#[tauri::command]
+fn get_turn(app: State<App>) -> Value {
+    let s = live_cmd_echo::turn_settings(&app.data_dir);
+    let path = live_cmd_echo::turn_env_path(&app.data_dir, &s);
+    json!({ "env_path": s.env_path, "force_relay": s.force_relay, "effective": path.display().to_string(), "exists": path.is_file() })
+}
+
+#[tauri::command]
+fn set_turn(app: State<App>, env_path: String, force_relay: bool) -> Result<Value, String> {
+    live_cmd_echo::turn_settings_save(&app.data_dir, &live_cmd_echo::TurnSettings { env_path: env_path.trim().to_owned(), force_relay })?;
+    Ok(get_turn(app))
+}
+
 fn apply_opacity(app: &AppHandle, w: &tauri::WebviewWindow) {
     sys::window_opacity(w, settings::appearance(&app.state::<App>().data_dir).opacity);
 }
@@ -445,7 +460,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![tray_action, status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, get_profiles, save_profiles, set_scrollback, check_update, install_update,
+        .invoke_handler(tauri::generate_handler![tray_action, status, qr, pair, cancel_pair, copy_link, devices, revoke, get_settings, set_autostart, set_server, open_data_dir, get_profiles, save_profiles, set_scrollback, get_turn, set_turn, check_update, install_update,
             term::term_list, term::term_create, term::term_attach, term::term_detach, term::term_close, term::term_input, term::term_paste,
             term::term_resize, term::term_scroll, term::clip_copy, term::term_connections, term::remote_add, term::remote_connect,
             term::remote_disconnect, term::remote_remove,

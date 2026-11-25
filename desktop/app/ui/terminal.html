@@ -325,6 +325,13 @@
               <p id="sb-e" class="field-error" hidden>Use um número inteiro de 100 a 100000.</p>
               <p id="sb-msg" class="ok-text" role="status"></p>
             </fieldset>
+            <fieldset id="cfg-turn"><legend>TURN (relay)</legend>
+              <label for="turn-env">Arquivo .env do TURN</label>
+              <div class="inline"><input id="turn-env" type="text" spellcheck="false" aria-describedby="turn-help"><button type="button" id="turn-save">Salvar</button></div>
+              <p id="turn-help" class="muted small">Vazio usa o padrão. Tem prioridade sobre o TURN do servidor. Vale na próxima conexão.</p>
+              <label class="check"><input id="turn-force" type="checkbox"> Forçar TURN (temporário, para testar o relay)</label>
+              <p id="turn-msg" class="ok-text" role="status"></p>
+            </fieldset>
             <fieldset id="cfg-shells"><legend>Shells</legend>
               <p class="muted small">Detectados no PC entram sozinhos em "+ Nova sessão". Cadastre aqui shells extras ou ajuste os detectados.</p>
               <div class="alert alert-warn" role="alert" id="prof-err" hidden><p></p></div>

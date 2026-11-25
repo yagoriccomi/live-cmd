@@ -241,6 +241,7 @@ function validServer(v) {
 
 async function loadSettings() {
   const s = await invoke("get_settings");
+  invoke("get_turn").then(turnShow, () => {});
   $("autostart").checked = s.autostart;
   $("cfg-auto").textContent = s.autostart ? "Sim" : "Não";
   $("srv").value = s.server;
@@ -304,6 +305,18 @@ $("sb-save").onclick = async () => {
   try { await invoke("set_scrollback", { lines: n }); $("sb-msg").textContent = "Salvo. Vale para as próximas abas."; $("cfg-sb").textContent = n.toLocaleString("pt-BR"); }
   catch { $("sb-e").hidden = false; }
 };
+
+function turnShow(t) {
+  $("turn-env").value = t.env_path; $("turn-env").placeholder = t.env_path ? "" : t.effective;
+  $("turn-force").checked = t.force_relay;
+  $("turn-msg").textContent = t.exists ? "Arquivo encontrado." : "Arquivo não encontrado: usa o TURN do servidor.";
+}
+async function turnSave() {
+  try { turnShow(await invoke("set_turn", { envPath: $("turn-env").value, forceRelay: $("turn-force").checked })); }
+  catch { $("turn-msg").textContent = "Não foi possível salvar."; }
+}
+$("turn-save").onclick = turnSave;
+$("turn-force").onchange = turnSave;
 
 $("autostart").onchange = async (e) => {
   $("autostart-err").hidden = true;

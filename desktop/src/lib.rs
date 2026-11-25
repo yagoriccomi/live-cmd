@@ -27,7 +27,8 @@ use tokio::sync::mpsc;
 use webrtc::{data_channel::{DataChannel, DataChannelEvent}, peer_connection::*};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-enum Event { Ice(RTCPeerConnectionIceEvent), Channel(Arc<dyn DataChannel>), Connected, Failed }
+/// `Gathered`: coleta ICE terminou; a descrição local já tem todos os candidatos (conexão manual, sem trickle).
+enum Event { Ice(RTCPeerConnectionIceEvent), Channel(Arc<dyn DataChannel>), Connected, Failed, Gathered }
 struct Handler { tx: mpsc::Sender<Event>, failed: tokio::sync::Notify }
 impl Handler {
     fn emit(&self, event: Event) { if self.tx.try_send(event).is_err() { self.failed.notify_one(); } }
@@ -36,6 +37,7 @@ impl Handler {
 impl PeerConnectionEventHandler for Handler {
     async fn on_ice_candidate(&self, e: RTCPeerConnectionIceEvent) { self.emit(Event::Ice(e)); }
     async fn on_data_channel(&self, c: Arc<dyn DataChannel>) { self.emit(Event::Channel(c)); }
+    async fn on_ice_gathering_state_change(&self, s: RTCIceGatheringState) { if s == RTCIceGatheringState::Complete { self.emit(Event::Gathered); } }
     async fn on_connection_state_change(&self, s: RTCPeerConnectionState) {
         if matches!(s, RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed | RTCPeerConnectionState::Disconnected) { self.emit(Event::Failed); }
         if s == RTCPeerConnectionState::Connected { self.emit(Event::Connected); }
@@ -77,11 +79,89 @@ async fn remote_fingerprint(pc: &impl PeerConnection) -> Result<[u8; 32]> {
 fn peer(cert: RTCCertificate) -> PeerConnectionBuilder<&'static str> {
     // Acima de PAUSE o envio de saída já para (C3 §6); o limite só evita `send` bloqueante no loop.
     PeerConnectionBuilder::new()
-        // ponytail: só STUN; NAT simétrico precisa de TURN (relay), adicionar quando aparecer.
-        .with_configuration(RTCConfigurationBuilder::new().with_certificates(vec![cert])
-            .with_ice_servers(vec![RTCIceServer { urls: vec!["stun:stun.cloudflare.com:3478".to_owned(), "stun:stun.l.google.com:19302".to_owned()], ..Default::default() }]).build())
+        // Teste não lê a pasta de dados real do PC.
+        .with_configuration(ice_config(RTCConfigurationBuilder::new().with_certificates(vec![cert]),
+            if cfg!(test) { None } else { default_data_dir().ok() }.as_deref(), unix_now()).build())
         .with_udp_addrs(vec!["0.0.0.0:0", "127.0.0.1:0"]).with_data_channel_send_buffer_limit(PAUSE + (1 << 20))
 }
+fn unix_now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) }
+
+/// Configuração de TURN gravada pelo app em `turn-settings.json` (pasta de dados): caminho do `.env` e "Forçar TURN".
+#[derive(Clone, Default, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct TurnSettings { pub env_path: String, pub force_relay: bool }
+pub fn turn_settings(dir: &Path) -> TurnSettings {
+    std::fs::read(dir.join("turn-settings.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+pub fn turn_settings_save(dir: &Path, s: &TurnSettings) -> std::result::Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|_| "IO_ERROR")?;
+    let tmp = dir.join("turn-settings.json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(s).unwrap()).map_err(|_| "IO_ERROR")?;
+    std::fs::rename(&tmp, dir.join("turn-settings.json")).map_err(|_| "IO_ERROR".into())
+}
+/// Caminho efetivo do `.env`: o de Configurações, senão `<dados>/turn.env`.
+pub fn turn_env_path(dir: &Path, s: &TurnSettings) -> PathBuf {
+    if s.env_path.trim().is_empty() { dir.join("turn.env") } else { PathBuf::from(s.env_path.trim()) }
+}
+/// coturn `use-auth-secret`: `username = <vencimento unix s>:<serviço>`, `credential = base64(HMAC-SHA1(segredo, username))`.
+fn turn_credential(secret: &str, service: &str, expiry: u64) -> (String, String) {
+    use hmac::Mac;
+    let username = format!("{expiry}:{service}");
+    let mut m = <hmac::Hmac<sha1::Sha1> as Mac>::new_from_slice(secret.as_bytes()).expect("HMAC aceita qualquer chave");
+    m.update(username.as_bytes());
+    (username, base64::engine::general_purpose::STANDARD.encode(m.finalize().into_bytes()))
+}
+/// `.env` de TURN (`TURN_URLS` por vírgula, `TURN_SERVICE`, `TURN_SECRET`, `TURN_TTL_S`). Ausente ou incompleto = `None`.
+/// O segredo nunca sai daqui: só a credencial derivada.
+fn turn_from_env(text: &str, now: u64) -> Option<RTCIceServer> {
+    let kv: HashMap<&str, &str> = text.lines().filter_map(|l| l.trim().split_once('='))
+        .map(|(k, v)| (k.trim(), v.trim().trim_matches(|c| c == '"' || c == '\''))).collect();
+    let urls: Vec<String> = kv.get("TURN_URLS")?.split(',').map(str::trim).filter(|u| !u.is_empty()).map(str::to_owned).collect();
+    let secret = kv.get("TURN_SECRET").filter(|s| !s.is_empty())?;
+    if urls.is_empty() { return None; }
+    let ttl = kv.get("TURN_TTL_S").and_then(|t| t.parse().ok()).unwrap_or(21_600u64);
+    let (username, credential) = turn_credential(secret, kv.get("TURN_SERVICE").copied().unwrap_or("live-cmd"), now + ttl);
+    Some(RTCIceServer { urls, username, credential })
+}
+/// Último `payload.turn` do `hello` do Worker; usado quando não há `.env`.
+static WORKER_TURN: Mutex<Option<RTCIceServer>> = Mutex::new(None);
+fn worker_turn(p: &Value) -> Option<RTCIceServer> {
+    let t = &p["turn"];
+    let urls: Vec<String> = t["urls"].as_array()?.iter().filter_map(|u| u.as_str().map(str::to_owned)).collect();
+    if urls.is_empty() { return None; }
+    Some(RTCIceServer { urls, username: t["username"].as_str()?.to_owned(), credential: t["credential"].as_str()?.to_owned() })
+}
+/// STUN fixo + TURN (`.env` tem prioridade sobre o Worker) + relay quando "Forçar TURN". Sem pasta = só STUN e o Worker.
+fn ice_config(b: RTCConfigurationBuilder, dir: Option<&Path>, now: u64) -> RTCConfigurationBuilder {
+    let mut v = vec![RTCIceServer { urls: vec!["stun:stun.cloudflare.com:3478".to_owned(), "stun:stun.l.google.com:19302".to_owned()], ..Default::default() }];
+    let s = dir.map(turn_settings).unwrap_or_default();
+    let env = dir.and_then(|d| std::fs::read_to_string(turn_env_path(d, &s)).ok()).and_then(|t| turn_from_env(&t, now));
+    if let Some(t) = env.or_else(|| WORKER_TURN.lock().unwrap().clone()) { v.push(t); }
+    let b = b.with_ice_servers(v);
+    // ponytail: "Forçar TURN" é temporário (prova do relay entre PCs); remover com o teste no 4G.
+    if s.force_relay { b.with_ice_transport_policy(RTCIceTransportPolicy::Relay) } else { b }
+}
+
+// ---- Conexão manual por códigos (sem servidor de sinalização) ----
+// Fatia 2 ainda não usa estes helpers.
+#[allow(dead_code)]
+/// Prazo do lado que espera o outro PC colar o código.
+const MANUAL_WAIT: Duration = Duration::from_secs(300);
+/// Código: `lcm1.` + JSON em base64url sem padding. `t` = `offer` (convite) ou `answer` (resposta).
+#[allow(dead_code)]
+fn code_encode(v: &Value) -> String { format!("lcm1.{}", B64.encode(v.to_string())) }
+/// Espaços e quebras de linha (colado de chat) são ignorados. Código do outro tipo = `WRONG_CODE`.
+#[allow(dead_code)]
+fn code_decode(code: &str, t: &str) -> std::result::Result<Value, String> {
+    let code: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+    let b = code.strip_prefix("lcm1.").filter(|b| b.len() <= 65536).ok_or("INVALID_CODE")?;
+    let v: Value = B64.decode(b).ok().and_then(|j| serde_json::from_slice(&j).ok()).ok_or("INVALID_CODE")?;
+    if v["v"] != 1 || !v["t"].is_string() || v["sdp"].as_str().is_none_or(|s| s.trim().is_empty()) { return Err("INVALID_CODE".into()); }
+    if v["t"] != t { return Err("WRONG_CODE".into()); }
+    Ok(v)
+}
+#[allow(dead_code)]
+fn b64_32(v: &Value) -> Option<[u8; 32]> { B64.decode(v.as_str()?).ok()?.try_into().ok() }
 
 // ---- D3c: pty-channel após AUTHENTICATED (C3) ----
 const PAUSE: usize = 1 << 20;
@@ -964,6 +1044,7 @@ async fn run(url: &str, room: &str, host: Arc<Host>, link: &Link, mut stop: toki
         };
         let raw = match frame { tokio_tungstenite::tungstenite::Message::Text(t) => t, tokio_tungstenite::tungstenite::Message::Close(_) => return Ok(()), _ => return Err("websocket type".into()) };
         let m = envelope_any(&raw)?;
+        if m["type"] == "hello" { if let Some(t) = worker_turn(&m["payload"]) { *WORKER_TURN.lock().unwrap() = Some(t); } }
         match (m["type"].as_str(), m["payload"]["status"].as_str(), &m["connection_id"]) {
             (Some("hello"), Some("waiting"), Value::Null) => link.state.store(RUNNING, Relaxed),
             (Some("hello"), Some("ready"), Value::String(id)) if auth::uuid_v4_lower(id).is_some() => {
@@ -1033,6 +1114,7 @@ async fn negotiate(id: &str, rid: [u8; 16], host: Arc<Host>, mut stop: tokio::sy
                 _ = handler.failed.notified() => return Err("callback overflow".into()),
                 event = rx.recv() => match event.ok_or("events closed")? {
                     Event::Failed => return Err("connection closed".into()),
+                    Event::Gathered => continue,
                     Event::Connected => { hlog(&format!("tentativa {id}: DTLS conectado")); connected_at.get_or_insert_with(Instant::now); continue }
                     Event::Channel(c) => {
                         let slot = match c.label().await?.as_str() { "pty-channel" => &mut channel, "file-channel" => &mut file, _ => return Err("channel properties".into()) };
@@ -1408,6 +1490,36 @@ async fn presence(i: &Inner) {
 }
 #[cfg(test)]
 mod tests {
+    /// Mesmo vetor de `signaling/signaling.test.ts` (Node `createHmac('sha1','s3cret')`), sem ler o `.env` real.
+    #[test]
+    fn turn_env_hmac_e_relay() {
+        use super::*;
+        assert_eq!(turn_credential("s3cret", "live-cmd", 22_600), ("22600:live-cmd".into(), "X8vYGDOBNEE5zbRaoKFwOE87ocg=".into()));
+        let env = "TURN_URLS=turn:x:3478?transport=udp, turns:x:5349
+TURN_SERVICE=live-cmd
+TURN_SECRET=s3cret
+TURN_TTL_S=21600
+";
+        let t = turn_from_env(env, 1_000).unwrap();
+        assert_eq!((t.urls.len(), t.username.as_str(), t.credential.as_str()), (2, "22600:live-cmd", "X8vYGDOBNEE5zbRaoKFwOE87ocg="));
+        assert!(turn_from_env("TURN_URLS=turn:x
+", 0).is_none(), "sem segredo = sem TURN");
+        let dir = std::env::temp_dir().join(format!("live-cmd-turn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let c = ice_config(RTCConfigurationBuilder::new(), Some(&dir), 1_000).build();
+        assert_eq!((c.ice_servers().len(), c.ice_transport_policy()), (1, RTCIceTransportPolicy::Unspecified), "sem .env: só STUN");
+        std::fs::create_dir_all(&dir).unwrap();
+        let env_path = dir.join("outro.env");
+        std::fs::write(&env_path, env).unwrap();
+        turn_settings_save(&dir, &TurnSettings { env_path: env_path.display().to_string(), force_relay: true }).unwrap();
+        let c = ice_config(RTCConfigurationBuilder::new(), Some(&dir), 1_000).build();
+        assert_eq!(c.ice_servers()[1].username, "22600:live-cmd");
+        assert_eq!(c.ice_transport_policy(), RTCIceTransportPolicy::Relay);
+        let w = worker_turn(&json!({"turn":{"urls":["turn:w"],"username":"u","credential":"c"}})).unwrap();
+        assert_eq!((w.urls, w.username), (vec!["turn:w".to_owned()], "u".to_owned()));
+        assert!(worker_turn(&json!({"role":"host"})).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     #[test]
     fn upload_dir_by_kind() {
         let (h, p) = (Path::new(r"C:\Users\u"), Path::new(r"D:\proj"));
@@ -1664,13 +1776,13 @@ mod tests {
                     _ = handler_b.failed.notified() => return Err("overflow B".into()),
                     event = rx_a.recv() => match event {
                         Some(Event::Ice(e)) => b.add_ice_candidate(e.candidate.to_json()?).await?,
-                        Some(Event::Connected) => {}
+                        Some(Event::Connected | Event::Gathered) => {}
                         _ => return Err("evento inesperado A".into()),
                     },
                     event = rx_b.recv() => match event {
                         Some(Event::Ice(e)) => a.add_ice_candidate(e.candidate.to_json()?).await?,
                         Some(Event::Channel(c)) if receiver.is_none() => receiver = Some(c),
-                        Some(Event::Connected) => {}
+                        Some(Event::Connected | Event::Gathered) => {}
                         _ => return Err("evento inesperado B".into()),
                     },
                     event = sender.poll(), if !opened_a => match event {
