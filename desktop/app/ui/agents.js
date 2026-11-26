@@ -228,7 +228,7 @@ const AI_SUG = {
   openclaude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
   codex: ["--model gpt-5", "--full-auto", "--search", "--sandbox read-only", "--sandbox workspace-write", "--ask-for-approval on-request"],
 };
-const AGENT_NAME = { claude: "Claude Code", openclaude: "OpenClaude", codex: "Codex" };
+const AGENT_NAME = { claude: "Claude Code", openclaude: "OpenClaude", codex: "Codex", antigravity: "Antigravity" };
 async function newAi(conn, dir, agent0) {
   localStorage.removeItem("ai-default"); // resto de versão antiga; o padrão agora é do host
   const [d, list] = await Promise.all([
@@ -236,17 +236,23 @@ async function newAi(conn, dir, agent0) {
     invoke("agent_list", { conn }).catch(() => null),
   ]);
   const recent = [...new Set((list?.groups || []).map((g) => g.path).filter(Boolean))];
-  const opt = (v) => { const o = el("option"); o.value = v; return o; };
+  const opt = (v, l) => { const o = el("option"); o.value = v; if (l) o.label = v + " — " + l; return o; };
   const cwdIn = $("ai-cwd"), dirs = $("ai-dirs"), pick = $("ai-pick");
+  // Antigravity só aparece se o host achar `agy` no PATH (host antigo devolve array: fica oculto).
+  $("ai-agent").querySelector('option[value="antigravity"]').hidden = !(await invoke("agent_args", { conn, agent: "antigravity" }).catch(() => null))?.installed;
   $("ai-agent").value = agent0 || d?.agent || "claude";
+  if ($("ai-agent").selectedOptions[0]?.hidden) $("ai-agent").value = "claude";
   if (!$("ai-agent").value) $("ai-agent").value = "claude";
   cwdIn.value = dir || recent[0] || ""; $("ai-args").value = d?.args || ""; $("ai-def").checked = false;
   // Comandos extras já usados com o agente no host + opções conhecidas; texto livre continua valendo.
   const sug = async () => {
     const a = $("ai-agent").value, l = await invoke("agent_args", { conn, agent: a }).catch(() => null);
-    if (a === $("ai-agent").value) $("ai-sug").replaceChildren(...(Array.isArray(l) ? l : AI_SUG[a] || []).map(opt));
+    if (a !== $("ai-agent").value) return;
+    const o = Array.isArray(l?.options) ? l.options : (Array.isArray(l) ? l : AI_SUG[a] || []).map((value) => ({ value }));
+    $("ai-sug").replaceChildren(...o.map((x) => opt(x.value, x.label)));
   };
-  $("ai-agent").onchange = sug; sug();
+  // Trocar de agente não herda os comandos extras do anterior (flags não valem entre CLIs).
+  $("ai-agent").onchange = () => { $("ai-args").value = $("ai-agent").value === d?.agent ? d?.args || "" : ""; sug(); }; sug();
   // Caminho completo embaixo do campo: o que vai para o host, sem barra final.
   const path = () => { $("ai-path").textContent = cwdIn.value.trim().replace(/[\\/]+$/, "") || "Pasta inicial do perfil (~)"; };
   // 📁 (#64): no PC local, o seletor nativo do Windows; no remoto, navegador próprio (voltar, endereço, pastas).

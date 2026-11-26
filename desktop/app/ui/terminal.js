@@ -596,7 +596,7 @@ function agentIcon(conn, agent) {
   agentIcons.get(k).then((u) => { if (u) { i.textContent = ""; i.style.backgroundImage = `url("${u}")`; } });
   return i;
 }
-const sessionKind = (label = "") => /\b(claude|openclaude|codex)\b/i.test(label) ? "agent" : /\bssh\b|@/i.test(label) ? "ssh" : "shell";
+const sessionKind = (label = "") => /\b(claude|openclaude|codex|antigravity)\b/i.test(label) ? "agent" : /\bssh\b|@/i.test(label) ? "ssh" : "shell";
 let sideFilter = "";
 function sessionItem(conn, s) {
   const li = el("li"), b = el("button");
@@ -645,7 +645,7 @@ function sessionItem(conn, s) {
     st.onclick = (e) => { e.stopPropagation(); menu(st, badgeMenu(conn, s.session_id)); };
   }
   const tile = el("span", "tile", kind === "agent" ? null : KIND_ICON[kind]);
-  if (kind === "agent") tile.append(agentIcon(conn, (s.label.match(/\b(openclaude|claude|codex)\b/i) || [, "?"])[1].toLowerCase()));
+  if (kind === "agent") tile.append(agentIcon(conn, (s.label.match(/\b(openclaude|claude|codex|antigravity)\b/i) || [, "?"])[1].toLowerCase()));
   b.append(tile, txt, st);
   b.firstChild.setAttribute("aria-hidden", "true");
   if (busy.has(key)) b.append(actDot());

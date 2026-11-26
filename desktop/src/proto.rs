@@ -64,7 +64,7 @@ pub fn parse_u64(v: &Value) -> R<u64> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Focus { Foreground, Background }
 /// CLIs de IA que `session_create` pode iniciar.
-pub const AGENTS: [&str; 3] = ["claude", "openclaude", "codex"];
+pub const AGENTS: [&str; 4] = ["claude", "openclaude", "codex", "antigravity"];
 /// Argumentos extras do agente: vão digitados no shell, então só caracteres sem efeito de shell.
 pub fn valid_args(a: &str) -> bool { a.len() <= 512 && a.chars().all(|c| c.is_ascii_alphanumeric() || " ._=/:-,".contains(c)) }
 #[derive(Debug, Clone, PartialEq)]

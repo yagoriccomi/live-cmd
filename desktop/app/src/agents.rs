@@ -23,9 +23,10 @@ pub fn agent_default_set(app: AppHandle, conn: String, agent: String, args: Stri
 }
 
 /// Sugestões do campo "Comandos extras": já usados com o agente no host da conexão + opções conhecidas (#19, #20).
+/// Host novo: payload inteiro (`args`, `options` com descrição, `installed`); host antigo: só o array `args`.
 #[tauri::command(async)]
 pub fn agent_args(app: AppHandle, conn: String, agent: String) -> Result<Value, String> {
-    term::client(&app, &conn)?.request(json!({ "type": "agent_args", "api": 1, "agent": agent })).map(|v| v["args"].clone())
+    term::client(&app, &conn)?.request(json!({ "type": "agent_args", "api": 1, "agent": agent })).map(|mut v| if v.get("options").is_some() { v } else { v["args"].take() })
 }
 
 /// Ícone enviado pelo usuário, salvo no host (#40): data URL ou `null`.

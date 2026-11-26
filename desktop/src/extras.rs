@@ -498,24 +498,57 @@ pub fn agent_default_ok(d: Option<&AgentDefault>) -> Value {
     }
 }
 
-/// Opções conhecidas de cada agente (autocomplete do campo "Comandos extras").
-fn known_args(agent: &str) -> &'static [&'static str] {
-    const CLAUDE: &[&str] = &["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"];
+/// Opções conhecidas de cada agente (autocomplete do campo "Comandos extras"), com descrição.
+fn known_args(agent: &str) -> &'static [(&'static str, &'static str)] {
+    const CLAUDE: &[(&str, &str)] = &[
+        ("--model opus", "Modelo Opus"), ("--model sonnet", "Modelo Sonnet"), ("--continue", "Retoma a última conversa da pasta"),
+        ("--permission-mode plan", "Só planeja, não edita"), ("--permission-mode acceptEdits", "Aceita edições sem perguntar"),
+        ("--dangerously-skip-permissions", "Aprova tudo sem perguntar (perigoso)"), ("--verbose", "Saída detalhada"),
+    ];
     match agent {
         "claude" | "openclaude" => CLAUDE,
-        "codex" => &["--model gpt-5", "--full-auto", "--search", "--sandbox read-only", "--sandbox workspace-write", "--ask-for-approval on-request"],
+        "codex" => &[
+            ("--model gpt-5", "Modelo GPT-5"), ("--full-auto", "Edita e executa na pasta sem perguntar"), ("--search", "Habilita busca na web"),
+            ("--sandbox read-only", "Sandbox só leitura"), ("--sandbox workspace-write", "Sandbox grava só na pasta"), ("--ask-for-approval on-request", "Pede aprovação quando precisar"),
+        ],
+        // Ref.: antigravity.google/docs/cli/reference. Sem flags de bypass.
+        "antigravity" => &[
+            ("--mode plan", "Só planeja, não edita"), ("--mode accept-edits", "Aceita edições sem perguntar"),
+            ("--sandbox", "Terminal em sandbox do sistema"), ("--effort high", "Mais raciocínio"), ("--effort low", "Menos raciocínio"),
+        ],
         _ => &[],
     }
 }
 /// Usados primeiro, depois os conhecidos; sem vazios, repetidos ou args fora da regra do `agent_create`.
-pub fn agent_args_ok(agent: &str, used: &[String]) -> Value {
-    let mut out: Vec<String> = vec![];
-    for a in used.iter().map(|a| a.trim()).chain(known_args(agent).iter().copied()) {
-        if !a.is_empty() && crate::proto::valid_args(a) && !out.iter().any(|o| o == a) { out.push(a.to_owned()); }
+/// `args` (texto) fica para clientes antigos; `options` traz a descrição; `installed` diz se o CLI está no PATH do host.
+pub fn agent_args_ok(agent: &str, used: &[String], installed: bool) -> Value {
+    let mut out: Vec<(String, &str)> = vec![];
+    for (a, l) in used.iter().map(|a| (a.trim(), "Já usado neste host")).chain(known_args(agent).iter().copied()) {
+        if !a.is_empty() && crate::proto::valid_args(a) && !out.iter().any(|o| o.0 == a) { out.push((a.to_owned(), l)); }
     }
     let mut extra = Map::new();
     extra.insert("agent".into(), agent.into());
-    fit("agent_args_ok", "args", out.into_iter().map(Value::from).collect(), extra)
+    extra.insert("installed".into(), installed.into());
+    let mut v = fit("agent_args_ok", "options", out.into_iter().map(|(a, l)| json!({"value": a, "label": l})).collect(), extra);
+    loop {
+        v["args"] = v["options"].as_array().unwrap().iter().map(|o| o["value"].clone()).collect();
+        if v.to_string().len() <= MAX_BODY { return v; }
+        v["options"].as_array_mut().unwrap().pop();
+    }
+}
+#[test]
+fn agent_args_labels() {
+    let v = agent_args_ok("antigravity", &[" --mode plan ".into()], true);
+    assert_eq!((v["args"][0].as_str(), v["options"][0]["label"].as_str(), v["installed"].as_bool()), (Some("--mode plan"), Some("Já usado neste host"), Some(true)));
+    assert!(!v["args"].as_array().unwrap().iter().any(|a| a.as_str().unwrap().contains("dangerously")));
+    assert_eq!(v["args"].as_array().unwrap().len(), v["options"].as_array().unwrap().len());
+    let used = (0..200).map(|i| format!("--x{i:03}{}", "a".repeat(500))).collect::<Vec<_>>();
+    let v = agent_args_ok("antigravity", &used, true);
+    assert!(v.to_string().len() <= MAX_BODY);
+    let args = v["args"].as_array().unwrap();
+    let options = v["options"].as_array().unwrap();
+    assert!(!args.is_empty());
+    assert!(args.iter().eq(options.iter().map(|o| &o["value"])));
 }
 
 /// `%USERPROFILE%\.ssh` deste usuário (`None` sem perfil).
@@ -710,7 +743,7 @@ mod tests {
         assert!(matches!(req("codex".into()), Ok(Control::Request { req: P::Extra(Req::AgentArgs(_)), .. })));
         assert!(matches!(req("bash".into()), Err(InvalidMessage)), "agente desconhecido");
         let used = ["--model haiku".to_string(), " --verbose ".into(), "--model haiku".into(), "& calc".into(), String::new()];
-        let v = agent_args_ok("claude", &used);
+        let v = agent_args_ok("claude", &used, true);
         let a: Vec<&str> = v["args"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
         assert_eq!(&a[..3], ["--model haiku", "--verbose", "--model opus"], "usados primeiro, sem repetir nem args perigosos");
         assert_eq!(a.iter().filter(|x| **x == "--verbose").count(), 1);

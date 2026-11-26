@@ -269,7 +269,7 @@ impl Hub {
     /// Inicia (ou retoma) o CLI de IA dentro do shell da sessão; o id da conversa é o id da sessão.
     fn start_ai(&mut self, sid: Sid, agent: String, args: String, resume: bool) {
         let id = proto::uuid_str(&sid);
-        let resume = resume && (agent == "codex" || conversation_exists(&agent, &id));
+        let resume = resume && (matches!(agent.as_str(), "codex" | "antigravity") || conversation_exists(&agent, &id));
         self.s.type_in(&sid, format!("{}\r", ai_cmd(&agent, &args, &id, resume)).as_bytes());
         self.ai.insert(sid, (agent, args));
         self.dirty = true;
@@ -603,7 +603,7 @@ impl Hub {
                 extras::ssh_key_list_ok(&root.to_string_lossy(), &shown, &dirs, &keys)
             }
             X::AgentDefaultGet => extras::agent_default_ok(p.agent_default().as_ref()),
-            X::AgentArgs(agent) => extras::agent_args_ok(&agent, &p.agent_args_used(&agent)),
+            X::AgentArgs(agent) => extras::agent_args_ok(&agent, &p.agent_args_used(&agent), agent_installed(&agent)),
             X::AgentDefaultSet(d) => { p.agent_default_save(&d).map_err(|c| extras::code(&c))?; extras::empty_ok("agent_default_set_ok") }
             X::AgentIconGet(a) => extras::agent_icon_ok(&a, p.agent_icon(&a).as_deref()),
             X::AgentIconSet { agent, image } => { p.agent_icon_save(&agent, image.as_deref()).map_err(|c| extras::code(&c))?; extras::empty_ok("agent_icon_set_ok") }
@@ -723,6 +723,12 @@ fn list_dirs(path: &str) -> Vec<String> {
     v
 }
 
+/// CLI do agente no PATH do host (`.exe`/`.cmd`/`.ps1`, como o shell o acharia).
+// ponytail: só PATH; %LOCALAPPDATA%\\agy\\bin fica fora até o lançamento usar caminho absoluto.
+fn agent_installed(agent: &str) -> bool {
+    let exe = if agent == "antigravity" { "agy" } else { agent };
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| ["exe", "cmd", "ps1"].iter().any(|x| d.join(format!("{exe}.{x}")).is_file())))
+}
 /// O CLI só grava a conversa após a primeira mensagem; sem ela `--resume` falha ("Nenhuma conversa encontrada").
 /// Arquivo: `~/.<agente>/projects/<pasta>/<id>.jsonl` (procura em todas: a pasta da aba pode ter mudado).
 fn conversation_exists(agent: &str, id: &str) -> bool {
@@ -732,8 +738,11 @@ fn conversation_exists(agent: &str, id: &str) -> bool {
 }
 /// Linha digitada no shell para iniciar/retomar o agente. `args` já validado no proto (sem metacaracteres de shell).
 // ponytail: codex não aceita id na criação; retoma a última conversa da pasta (`resume --last`).
+// ponytail: antigravity (`agy`) também não recebe id; `--continue` retoma a última da pasta, não a exata.
 fn ai_cmd(agent: &str, args: &str, id: &str, resume: bool) -> String {
     let base = match (agent, resume) {
+        ("antigravity", false) => "agy".to_owned(),
+        ("antigravity", true) => "agy --continue".to_owned(),
         ("codex", false) => "codex".to_owned(),
         ("codex", true) => "codex resume --last".to_owned(),
         (a, false) => format!("{a} --session-id {id}"),
@@ -746,6 +755,8 @@ fn ai_cmd_resume() {
     assert_eq!(ai_cmd("claude", " --model x ", "u1", false), "claude --session-id u1 --model x");
     assert_eq!(ai_cmd("openclaude", "", "u1", true), "openclaude --resume u1");
     assert_eq!(ai_cmd("codex", "", "u1", true), "codex resume --last");
+    assert_eq!(ai_cmd("antigravity", "--mode plan", "u1", false), "agy --mode plan");
+    assert_eq!(ai_cmd("antigravity", "", "u1", true), "agy --continue");
     let s: Saved = serde_json::from_str(r#"{"id":"a","profile":"p","label":"","cwd":null,"cols":1,"rows":1,"tail":""}"#).unwrap();
     assert_eq!((s.agent, s.args), (None, String::new()));
 }

@@ -166,7 +166,7 @@ pub fn kind_of(label: &str) -> &'static str {
     let l = label.to_lowercase();
     let has = |w: &str| l.split(|c: char| !c.is_alphanumeric() && c != '-').any(|t| t == w);
     if has("ssh") { "ssh" }
-    else if [" · claude", " · openclaude", " · codex"].iter().any(|s| l.ends_with(s)) { "ia" }
+    else if [" · claude", " · openclaude", " · codex", " · antigravity"].iter().any(|s| l.ends_with(s)) { "ia" }
     else if has("pwsh") || l.contains("powershell") { "pwsh" }
     else if has("cmd") || l.contains("prompt de comando") { "cmd" }
     else if has("wsl") || has("bash") || has("ubuntu") { "wsl" }
