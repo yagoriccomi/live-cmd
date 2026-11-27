@@ -146,13 +146,18 @@ pub fn exec_in(s: &settings::SshServer, cmd: &str, input: Option<Vec<u8>>, timeo
 /// Grava `data` no servidor: `<cwd>/<sub>` ou `~/<fallback>` (cria a pasta). Devolve o caminho absoluto remoto.
 /// Vai pelo stdin do ssh (`cat >`), sem scp: o caminho remoto não passa por outra regra de aspas.
 pub fn put(s: &settings::SshServer, cwd: Option<&str>, sub: &str, fallback: &str, name: &str, data: Vec<u8>) -> Result<String, String> {
+    put_via(|cmd, d| exec_in(s, cmd, Some(d), Duration::from_secs(120)), cwd, sub, fallback, name, data)
+}
+
+/// [`put`] sobre um transporte qualquer (`cmd`, stdin) -> stdout; os testes trocam o ssh por um falso.
+fn put_via(exec: impl Fn(&str, Vec<u8>) -> Option<String>, cwd: Option<&str>, sub: &str, fallback: &str, name: &str, data: Vec<u8>) -> Result<String, String> {
     let name: String = name.chars().filter(|c| !matches!(c, '/' | '\\') && !c.is_control()).collect();
     if name.is_empty() || name == "." || name == ".." { return Err("INVALID_MESSAGE".into()); }
     let dir = match cwd { Some(d) => format!("{}/{sub}", sq(d)), None => format!("\"$HOME\"/{fallback}") };
     let cmd = format!("d={dir} && mkdir -p \"$d\" && cd \"$d\" && cat > {} && printf '%s/%s' \"$PWD\" {}", sq(&name), sq(&name));
-    if let Some(p) = exec_in(s, &cmd, Some(data.clone()), Duration::from_secs(120)).filter(|p| p.starts_with('/')) { return Ok(p); }
+    if let Some(p) = exec(&cmd, data.clone()).filter(|p| p.starts_with('/')) { return Ok(p); }
     // Servidor Windows (OpenSSH com PowerShell como shell): o comando sh falha; grava pelo PowerShell.
-    exec_in(s, &ps_put(cwd, sub, fallback, &name), Some(data), Duration::from_secs(120))
+    exec(&ps_put(cwd, sub, fallback, &name), data)
         .map(|p| p.trim().to_owned()).filter(|p| p.as_bytes().get(1) == Some(&b':')).ok_or_else(|| "SCP_FAILED".into())
 }
 
@@ -208,6 +213,21 @@ pub fn parse_stats(out: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn put_cai_no_powershell_quando_sh_falha() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        // Servidor Windows falso: sh falha, PowerShell grava e devolve caminho com unidade.
+        let r = put_via(|cmd, d| { calls.borrow_mut().push((cmd.to_owned(), d)); cmd.starts_with("$d=(").then(|| "C:\\u\\screenshots\\a.png\r\n".into()) },
+            Some(r"C:\u"), "screenshots", "Pictures", "a.png", b"img".to_vec());
+        assert_eq!(r.as_deref(), Ok(r"C:\u\screenshots\a.png"));
+        let c = calls.borrow();
+        assert_eq!(c.len(), 2);
+        assert!(c[0].0.starts_with("d=") && c[1].0.starts_with(r"$d=(Join-Path 'C:\u' 'screenshots');"));
+        assert!(c.iter().all(|(_, d)| d == b"img"));
+        // Nenhum dos dois devolve caminho válido: SCP_FAILED.
+        assert_eq!(put_via(|_, _| Some("lixo".into()), None, "s", "f", "a.png", vec![]), Err("SCP_FAILED".into()));
+    }
 
     #[test]
     fn ps_put_cita_pasta_e_nome() {
