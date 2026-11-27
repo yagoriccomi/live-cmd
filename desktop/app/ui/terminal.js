@@ -155,18 +155,26 @@ function renderTabs() {
   renderSidebar();
 }
 
-/** Reordena (#27): solta antes ou depois da guia alvo conforme a metade; sem alvo, vai para o fim. Só a ordem das guias muda. */
+/** Reordena (#27, 021): com `x`, a guia cai onde está o cursor (antes da 1ª guia cujo centro passa de x);
+ * sem `x`, antes de `to` (ou no fim). As guias deslizam até o lugar novo (FLIP). */
 function moveTab(from, to, x) {
   const i = tabs.findIndex((t) => t.key === from);
   if (i < 0 || from === to) return;
   const [m] = tabs.splice(i, 1);
-  const b = to && $("tabs").querySelector(`[data-key="${CSS.escape(to)}"]`);
-  let j = to ? tabs.findIndex((t) => t.key === to) : -1;
+  const bar = $("tabs"), at = (k) => bar.querySelector(`[data-key="${CSS.escape(k)}"]`);
+  let j = x != null ? tabs.findIndex((t) => { const r = at(t.key)?.getBoundingClientRect(); return r && x < r.left + r.width / 2; })
+    : to ? tabs.findIndex((t) => t.key === to) : -1;
   if (j < 0) j = tabs.length;
-  else if (b && x != null) { const r = b.getBoundingClientRect(); if (x > r.left + r.width / 2) j++; }
   tabs.splice(j, 0, m);
   renderTabs();
+  if (j === i) return;
+  const before = new Map(tabs.map((t) => [t.key, at(t.key)?.getBoundingClientRect().left]));
 }
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (const [k, l] of before) {
+    const b = at(k), dx = l != null && b ? l - b.getBoundingClientRect().left : 0;
+    if (dx) b.animate([{ transform: `translateX(${dx}px)` }, { transform: "none" }], { duration: 180, easing: "ease-out" });
+  }
 // Roda do mouse rola as guias na horizontal (#43).
 $("tabs").addEventListener("wheel", (e) => { if (!e.deltaY) return; e.preventDefault(); $("tabs").scrollLeft += e.deltaY; }, { passive: false });
 
