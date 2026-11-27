@@ -88,8 +88,19 @@ impl ConPty {
 fn win32_key(d: &[u8]) -> Option<Vec<u8>> {
     // ESC sozinho: o ConPTY espera o resto de uma sequência e o programa nunca vê a tecla.
     if d == b"\x1b" { return Some(b"\x1b[27;1;27;1;0;1_\x1b[27;1;27;0;0;1_".to_vec()); }
-    let k = match d { [0x1b, b'[' | b'O', k] => *k, _ => return None };
-    let (vk, sc) = match k { b'A' => (38, 72), b'B' => (40, 80), b'C' => (39, 77), b'D' => (37, 75), b'H' => (36, 71), b'F' => (35, 79), _ => return None };
+    let k = match d { [0x1b, b'[' | b'O', k] => *k, _ => 0 };
+    let Some((vk, sc)) = (match k { b'A' => Some((38, 72)), b'B' => Some((40, 80)), b'C' => Some((39, 77)), b'D' => Some((37, 75)), b'H' => Some((36, 71)), b'F' => Some((35, 79)), _ => None }) else {
+        // Demais sequências (Del `ESC[3~`, PgUp/PgDn, F-keys, colagem `ESC[200~`): em VT puro o ConPTY come o ESC
+        // e o ssh.exe vê só `[3~`. Vira um evento de tecla por caractere; ESC vai como VK_ESCAPE, o resto pelo uChar.
+        if !d.contains(&0x1b) { return None; }
+        let s = String::from_utf8_lossy(d);
+        let mut o = String::new();
+        for u in s.encode_utf16() {
+            let (vk, sc) = if u == 0x1b { (27, 1) } else { (0, 0) };
+            o.push_str(&format!("\x1b[{vk};{sc};{u};1;0;1_\x1b[{vk};{sc};{u};0;0;1_"));
+        }
+        return Some(o.into_bytes());
+    };
     // Cs 256 = ENHANCED_KEY (setas fora do teclado numérico).
     Some(format!("[{vk};{sc};0;1;256;1_[{vk};{sc};0;0;256;1_").into_bytes())
 }
@@ -98,7 +109,18 @@ fn win32_key_setas() {
     assert_eq!(win32_key(b"\x1b").unwrap(), b"\x1b[27;1;27;1;0;1_\x1b[27;1;27;0;0;1_");
     assert_eq!(win32_key(b"[A").unwrap(), b"[38;72;0;1;256;1_[38;72;0;0;256;1_");
     assert_eq!(win32_key(b"OB").unwrap(), b"[40;80;0;1;256;1_[40;80;0;0;256;1_");
-    assert!(win32_key(b"[1;5A").is_none() && win32_key(b"a").is_none());
+    assert!(win32_key(b"a").is_none() && win32_key(b"colado sem ESC").is_none());
+}
+#[test]
+fn win32_key_esc_sobrevive_em_del_pgup_e_colagem() {
+    let k = |s: &[u8]| String::from_utf8(win32_key(s).unwrap()).unwrap();
+    let ev = |vk: u32, sc: u32, u: u32| format!("[{vk};{sc};{u};1;0;1_[{vk};{sc};{u};0;0;1_");
+    let esc = ev(27, 1, 27);
+    assert_eq!(k(b"[3~"), format!("{esc}{}{}{}", ev(0, 0, 91), ev(0, 0, 51), ev(0, 0, 126)));
+    assert!(k(b"[5~").starts_with(&esc) && k(b"[1;5A").starts_with(&esc));
+    let p = k("[200~ç[201~".as_bytes());
+    assert_eq!(p.matches(&esc).count(), 2);
+    assert!(p.contains(&ev(0, 0, 0xe7)));
 }
 
 impl Pty for ConPty {
