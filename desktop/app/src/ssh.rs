@@ -150,7 +150,19 @@ pub fn put(s: &settings::SshServer, cwd: Option<&str>, sub: &str, fallback: &str
     if name.is_empty() || name == "." || name == ".." { return Err("INVALID_MESSAGE".into()); }
     let dir = match cwd { Some(d) => format!("{}/{sub}", sq(d)), None => format!("\"$HOME\"/{fallback}") };
     let cmd = format!("d={dir} && mkdir -p \"$d\" && cd \"$d\" && cat > {} && printf '%s/%s' \"$PWD\" {}", sq(&name), sq(&name));
-    exec_in(s, &cmd, Some(data), Duration::from_secs(120)).filter(|p| p.starts_with('/')).ok_or_else(|| "SCP_FAILED".into())
+    if let Some(p) = exec_in(s, &cmd, Some(data.clone()), Duration::from_secs(120)).filter(|p| p.starts_with('/')) { return Ok(p); }
+    // Servidor Windows (OpenSSH com PowerShell como shell): o comando sh falha; grava pelo PowerShell.
+    exec_in(s, &ps_put(cwd, sub, fallback, &name), Some(data), Duration::from_secs(120))
+        .map(|p| p.trim().to_owned()).filter(|p| p.as_bytes().get(1) == Some(&b':')).ok_or_else(|| "SCP_FAILED".into())
+}
+
+/// Texto entre aspas simples do PowerShell (`'` vira `''`).
+fn pq(s: &str) -> String { format!("'{}'", s.replace('\'', "''")) }
+
+/// Versão PowerShell de [`put`]: stdin binário em `<cwd>/<sub>` ou `$HOME/<fallback>`; escreve o caminho absoluto.
+fn ps_put(cwd: Option<&str>, sub: &str, fallback: &str, name: &str) -> String {
+    let dir = match cwd { Some(d) => format!("Join-Path {} {}", pq(d), pq(sub)), None => format!("Join-Path $HOME {}", pq(fallback)) };
+    format!("$d=({dir}); New-Item -ItemType Directory -Force -Path $d | Out-Null; $p=Join-Path $d {}; $f=[IO.File]::Create($p); [Console]::OpenStandardInput().CopyTo($f); $f.Close(); [Console]::Out.Write($p)", pq(name))
 }
 
 /// Branch e pendências da pasta remota (`{branch, dirty}`); `null` fora de repositório ou sem acesso.
@@ -196,6 +208,14 @@ pub fn parse_stats(out: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ps_put_cita_pasta_e_nome() {
+        let c = ps_put(Some("C:\\o'k"), "screenshots", "Pictures/Screenshots", "a'b.png");
+        assert!(c.starts_with("$d=(Join-Path 'C:\\o''k' 'screenshots');"));
+        assert!(c.contains("Join-Path $d 'a''b.png';"));
+        assert!(ps_put(None, "s", "Downloads/archives", "x.png").starts_with("$d=(Join-Path $HOME 'Downloads/archives');"));
+    }
 
     #[test]
     fn alcance_tcp() {
