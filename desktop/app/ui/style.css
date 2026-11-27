@@ -144,8 +144,8 @@ th { color:var(--text-muted); font-weight:600; }
 .menu .muted { padding:var(--sp-6) var(--sp-10); margin:0; }
 .menu button:has(.m-ic) { display:flex; align-items:center; gap:var(--sp-10); }
 .menu .m-t { flex:1; } .menu .m-ic { width:18px; text-align:center; opacity:.85; }
-.menu .m-k { font-size:11.5px; font-family:ui-monospace,monospace; opacity:.6; }
-.menu .m-lbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; opacity:.7; padding:var(--sp-6) var(--sp-10) 2px; margin:0; }
+.menu .m-k { font-size:13px; font-family:ui-monospace,monospace; opacity:.75; }
+.menu .m-lbl { font-size:13px; text-transform:uppercase; letter-spacing:.07em; opacity:.7; padding:var(--sp-6) var(--sp-10) 2px; margin:0; }
 .menu .m-row { display:flex; gap:4px; padding:4px; background:var(--surface-2); border-radius:var(--radius); }
 .menu .m-row button { flex:1; justify-content:center; }
 .menu .danger { color:#e5484d; }

@@ -415,3 +415,6 @@ ul.keys li:first-child { border-top:0; }
 .card-st.badge-slot:hover { background:var(--chip); }
 .card-st.badge-slot[title^="Sem"] { opacity:0; color:var(--off); }
 #sidebar li:hover .card-st.badge-slot[title^="Sem"], #sidebar li:focus-within .card-st.badge-slot[title^="Sem"] { opacity:.7; }
+
+/* 023: menu opaco; superfície translúcida deixava o texto sem contraste sobre o conteúdo. */
+:root:not([data-theme=light]):not([data-theme=contrast]) .menu { background:#24164a; }
