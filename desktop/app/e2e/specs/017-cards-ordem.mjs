@@ -21,6 +21,7 @@ export default async (h) => {
   await h.drag(`#local-ul [data-key="${x}"]`, `#local-ul .group-new`);
   const g = await h.until(`return layouts.local.group[arguments[0]]`, 5000, x.split("/")[1]);
   await h.until(`return [...document.querySelectorAll("#local-ul .group-h")].some((b) => b.title === arguments[0])`, 5000, g);
+  await new Promise((r) => setTimeout(r, 300)); // FLIP de 180 ms (017) ainda move os cards
   const hd = await h.js(`return [...document.querySelectorAll("#local-ul .group-h")].findIndex((b) => b.title === arguments[0]) + 1`, g);
   await h.drag(`#local-ul [data-key="${y}"]`, `#local-ul .sess-group:nth-of-type(${hd}) .group-h`);
   await h.until(`return layouts.local.group[arguments[0]] === arguments[1]`, 5000, y.split("/")[1], g);
