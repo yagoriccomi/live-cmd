@@ -35,7 +35,7 @@ body.term-body { font-family:var(--font); line-height:normal; }
 .term-body .term-layout { position:fixed; inset:20px; height:auto; display:flex; gap:var(--sp-16); }
 /* Coluna fechada: só o trilho; hover ou foco expande por cima do terminal, sem empurrá-lo. */
 .term-body .term-layout.collapsed .sidebar { position:absolute; left:76px; top:0; bottom:0; z-index:5; padding:var(--sp-16); visibility:hidden; opacity:0; transition:opacity .15s, visibility .15s; }
-.term-body .term-layout.collapsed .rail:has(#nav-term:is(:hover, :focus-visible)) ~ .sidebar,
+.term-body .term-layout.collapsed .rail:is(:hover, :focus-within) ~ .sidebar,
 .term-body .term-layout.collapsed .sidebar:is(:hover, :focus-within) { visibility:visible; opacity:1; }
 
 /* Vidro */

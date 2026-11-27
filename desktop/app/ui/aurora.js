@@ -84,25 +84,11 @@
     for (const [p, , x] of PANELS) if (!$(p).hidden) $(x).click();
     $("screen").focus();
   };
-  // #62: hover no item com painel abre o painel por cima do terminal; clique fixa; sair fecha com folga para o vão.
-  // Itens sem painel (celular, dispositivos, ajustes) só navegam no clique.
-  let peek = null, peekT = 0;
-  const unpeek = () => { clearTimeout(peekT); peekT = setTimeout(() => { if (peek && !$(peek[0]).hidden) $(peek[2]).click(); peek = null; }, 400); };
-  $("nav-term").closest(".rail").addEventListener("mouseenter", () => clearTimeout(peekT));
-  $("nav-term").closest(".rail").addEventListener("mouseleave", () => peek && unpeek());
-  for (const p of PANELS.slice(0, 3)) {
-    const b = $(p[1]), pane = $(p[0]).querySelector(".pane-l") || $(p[0]);
-    b.addEventListener("mouseenter", () => {
-      clearTimeout(peekT);
-      if (peek === p || PANELS.some(([q]) => !$(q).hidden && q !== peek?.[0])) return;
-      if (peek && !$(peek[0]).hidden) $(peek[2]).click();
-      if ($(p[0]).hidden) { b.click(); peek = p; }
-    });
-    pane.addEventListener("mouseenter", () => peek === p && clearTimeout(peekT));
-    pane.addEventListener("mouseleave", () => peek === p && unpeek());
-    // Clique real com o painel em prévia: fixa em vez de fechar.
-    b.addEventListener("click", (e) => { if (e.isTrusted && peek === p) { peek = null; clearTimeout(peekT); e.stopImmediatePropagation(); } }, true);
-  }
+  // 016: hover só expande o menu (CSS). Clique abre a página sem mexer no menu; clique no ícone já ativo inverte o menu.
+  $("nav-term").closest(".rail").addEventListener("click", (e) => {
+    const b = e.target.closest(".rail-btn");
+    if (b?.getAttribute("aria-current") === "page") { e.stopImmediatePropagation(); e.preventDefault(); toggleSide(); }
+  }, true);
   // Celular, Dispositivos e Ajustes abrem painéis desta janela (app.js expõe window.liveTab).
   for (const [id, act] of [["nav-pair", "pair"], ["nav-devices", "devices"], ["nav-settings", "settings"]])
     $(id).onclick = () => window.liveTab?.(act);

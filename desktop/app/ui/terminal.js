@@ -1176,7 +1176,7 @@ document.addEventListener("keydown", (e) => {
   }
   else if (e.ctrlKey && e.shiftKey && !e.altKey && k === "B") {
     e.preventDefault();
-    $("fold-side").click();
+    toggleSide();
     const c = $("layout").classList.contains("collapsed");
     if (c && $("sidebar").contains(document.activeElement)) $("screen").focus();
   }
@@ -1435,7 +1435,10 @@ function foldToggle(btn, apply, key) {
   set(on);
   btn.onclick = () => set(btn.getAttribute("aria-pressed") !== "true");
 }
-foldToggle($("fold-side"), (on) => $("layout").classList.toggle("collapsed", on), "fold-side");
+// 016: sem botão; Ctrl+Shift+B e o segundo clique no ícone ativo do trilho invertem o menu.
+const sideFake = document.createElement("button");
+foldToggle(sideFake, (on) => $("layout").classList.toggle("collapsed", on), "fold-side");
+window.toggleSide = () => sideFake.click();
 foldToggle($("fold-top"), (on) => { $("hero").hidden = on; $("stats").hidden = on; }, "fold-top");
 
 // Fonte: Ctrl+roda, Ctrl+=/-/0; salva por PC no localStorage e recalcula cols/rows.
