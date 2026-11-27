@@ -1,4 +1,4 @@
-// 025: Configurações > Agentes envia imagem (reduzida a 128 px) que vira o ícone do card; "Remover" volta à inicial.
+// 025: Configurações > Agentes envia imagem (reduzida a 128 px) que vira o ícone do card; "Remover" volta ao logo oficial.
 export default async (h) => {
   await h.js(`
     const c = Object.assign(document.createElement("canvas"), { width: 300, height: 200 });
@@ -15,6 +15,6 @@ export default async (h) => {
     document.querySelector('#cfg-agents-list button[aria-label="Trocar imagem de Claude Code"]').click()`);
   await h.until(`return [...document.querySelectorAll("#local-ul .ag-ico")].some((i) => i.style.backgroundImage.startsWith('url("data:image'))`);
   await h.js(`document.querySelector('#cfg-agents-list button[aria-label="Remover imagem de Claude Code"]').click()`);
-  await h.until(`const a = [...document.querySelectorAll("#local-ul .ag-ico")]; return a.length && a.every((i) => !i.style.backgroundImage) && a.some((i) => i.textContent === "C")`);
+  await h.until(`const a = [...document.querySelectorAll("#local-ul .ag-ico")]; return a.length && a.every((i) => !i.style.backgroundImage.includes("data:image")) && a.some((i) => i.style.backgroundImage.includes("agentes/claude.svg"))`);
   await h.js(`conns[LOCAL].sessions = conns[LOCAL].sessions.filter((s) => s.session_id !== "fake080"); renderSidebar()`);
 };

@@ -40,11 +40,12 @@ const lastEnter = {};     // chave → hora do último Enter (item 9)
 // Mede a célula no #screen e guarda: com o painel esquerdo oculto (maximizado o direito) vale a última medida.
 let cellW = 8;
 function size(s = $("screen")) {
-  const m = $("measure").getBoundingClientRect(), cs = getComputedStyle(s);
-  if (m.width) cellW = m.width / 10;
+  const m = getComputedStyle($("measure")), cs = getComputedStyle(s);
+  const width = parseFloat(m.width);
+  if (width) cellW = width / 10;
   const w = s.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
   const h = s.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  const lh = parseFloat(cs.lineHeight) || m.height || 16;
+  const lh = parseFloat(cs.lineHeight) || parseFloat(m.height) || 16;
   return { cols: Math.max(20, Math.min(1000, Math.floor(w / cellW))), rows: Math.max(5, Math.min(1000, Math.floor(h / lh))) };
 }
 
@@ -590,9 +591,8 @@ setInterval(async () => {
 
 // Tipo da sessão só para o visual (ícone e filtro da lista): agente, SSH ou shell, pelo rótulo.
 const KIND_ICON = { agent: "✦", ssh: "⇄", shell: "›_" };
-// Ícone redondo do agente (#40, #41): logo empacotado, senão imagem enviada ao host, senão a inicial.
-// ponytail: sem logos oficiais no repo; ponha o arquivo em ui/ e o nome aqui (ex.: claude: "claude.png").
-const AGENT_LOGO = {};
+// Ícone redondo do agente (#40, #41): imagem enviada ao host, senão logo oficial empacotado, senão a inicial.
+const AGENT_LOGO = { claude: "agentes/claude.svg", codex: "agentes/codex.svg", antigravity: "agentes/antigravity.png" };
 const agentIcons = new Map(); // "conn|agente" -> Promise<data URL | null>
 function agentIcon(conn, agent) {
   const i = el("span", "ag-ico", (agent || "?")[0].toUpperCase());
@@ -601,7 +601,7 @@ function agentIcon(conn, agent) {
   i.style.backgroundColor = `hsl(${[...(agent || "?")].reduce((h, c) => h * 31 + c.charCodeAt(0), 7) % 360} 60% 40%)`;
   i.style.color = "#fff";
   const k = conn + "|" + agent;
-  if (!agentIcons.has(k)) agentIcons.set(k, AGENT_LOGO[agent] ? Promise.resolve(AGENT_LOGO[agent]) : invoke("agent_icon_get", { conn, agent }).catch(() => null));
+  if (!agentIcons.has(k)) agentIcons.set(k, invoke("agent_icon_get", { conn, agent }).catch(() => null).then((u) => u || AGENT_LOGO[agent] || null));
   agentIcons.get(k).then((u) => { if (u) { i.textContent = ""; i.style.backgroundImage = `url("${u}")`; } });
   return i;
 }
@@ -1259,9 +1259,14 @@ function redraw() {
   const t = activeTab();
   if (!t) return;
   const inTerm = !!document.activeElement?.closest?.(".terminal");
-  if (!inTerm || !focusPane || !t.split) draw(t.key, $("screen"));
-  if (t.split && (!inTerm || focusPane)) draw(t.split.key, $("screen2"));
-  resizeActive();
+  // Reanexa: o servidor manda a tela inteira de novo no tamanho atual (o cache local pode estar velho).
+  const again = (r, s) => {
+    if (r.exited != null) return draw(r.key, s);
+    const { cols, rows } = size(s);
+    invoke("term_attach", { conn: r.conn, sessionId: r.sid, cols, rows }).catch((e) => banner(msg(e), "err"));
+  };
+  if (!inTerm || !focusPane || !t.split) again(t, $("screen"));
+  if (t.split && (!inTerm || focusPane)) again(t.split, $("screen2"));
 }
 // Ctrl+= / Ctrl++ / Ctrl+- / Ctrl+0, normal e numpad: 1, -1, 0 ou null.
 function zoomDir(e) {
