@@ -142,7 +142,8 @@ function renderTabs() {
     x.title = "Fechar aba (Ctrl+Shift+W)";
     x.onclick = (e) => { e.stopPropagation(); closeTab(t.key, true); };
     b.append(x);
-    b.onclick = () => { if (t.key !== active) activate(t.key); };
+    // Clique deixa o foco na guia (F2/Delete dela funcionam); Enter ou clique no terminal levam ao PTY.
+    b.onclick = () => { if (t.key !== active) activate(t.key, false); $("tabs").querySelector(`[data-key="${CSS.escape(t.key)}"]`)?.focus(); };
     // Botão do meio: sem preventDefault no mousedown o WebView2 entra em autoscroll e o auxclick some.
     b.onmousedown = (e) => { if (e.button === 1) e.preventDefault(); };
     b.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t.key, true); } };
@@ -480,7 +481,7 @@ function titleOf(conn, s) {
   return conn === LOCAL ? label : `${conns[conn].name} · ${label}`;
 }
 
-async function openSession(conn, s) {
+async function openSession(conn, s, focus = true) {
   const key = conn + "/" + s.session_id;
   // Sessão que já é painel dividido de uma aba: vai para essa aba, sem aba duplicada.
   const host = tabs.find((t) => t.split?.key === key);
@@ -493,7 +494,7 @@ async function openSession(conn, s) {
     tabs.push({ key, conn, sid: s.session_id, label: s.label, title: titleOf(conn, s), exited: ok.state === "exited" ? ok.exit_code ?? 0 : null });
     window.histMeta?.(conn, s);
   }
-  activate(key);
+  activate(key, focus);
 }
 
 async function closeTab(key, ask = false) {
@@ -649,7 +650,8 @@ function sessionItem(conn, s) {
   b.append(tile, txt, st);
   b.firstChild.setAttribute("aria-hidden", "true");
   if (busy.has(key)) b.append(actDot());
-  b.onclick = () => openSession(conn, s);
+  // Clique deixa o foco no card (F2 renomeia); Enter no card abre com foco no terminal (itemKey).
+  b.onclick = (e) => openSession(conn, s, !e.detail).then(() => e.detail && $("sidebar").querySelector(`[data-key="${CSS.escape(conn + "/" + s.session_id)}"]`)?.focus());
   b.oncontextmenu = (e) => { e.preventDefault(); menu(b, cardMenu(conn, s, name, b, cwd, git)); };
   b.onkeydown = (e) => {
     if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); b.oncontextmenu(e); }

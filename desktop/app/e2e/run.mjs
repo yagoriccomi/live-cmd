@@ -66,6 +66,8 @@ function helpers() {
     },
     async click(css) { const [x, y] = await h.at(css); await wd("POST", S() + "/actions", { actions: [{ type: "pointer", id: "m", parameters: { pointerType: "mouse" }, actions: [
       { type: "pointerMove", origin: "viewport", x, y, duration: 0 }, { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 }] }] }); },
+    // Tecla real (WebDriver Actions), no elemento focado. F2 = "\uE032".
+    async key(k) { await wd("POST", S() + "/actions", { actions: [{ type: "key", id: "k", actions: [{ type: "keyDown", value: k }, { type: "keyUp", value: k }] }] }); },
     // Fecha e reabre o app (mesma pasta de dados e daemon): testa o que persiste.
     async reopen() { await wd("DELETE", S()); id = await open(); await h.ready(); },
     ready: () => h.until(`return document.readyState === "complete" && !!document.getElementById("tabs")`, 20000),
@@ -79,7 +81,7 @@ try {
   id = await open();
   const h = helpers();
   await h.ready();
-  for (const f of readdirSync(join(here, "specs")).filter((f) => f.endsWith(".mjs")).sort()) {
+  for (const f of readdirSync(join(here, "specs")).filter((f) => f.endsWith(".mjs") && f.includes(process.env.ONLY || "")).sort()) {
     const t0 = Date.now();
     const spec = (await import(pathToFileURL(join(here, "specs", f)))).default;
     // msedgedriver às vezes perde o renderer no meio de `/actions` ("browser has closed the connection"):
