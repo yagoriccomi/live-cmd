@@ -102,29 +102,39 @@
     const li = el("li"), b = el("button", null, "Trocar imagem");
     b.type = "button"; b.setAttribute("aria-label", `Trocar imagem de ${n}`);
     b.onclick = () => pickAgentIcon(LOCAL, a, paintCfg);
+    const rm = el("button", null, "Remover");
+    rm.type = "button"; rm.setAttribute("aria-label", `Remover imagem de ${n}`);
+    rm.onclick = () => setAgentIcon(LOCAL, a, null, paintCfg);
     const name = el("span", "inline"); name.append(agentIcon(LOCAL, a), el("span", null, n));
-    li.append(name, b);
+    li.append(name, b, rm);
     return li;
   }));
   setTimeout(paintCfg); // AGENT_NAME é declarado mais abaixo no arquivo
 
-  // Só PNG, JPEG ou WebP até 48 KB (o host confere de novo); fora disso avisa e não muda nada.
+  // PNG, JPEG ou WebP até 5 MB, reduzido a 128 px em WebP (cabe nos 48 KB do host); fora disso avisa e não muda nada.
   function pickAgentIcon(conn, agent, done) {
     const f = Object.assign(document.createElement("input"), { type: "file", accept: "image/png,image/jpeg,image/webp" });
     f.onchange = async () => {
       const file = f.files[0];
       if (!file) return;
       if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return banner("Ícone precisa ser PNG, JPEG ou WebP.", "err");
-      if (file.size > 48000) return banner("Ícone grande demais: máximo 48 KB.", "err");
-      const b = new Uint8Array(await file.arrayBuffer());
-      let s = ""; for (const c of b) s += String.fromCharCode(c);
-      try {
-        await invoke("agent_icon_set", { conn, agent, image: btoa(s) });
-        agentIcons.delete(conn + "|" + agent);
-        done();
-      } catch (e) { banner(e === "INVALID_MESSAGE" ? "Imagem recusada pelo host: use PNG, JPEG ou WebP até 48 KB." : msg(e), "err"); }
+      if (file.size > 5e6) return banner("Imagem grande demais: máximo 5 MB.", "err");
+      let img;
+      try { img = await createImageBitmap(file); } catch { return banner("Imagem inválida.", "err"); }
+      const c = Object.assign(document.createElement("canvas"), { width: 128, height: 128 });
+      const k = 128 / Math.min(img.width, img.height); // cobre o quadrado, centralizado
+      c.getContext("2d").drawImage(img, (128 - img.width * k) / 2, (128 - img.height * k) / 2, img.width * k, img.height * k);
+      setAgentIcon(conn, agent, c.toDataURL("image/webp", 0.85).split(",")[1], done);
     };
     f.click();
+  }
+  async function setAgentIcon(conn, agent, image, done) {
+    try {
+      await invoke("agent_icon_set", { conn, agent, image });
+      agentIcons.delete(conn + "|" + agent);
+      done();
+      renderSidebar();
+    } catch (e) { banner(e === "INVALID_MESSAGE" ? "Imagem recusada pelo host: use PNG, JPEG ou WebP até 48 KB." : msg(e), "err"); }
   }
 
   function row(x) {
