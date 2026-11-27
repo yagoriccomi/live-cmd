@@ -228,6 +228,47 @@ const AI_SUG = {
   openclaude: ["--model opus", "--model sonnet", "--continue", "--permission-mode plan", "--permission-mode acceptEdits", "--dangerously-skip-permissions", "--verbose"],
   codex: ["--model gpt-5", "--full-auto", "--search", "--sandbox read-only", "--sandbox workspace-write", "--ask-for-approval on-request"],
 };
+// Caixa com sugestões (020): lista abaixo enquanto se digita, resto da 1ª sugestão em opacidade baixa dentro da caixa,
+// Tab completa (+ `tail` para seguir), seta para baixo entra na lista, Enter escolhe, Esc fecha. `get(v)` → lista.
+function combo(input, ac, get, tail = "") {
+  let seq = 0, sel = -1, items = [];
+  // newAi roda a cada abertura do diálogo: reaproveita a sugestão em sombra já criada.
+  let ghost = input.nextElementSibling;
+  if (!ghost?.classList.contains("ac-ghost")) { ghost = el("span", "ac-ghost mono"); ghost.setAttribute("aria-hidden", "true"); input.after(ghost); }
+  input.parentElement.style.position ||= "relative";
+  const paint = () => {
+    ac.replaceChildren(...items.map((v, i) => {
+      const o = el("div", "ac-item" + (i === sel ? " on" : ""), v); o.id = ac.id + "-" + i;
+      o.setAttribute("role", "option"); o.setAttribute("aria-selected", i === sel);
+      o.onmousedown = (e) => { e.preventDefault(); take(v); }; return o;
+    }));
+    ac.hidden = !items.length; input.setAttribute("aria-expanded", !ac.hidden);
+    sel >= 0 ? input.setAttribute("aria-activedescendant", ac.id + "-" + sel) : input.removeAttribute("aria-activedescendant");
+    const v = input.value, g = items[Math.max(sel, 0)] || "";
+    ghost.replaceChildren();
+    if (document.activeElement === input && g.toLowerCase().startsWith(v.toLowerCase()) && g.length > v.length)
+      ghost.append(el("span", "ac-typed", v), g.slice(v.length));
+    const cs = getComputedStyle(input);
+    Object.assign(ghost.style, { left: input.offsetLeft + "px", top: input.offsetTop + "px", width: input.offsetWidth + "px", height: input.offsetHeight + "px",
+      padding: cs.padding, border: cs.borderWidth + " solid transparent", font: cs.font });
+  };
+  const close = () => { seq++; items = []; sel = -1; paint(); };
+  const take = (v, more) => { input.value = v + (more ? tail : ""); close(); refresh(); };
+  const refresh = async () => { const n = ++seq, l = await get(input.value); if (n === seq) { items = [...new Set(l)]; sel = -1; paint(); } };
+  input.oninput = refresh;
+  input.onfocus = refresh;
+  input.onblur = close;
+  input.onkeydown = (e) => {
+    if (e.key === "Tab" && !e.shiftKey && items.length) { e.preventDefault(); take(items[Math.max(sel, 0)], true); }
+    else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) {
+      e.preventDefault(); sel = e.key === "ArrowDown" ? (sel + 1) % items.length : (sel <= 0 ? items.length : sel) - 1;
+      paint(); ac.children[sel]?.scrollIntoView({ block: "nearest" });
+    }
+    else if (e.key === "Enter" && sel >= 0) { e.preventDefault(); e.stopPropagation(); take(items[sel]); }
+    else if (e.key === "Escape" && items.length) { e.preventDefault(); e.stopPropagation(); close(); }
+  };
+  return { close, refresh };
+}
 const AGENT_NAME = { claude: "Claude Code", openclaude: "OpenClaude", codex: "Codex", antigravity: "Antigravity" };
 async function newAi(conn, dir, agent0) {
   localStorage.removeItem("ai-default"); // resto de versão antiga; o padrão agora é do host
@@ -249,8 +290,9 @@ async function newAi(conn, dir, agent0) {
     const a = $("ai-agent").value, l = await invoke("agent_args", { conn, agent: a }).catch(() => null);
     if (a !== $("ai-agent").value) return;
     const o = Array.isArray(l?.options) ? l.options : (Array.isArray(l) ? l : AI_SUG[a] || []).map((value) => ({ value }));
-    $("ai-sug").replaceChildren(...o.map((x) => opt(x.value, x.label)));
+    argSug = o.map((x) => x.value);
   };
+  let argSug = [];
   // Trocar de agente não herda os comandos extras do anterior (flags não valem entre CLIs).
   $("ai-agent").onchange = () => { $("ai-args").value = $("ai-agent").value === d?.agent ? d?.args || "" : ""; sug(); }; sug();
   // Caminho completo embaixo do campo: o que vai para o host, sem barra final.
@@ -274,51 +316,30 @@ async function newAi(conn, dir, agent0) {
     const r = await window.__TAURI__.dialog.open({ directory: true, multiple: false, defaultPath: cwdIn.value.trim() || undefined, title: "Pasta do agente" }).catch(() => null);
     if (r) { cwdIn.value = r; path(); }
   };
-  // Autocomplete (020): lista própria abaixo do campo enquanto se digita; recentes + subpastas reais.
-  // "C:\proj" já lista o conteúdo de proj (sem exigir a "\" final) e as irmãs que começam por "proj".
-  // Tab completa com a sugestão marcada (ou a primeira); setas movem; Enter escolhe; Esc fecha a lista.
-  const ac = $("ai-ac");
-  let seq = 0, sel = -1, items = [];
-  const paint = () => {
-    ac.replaceChildren(...items.map((v, i) => {
-      const o = el("div", "ac-item" + (i === sel ? " on" : ""), v); o.setAttribute("role", "option"); o.setAttribute("aria-selected", i === sel);
-      o.onmousedown = (e) => { e.preventDefault(); take(v); }; return o;
-    }));
-    ac.hidden = !items.length; cwdIn.setAttribute("aria-expanded", !ac.hidden);
-  };
-  const take = (v) => { cwdIn.value = v; items = []; sel = -1; paint(); suggest(); };
-  const suggest = async () => {
+  // Autocomplete (020): recentes + subpastas reais. "C:\proj" já lista o conteúdo de proj e as irmãs "proj*".
+  // Tab numa pasta completa e acrescenta "\" (segue para as subpastas).
+  const cwdAc = combo(cwdIn, $("ai-ac"), async (v) => {
     path();
-    const v = cwdIn.value, n = ++seq, lv = v.toLowerCase();
+    const lv = v.toLowerCase();
     const rec = recent.filter((r) => r.toLowerCase().startsWith(lv) && r.toLowerCase() !== lv);
-    let sub = [];
     const i = v.lastIndexOf("\\");
-    if (i >= 0) {
-      const par = v.slice(0, i + 1), pre = v.slice(i + 1).toLowerCase(), base = v.replace(/[\\/]+$/, "");
-      const [sib, kids] = await Promise.all([
-        pre ? invoke("term_dirs", { conn, path: par }).catch(() => []) : [],
-        invoke("term_dirs", { conn, path: v }).catch(() => []),
-      ]);
-      if (n !== seq) return;
-      sub = [...(Array.isArray(sib) ? sib : []).filter((d) => d.toLowerCase().startsWith(pre) && d.toLowerCase() !== pre).map((d) => par + d),
-        ...(Array.isArray(kids) ? kids : []).map((d) => base + "\\" + d)];
-    }
-    if (n !== seq) return;
-    items = [...new Set([...rec, ...sub])]; sel = -1; paint();
-  };
-  cwdIn.oninput = suggest;
-  cwdIn.onblur = () => { seq++; items = []; paint(); };
-  cwdIn.onkeydown = (e) => {
-    if (e.key === "Tab" && !e.shiftKey && items.length) { e.preventDefault(); take(items[Math.max(sel, 0)]); }
-    else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) {
-      e.preventDefault(); sel = e.key === "ArrowDown" ? (sel + 1) % items.length : (sel <= 0 ? items.length : sel) - 1;
-      paint(); ac.children[sel]?.scrollIntoView({ block: "nearest" });
-    }
-    else if (e.key === "Enter" && sel >= 0) { e.preventDefault(); e.stopPropagation(); take(items[sel]); }
-    else if (e.key === "Escape" && items.length) { e.preventDefault(); e.stopPropagation(); seq++; items = []; paint(); }
-  };
+    if (i < 0) return rec;
+    const par = v.slice(0, i + 1), pre = v.slice(i + 1).toLowerCase(), base = v.replace(/[\\/]+$/, "");
+    const arr = (x) => (Array.isArray(x) ? x : []);
+    const [sib, kids] = await Promise.all([
+      pre ? invoke("term_dirs", { conn, path: par }).catch(() => []) : [],
+      invoke("term_dirs", { conn, path: v }).catch(() => []),
+    ]);
+    return [...rec, ...arr(sib).filter((d) => d.toLowerCase().startsWith(pre) && d.toLowerCase() !== pre).map((d) => par + d),
+      ...arr(kids).map((d) => base + "\\" + d)];
+  }, "\\");
+  // Comandos extras: mesmo componente; completa só a última palavra, sem repetir opção já escrita.
+  combo($("ai-args"), $("ai-ac2"), (v) => {
+    const cut = v.lastIndexOf(" ") + 1, head = v.slice(0, cut), tok = v.slice(cut).toLowerCase();
+    return argSug.filter((o) => o.toLowerCase().startsWith(tok) && o.toLowerCase() !== tok && !v.includes(o)).map((o) => head + o);
+  }, " ");
   cwdIn.onchange = () => { path(); if (!brw.hidden) browse(cwdIn.value.trim()); };
-  show(false); items = []; paint(); path();
+  show(false); cwdAc.close(); path();
   $("ai-scrim").hidden = false; cwdIn.focus();
   const ok = await new Promise((done) => {
     const end = (v) => { $("ai-scrim").hidden = true; done(v); };

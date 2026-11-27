@@ -325,6 +325,8 @@ input.rename { font:inherit; padding:0 var(--sp-4); width:12em; }
 .ai-browser .ai-dirs { border:0; margin:var(--sp-4) 0 0; }
 .ai-ac { max-height:12em; overflow:auto; border:1px solid var(--border); border-radius:var(--r-10); background:var(--surface-2); margin:var(--sp-2) 0; }
 .ac-item { padding:var(--sp-2) var(--sp-6); cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ac-ghost { position:absolute; pointer-events:none; box-sizing:border-box; overflow:hidden; white-space:pre; opacity:.4; background:none; }
+.ac-ghost .ac-typed { visibility:hidden; }
 .ac-item:hover, .ac-item.on { background:var(--accent); color:var(--on-accent); }
 .ai-path { margin:var(--sp-4) 0 0; overflow-wrap:anywhere; min-height:1.2em; }
 .ai-dirs button { text-align:left; background:none; border:0; padding:var(--sp-2) var(--sp-6); color:inherit; font:inherit; cursor:pointer; }
