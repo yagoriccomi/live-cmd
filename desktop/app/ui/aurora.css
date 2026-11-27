@@ -418,3 +418,5 @@ ul.keys li:first-child { border-top:0; }
 
 /* 023: menu opaco; superfície translúcida deixava o texto sem contraste sobre o conteúdo. */
 :root:not([data-theme=light]):not([data-theme=contrast]) .menu { background:#24164a; }
+/* 025: na lista o ícone ocupa a altura útil do card; inicial na metade do ícone. */
+.sidebar .ag-ico { width:40px; height:40px; font-size:20px; flex:none; }
