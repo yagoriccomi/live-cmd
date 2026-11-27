@@ -758,22 +758,50 @@ function dropTarget(node, conn, key, before) {
     ids.splice(at < 0 ? ids.length : at, 0, sid);
     L.order = ids;
     saveSideOrder(conn);
-    renderSidebar();
+    flipSidebar();
   };
 }
 function sorted(conn, list) {
   const o = layoutOf(conn).order, i = (s) => { const n = o.indexOf(s.session_id); return n < 0 ? 1e9 : n; };
   return [...list].sort((a, b) => i(a) - i(b));
 }
+// 017: redesenha a lista e desliza os cards do lugar antigo ao novo (FLIP); sem animação com movimento reduzido.
+function flipSidebar() {
+  const at = () => new Map([...$("sidebar").querySelectorAll("button[data-key], .group-h")].map((b) => [b.dataset.key || "g:" + b.title, b]));
+  const before = new Map([...at()].map(([k, b]) => [k, b.getBoundingClientRect().top]));
+  renderSidebar();
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (const [k, b] of at()) {
+    const dy = before.has(k) ? before.get(k) - b.getBoundingClientRect().top : 0;
+    if (dy) b.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 180, easing: "ease-out" });
+  }
+}
+// 017: menu do grupo. Excluir só tira o agrupamento: os cards vão para "Sem grupo", as sessões seguem vivas.
+function groupMenu(conn, g, keys, h) {
+  const L = layoutOf(conn), mine = () => conns[conn].sessions.filter((s) => groupKey(conn, s) === g);
+  const save = () => { saveSideOrder(conn); flipSidebar(); };
+  const shift = (d) => { const o = [...keys], i = o.indexOf(g); o.splice(i, 1); o.splice(i + d, 0, g); L.gorder = o; save(); };
+  const i = keys.indexOf(g);
+  return [["Renomear", () => editInline(h, baseName(g) || g, (v) => {
+      for (const s of mine()) L.group[s.session_id] = v;
+      if (L.pinned === g) L.pinned = v;
+      L.gorder = keys.map((x) => (x === g ? v : x)); save();
+    })],
+    ...(i > 0 ? [["Mover para cima", () => shift(-1)]] : []),
+    ...(i < keys.length - 1 ? [["Mover para baixo", () => shift(1)]] : []),
+    [L.pinned === g ? "Desafixar" : "Fixar no topo", () => { L.pinned = L.pinned === g ? null : g; save(); }],
+    ...(g === "Sem grupo" ? [] : [["Excluir grupo", () => { for (const s of mine()) L.group[s.session_id] = "Sem grupo"; if (L.pinned === g) L.pinned = null; save(); }]])];
+}
 // Cards agrupados; grupo fixo no topo; zona final cria grupo manual.
 function groupedItems(conn, list) {
   const L = layoutOf(conn), groups = new Map();
   for (const s of sorted(conn, list)) { const g = groupKey(conn, s); groups.set(g, [...(groups.get(g) || []), s]); }
-  const keys = [...groups.keys()].sort((a, b) => (b === L.pinned) - (a === L.pinned));
+  const go = L.gorder || [], gi = (g) => { const n = go.indexOf(g); return n < 0 ? 1e9 : n; };
+  const keys = [...groups.keys()].sort((a, b) => (b === L.pinned) - (a === L.pinned) || gi(a) - gi(b));
   const out = keys.map((g) => {
     const li = el("li", "sess-group"), h = el("button", "group-h small", (g === L.pinned ? "📌 " : "") + (baseName(g) || g)), ul = el("ul", "cards");
     h.type = "button"; h.title = g;
-    h.oncontextmenu = (e) => { e.preventDefault(); menu(h, [[L.pinned === g ? "Desafixar" : "Fixar no topo", () => { L.pinned = L.pinned === g ? null : g; saveSideOrder(conn); renderSidebar(); }]]); };
+    h.oncontextmenu = (e) => { e.preventDefault(); menu(h, groupMenu(conn, g, keys, h)); };
     h.onkeydown = (e) => { if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); h.oncontextmenu(e); } };
     dropTarget(h, conn, () => g, null);
     ul.append(...groups.get(g).map((s) => sessionItem(conn, s)));
