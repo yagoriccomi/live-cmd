@@ -1312,7 +1312,8 @@ for (const s of [$("screen"), $("screen2")]) {
       const rs = rowsEl(s), off = screens[t?.key]?.off || 0, lo = Math.min(drag.anchor, drag.focus), hi = Math.max(drag.anchor, drag.focus);
       rs.forEach((r, i) => { const k = off + rs.length - 1 - i; r.classList.toggle("sel-row", k >= lo && k <= hi); });
     };
-    const move = (ev) => { y = ev.clientY; if (drag.focus != null) { drag.focus = fromEnd(Math.min(Math.max(y, s.getBoundingClientRect().top), s.getBoundingClientRect().bottom - 1)); paint(); } };
+    // Soltar fora da janela não gera mouseup; o primeiro mousemove sem o botão esquerdo encerra a seleção.
+    const move = (ev) => { if (!(ev.buttons & 1)) return selecting.delete(s); y = ev.clientY; if (drag.focus != null) { drag.focus = fromEnd(Math.min(Math.max(y, s.getBoundingClientRect().top), s.getBoundingClientRect().bottom - 1)); paint(); } };
     const tick = () => {
       if (!selecting.has(s)) {
         removeEventListener("mousemove", move);

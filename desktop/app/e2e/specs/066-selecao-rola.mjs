@@ -14,7 +14,7 @@ export default async (h) => {
   // Arrasta da última linha até acima do painel e segura até rolar.
   await h.js(`const s = pane(), r = s.getBoundingClientRect(), rs = rowsEl(s), b = rs[rs.length - 1].getBoundingClientRect();
     s.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: r.left + 10, clientY: b.top + 2 }));
-    dispatchEvent(new MouseEvent("mousemove", { clientX: r.left + 10, clientY: r.top - 200 }));`);
+    dispatchEvent(new MouseEvent("mousemove", { buttons: 1, clientX: r.left + 10, clientY: r.top - 200 }));`);
   await h.until(`return (screens[activeTab().key]?.off || 0) > 30`, 8000);
   await h.js(`document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }))`);
   await h.until(`return /copiada/.test(document.getElementById("banner-t").textContent)`, 5000);
